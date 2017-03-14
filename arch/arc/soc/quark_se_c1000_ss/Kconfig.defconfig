@@ -75,10 +75,15 @@ config PWM_QMSI
 	def_bool y
 endif # PWM
 
+if PINMUX
+config PINMUX_QMSI
+	def_bool y
+endif
+
 if GPIO
 
 config GPIO_QMSI
-	def_bool y
+	def_bool n
 
 if GPIO_QMSI
 
@@ -149,8 +154,9 @@ endif # GPIO
 if I2C
 
 config I2C_QMSI
-	def_bool y
+	def_bool n
 
+if I2C_QMSI
 config I2C_0
 	def_bool y
 
@@ -184,9 +190,12 @@ config I2C_SDA_TX_HOLD
 config I2C_SDA_RX_HOLD
 	default 24
 
+endif
+
 config I2C_QMSI_SS
 	def_bool y
 
+if I2C_QMSI_SS
 config I2C_SS_0
 	def_bool y
 
@@ -211,6 +220,8 @@ config I2C_SS_SDA_SETUP
 config I2C_SS_SDA_HOLD
 	default 10
 
+endif
+
 endif # I2C
 
 if ADC
@@ -218,10 +229,23 @@ config ADC_QMSI_SS
 	def_bool y
 endif
 
+if BLUETOOTH_H4
 
-if UART_QMSI
+config BLUETOOTH_UART_ON_DEV_NAME
+	default UART_QMSI_0_NAME
+
 config UART_QMSI_0
 	def_bool y
+
+config UART_QMSI_0_BAUDRATE
+	default 1000000
+
+config UART_QMSI_0_HW_FC
+	def_bool y
+
+endif # BLUETOOTH_H4
+
+if UART_QMSI
 
 if UART_QMSI_0
 
@@ -252,8 +276,9 @@ endif
 if SPI
 
 config SPI_QMSI
-	def_bool y
+	def_bool n
 
+if SPI_QMSI
 config SPI_0
 	def_bool y
 
@@ -272,9 +297,12 @@ config SPI_1_NAME
 config SPI_1_IRQ_PRI
 	default 1
 
+endif
+
 config SPI_QMSI_SS
 	def_bool y
 
+if SPI_QMSI_SS
 config SPI_SS_0
 	def_bool y
 
@@ -292,6 +320,8 @@ config SPI_SS_1_NAME
 
 config SPI_SS_1_IRQ_PRI
 	default 1
+
+endif
 
 endif # SPI
 

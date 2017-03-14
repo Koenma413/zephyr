@@ -72,7 +72,7 @@ static void net_udp_iface_init(struct net_if *iface)
 {
 	uint8_t *mac = net_udp_get_mac(net_if_get_device(iface));
 
-	net_if_set_link_addr(iface, mac, 6);
+	net_if_set_link_addr(iface, mac, 6, NET_LINK_ETHERNET);
 }
 
 static int send_status = -EINVAL;
@@ -243,7 +243,7 @@ static bool send_ipv6_udp_msg(struct net_if *iface,
 	int ret;
 
 	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
-	frag = net_nbuf_get_reserve_data(0, K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 	net_buf_frag_add(buf, frag);
 
 	net_nbuf_set_iface(buf, iface);
@@ -291,7 +291,7 @@ static bool send_ipv4_udp_msg(struct net_if *iface,
 	int ret;
 
 	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
-	frag = net_nbuf_get_reserve_data(0, K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 	net_buf_frag_add(buf, frag);
 
 	net_nbuf_set_iface(buf, iface);

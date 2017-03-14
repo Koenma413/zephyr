@@ -26,8 +26,12 @@ doc/html
 doc/boards
 doc/samples
 doc/latex
+doc/themes/zephyr-docs-theme
 sanity-out/
 scripts/grub
 doc/reference/kconfig/CONFIG_*
 doc/reference/kconfig/index.rst
 tags
+.project
+.cproject
+.xxproject

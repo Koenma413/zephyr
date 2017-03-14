@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Wind River Systems, Inc.
+ * Copyright (c) 2016-2017 Wind River Systems, Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -239,6 +239,8 @@ static inline void _sched_lock(void)
 
 	--_current->base.sched_locked;
 
+	compiler_barrier();
+
 	K_DEBUG("scheduler locked (%p:%d)\n",
 		_current, _current->base.sched_locked);
 #endif
@@ -255,6 +257,8 @@ static ALWAYS_INLINE void _sched_unlock_no_reschedule(void)
 #ifdef CONFIG_PREEMPT_ENABLED
 	__ASSERT(!_is_in_isr(), "");
 	__ASSERT(_current->base.sched_locked != 0, "");
+
+	compiler_barrier();
 
 	++_current->base.sched_locked;
 #endif
@@ -346,6 +350,11 @@ static inline int _is_thread_pending(struct k_thread *thread)
 	return !!(thread->base.thread_state & _THREAD_PENDING);
 }
 
+static inline int _is_thread_dummy(struct k_thread *thread)
+{
+	return _is_thread_state_set(thread, _THREAD_DUMMY);
+}
+
 static inline void _mark_thread_as_polling(struct k_thread *thread)
 {
 	_set_thread_states(thread, _THREAD_POLLING);
@@ -431,44 +440,34 @@ static inline struct k_thread *_peek_first_pending_thread(_wait_q_t *wait_q)
 	return (struct k_thread *)sys_dlist_peek_head(wait_q);
 }
 
-static inline struct k_thread *_get_thread_to_unpend(_wait_q_t *wait_q)
+static inline struct k_thread *
+_find_first_thread_to_unpend(_wait_q_t *wait_q, struct k_thread *from)
 {
 #ifdef CONFIG_SYS_CLOCK_EXISTS
 	extern volatile int _handling_timeouts;
 
 	if (_handling_timeouts) {
 		sys_dlist_t *q = (sys_dlist_t *)wait_q;
-		sys_dnode_t *cur, *next;
+		sys_dnode_t *cur = from ? &from->base.k_q_node : NULL;
 
 		/* skip threads that have an expired timeout */
-		SYS_DLIST_FOR_EACH_NODE_SAFE(q, cur, next) {
+		SYS_DLIST_ITERATE_FROM_NODE(q, cur) {
 			struct k_thread *thread = (struct k_thread *)cur;
 
 			if (_is_thread_timeout_expired(thread)) {
 				continue;
 			}
 
-			sys_dlist_remove(cur);
 			return thread;
 		}
 		return NULL;
 	}
+#else
+	ARG_UNUSED(from);
 #endif
 
-	return (struct k_thread *)sys_dlist_get(wait_q);
-}
+	return (struct k_thread *)sys_dlist_peek_head(wait_q);
 
-/* unpend the first thread from a wait queue */
-/* must be called with interrupts locked */
-static inline struct k_thread *_unpend_first_thread(_wait_q_t *wait_q)
-{
-	struct k_thread *thread = _get_thread_to_unpend(wait_q);
-
-	if (thread) {
-		_mark_thread_as_not_pending(thread);
-	}
-
-	return thread;
 }
 
 /* Unpend a thread from the wait queue it is on. Thread must be pending. */
@@ -479,6 +478,19 @@ static inline void _unpend_thread(struct k_thread *thread)
 
 	sys_dlist_remove(&thread->base.k_q_node);
 	_mark_thread_as_not_pending(thread);
+}
+
+/* unpend the first thread from a wait queue */
+/* must be called with interrupts locked */
+static inline struct k_thread *_unpend_first_thread(_wait_q_t *wait_q)
+{
+	struct k_thread *thread = _find_first_thread_to_unpend(wait_q, NULL);
+
+	if (thread) {
+		_unpend_thread(thread);
+	}
+
+	return thread;
 }
 
 #endif /* _ksched__h_ */

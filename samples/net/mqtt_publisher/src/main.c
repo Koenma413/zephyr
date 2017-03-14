@@ -14,12 +14,15 @@
 #include <string.h>
 #include <errno.h>
 
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/conn.h>
+#include <gatt/ipss.h>
+#endif
+
 #include "config.h"
 
-/**
- * @brief mqtt_client_ctx	Container of some structures used by the
- *				publisher app.
- */
+/* Container for some structures used by the MQTT publisher app. */
 struct mqtt_client_ctx {
 	/**
 	 * The connect message structure is only used during the connect
@@ -64,15 +67,13 @@ static struct net_context *net_ctx;
 static struct mqtt_client_ctx client_ctx;
 
 /* This routine sets some basic properties for the network context variable */
-static
-int network_setup(struct net_context **net_ctx, const char *local_addr,
-		  const char *server_addr, uint16_t server_port);
+static int network_setup(struct net_context **net_ctx, const char *local_addr,
+			 const char *server_addr, uint16_t server_port);
 
 /* The signature of this routine must match the connect callback declared at
  * the mqtt.h header.
  */
-static
-void connect_cb(struct mqtt_ctx *mqtt_ctx)
+static void connect_cb(struct mqtt_ctx *mqtt_ctx)
 {
 	struct mqtt_client_ctx *client_ctx;
 
@@ -91,8 +92,7 @@ void connect_cb(struct mqtt_ctx *mqtt_ctx)
 /* The signature of this routine must match the disconnect callback declared at
  * the mqtt.h header.
  */
-static
-void disconnect_cb(struct mqtt_ctx *mqtt_ctx)
+static void disconnect_cb(struct mqtt_ctx *mqtt_ctx)
 {
 	struct mqtt_client_ctx *client_ctx;
 
@@ -121,9 +121,8 @@ void disconnect_cb(struct mqtt_ctx *mqtt_ctx)
  * unknown pkt_id, this routine must return an error, for example -EINVAL or
  * any negative value.
  */
-static
-int publish_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_id,
-	       enum mqtt_packet type)
+static int publish_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_id,
+		      enum mqtt_packet type)
 {
 	struct mqtt_client_ctx *client_ctx;
 	const char *str;
@@ -162,34 +161,51 @@ int publish_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_id,
  * The signature of this routine must match the malformed callback declared at
  * the mqtt.h header.
  */
-static
-void malformed_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_type)
+static void malformed_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_type)
 {
 	printk("[%s:%d] pkt_type: %u\n", __func__, __LINE__, pkt_type);
 }
 
-static const char topic[] = "sensors";
-
-char payload[] = "DOORS:OPEN_QoSx";
-
-static
-void prepare_mqtt_publish_msg(struct mqtt_publish_msg *pub_msg,
-			      enum mqtt_qos qos)
+static char *get_mqtt_payload(enum mqtt_qos qos)
 {
-	payload[strlen(payload) - 1] = '0' + qos;
+#if APP_BLUEMIX_TOPIC
+	static char payload[30];
 
+	snprintk(payload, sizeof(payload), "{d:{temperature:%d}}",
+		 (uint8_t)sys_rand32_get());
+#else
+	static char payload[] = "DOORS:OPEN_QoSx";
+
+	payload[strlen(payload) - 1] = '0' + qos;
+#endif
+
+	return payload;
+}
+
+static char *get_mqtt_topic(void)
+{
+#if APP_BLUEMIX_TOPIC
+	return "iot-2/type/"BLUEMIX_DEVTYPE"/id/"BLUEMIX_DEVID
+	       "/evt/"BLUEMIX_EVENT"/fmt/"BLUEMIX_FORMAT;
+#else
+	return "sensors";
+#endif
+}
+
+static void prepare_mqtt_publish_msg(struct mqtt_publish_msg *pub_msg,
+				     enum mqtt_qos qos)
+{
 	/* MQTT message payload may be anything, we we use C strings */
-	pub_msg->msg = payload;
+	pub_msg->msg = get_mqtt_payload(qos);
 	/* Payload's length */
 	pub_msg->msg_len = strlen(client_ctx.pub_msg.msg);
 	/* MQTT Quality of Service */
 	pub_msg->qos = qos;
 	/* Message's topic */
-	pub_msg->topic = (char *)topic;
+	pub_msg->topic = get_mqtt_topic();
 	pub_msg->topic_len = strlen(client_ctx.pub_msg.topic);
 	/* Packet Identifier, always use different values */
 	pub_msg->pkt_id = sys_rand32_get();
-
 }
 
 #define RC_STR(rc)	((rc) == 0 ? "OK" : "ERROR")
@@ -199,8 +215,7 @@ void prepare_mqtt_publish_msg(struct mqtt_publish_msg *pub_msg,
 	       (func), rc, RC_STR(rc))
 
 /* In this routine we block until the connected variable is 1 */
-static
-int try_to_connect(struct mqtt_client_ctx *client_ctx)
+static int try_to_connect(struct mqtt_client_ctx *client_ctx)
 {
 	int i = 0;
 
@@ -223,8 +238,7 @@ int try_to_connect(struct mqtt_client_ctx *client_ctx)
 	return -EINVAL;
 }
 
-static
-void publisher(void)
+static void publisher(void)
 {
 	int i, rc;
 
@@ -266,7 +280,8 @@ void publisher(void)
 	 * will be set to 0 also. Please don't do that, set always to 1.
 	 * Clean session = 0 is not yet supported.
 	 */
-	client_ctx.connect_msg.client_id = "zephyr_publisher";
+	client_ctx.connect_msg.client_id = MQTT_CLIENTID;
+	client_ctx.connect_msg.client_id_len = strlen(MQTT_CLIENTID);
 	client_ctx.connect_msg.clean_session = 1;
 
 	client_ctx.connect_data = "CONNECTED";
@@ -309,8 +324,7 @@ exit_app:
 	printk("\nBye!\n");
 }
 
-static
-int set_addr(struct sockaddr *sock_addr, const char *addr, uint16_t port)
+static int set_addr(struct sockaddr *sock_addr, const char *addr, uint16_t port)
 {
 	void *ptr;
 	int rc;
@@ -334,8 +348,31 @@ int set_addr(struct sockaddr *sock_addr, const char *addr, uint16_t port)
 	return rc;
 }
 
-int network_setup(struct net_context **net_ctx, const char *local_addr,
-		  const char *server_addr, uint16_t server_port)
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+static bool bt_connected;
+
+static
+void bt_connect_cb(struct bt_conn *conn, uint8_t err)
+{
+	bt_connected = true;
+}
+
+static
+void bt_disconnect_cb(struct bt_conn *conn, uint8_t reason)
+{
+	bt_connected = false;
+	printk("bt disconnected (reason %u)\n", reason);
+}
+
+static
+struct bt_conn_cb bt_conn_cb = {
+	.connected = bt_connect_cb,
+	.disconnected = bt_disconnect_cb,
+};
+#endif
+
+static int network_setup(struct net_context **net_ctx, const char *local_addr,
+			 const char *server_addr, uint16_t server_port)
 {
 #ifdef CONFIG_NET_IPV6
 	socklen_t addr_len = sizeof(struct sockaddr_in6);
@@ -345,10 +382,36 @@ int network_setup(struct net_context **net_ctx, const char *local_addr,
 	socklen_t addr_len = sizeof(struct sockaddr_in);
 	sa_family_t family = AF_INET;
 #endif
-	struct sockaddr local_sock;
-	struct sockaddr server_sock;
+	struct sockaddr server_sock, local_sock;
 	void *p;
 	int rc;
+
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+	const char *progress_mark = "/-\\|";
+	int i = 0;
+
+	rc = bt_enable(NULL);
+	if (rc) {
+		printk("bluetooth init failed\n");
+		return rc;
+	}
+
+	ipss_init();
+	bt_conn_cb_register(&bt_conn_cb);
+	rc = ipss_advertise();
+	if (rc) {
+		printk("advertising failed to start\n");
+		return rc;
+	}
+
+	printk("\nwaiting for bt connection: ");
+	while (bt_connected == false) {
+		k_sleep(250);
+		printk("%c\b", progress_mark[i]);
+		i = (i + 1) % (sizeof(progress_mark) - 1);
+	}
+	printk("\n");
+#endif
 
 	rc = set_addr(&local_sock, local_addr, 0);
 	if (rc) {

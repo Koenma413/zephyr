@@ -195,7 +195,7 @@ int net_6lo_dev_init(struct device *dev)
 
 static void net_6lo_iface_init(struct net_if *iface)
 {
-	net_if_set_link_addr(iface, src_mac, 8);
+	net_if_set_link_addr(iface, src_mac, 8, NET_LINK_IEEE802154);
 }
 
 static int tester_send(struct net_if *iface, struct net_buf *buf)
@@ -322,7 +322,7 @@ static struct net_buf *create_buf(struct net_6lo_data *data)
 	net_nbuf_ll_dst(buf)->addr = dst_mac;
 	net_nbuf_ll_dst(buf)->len = 8;
 
-	frag = net_nbuf_get_reserve_data(0, K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 	if (!frag) {
 		net_nbuf_unref(buf);
 		return NULL;
@@ -384,7 +384,7 @@ static struct net_buf *create_buf(struct net_6lo_data *data)
 		net_buf_frag_add(buf, frag);
 
 		if (remaining > 0) {
-			frag = net_nbuf_get_reserve_data(0, K_FOREVER);
+			frag = net_nbuf_get_frag(buf, K_FOREVER);
 		}
 	}
 

@@ -17,14 +17,14 @@
  */
 
 #include <ztest.h>
-#include <irq_offload.h>
 
 #define STACK_SIZE 512
-#define PIPE_LEN 8
-#define BYTES_TO_WRITE (PIPE_LEN>>1)
+#define PIPE_LEN 16
+#define BYTES_TO_WRITE 4
 #define BYTES_TO_READ BYTES_TO_WRITE
+K_MEM_POOL_DEFINE(mpool, BYTES_TO_WRITE, PIPE_LEN, 1, BYTES_TO_WRITE);
 
-static unsigned char __aligned(4) data[] = "abcd1234";
+static unsigned char __aligned(4) data[] = "abcd1234$%^&PIPE";
 /**TESTPOINT: init via K_PIPE_DEFINE*/
 K_PIPE_DEFINE(kpipe, PIPE_LEN, 4);
 static struct k_pipe pipe;
@@ -46,6 +46,23 @@ static void tpipe_put(struct k_pipe *ppipe)
 	}
 }
 
+static void tpipe_block_put(struct k_pipe *ppipe, struct k_sem *sema)
+{
+	struct k_mem_block block;
+
+	for (int i = 0; i < PIPE_LEN; i += BYTES_TO_WRITE) {
+		/**TESTPOINT: pipe block put*/
+		assert_equal(k_mem_pool_alloc(&mpool, &block, BYTES_TO_WRITE,
+			K_NO_WAIT), 0, NULL);
+		memcpy(block.data, &data[i], BYTES_TO_WRITE);
+		k_pipe_block_put(ppipe, &block, BYTES_TO_WRITE, sema);
+		if (sema) {
+			k_sem_take(sema, K_FOREVER);
+		}
+		k_mem_pool_free(&block);
+	}
+}
+
 static void tpipe_get(struct k_pipe *ppipe)
 {
 	unsigned char rx_data[PIPE_LEN];
@@ -57,23 +74,12 @@ static void tpipe_get(struct k_pipe *ppipe)
 		to_rd = (PIPE_LEN - i) >= BYTES_TO_READ ?
 			BYTES_TO_READ : (PIPE_LEN - i);
 		assert_false(k_pipe_get(ppipe, &rx_data[i], to_rd,
-				&rd_byte, 1, K_NO_WAIT), NULL);
+				&rd_byte, 1, K_FOREVER), NULL);
 		assert_true(rd_byte == to_rd || rd_byte == 1, NULL);
 	}
 	for (int i = 0; i < PIPE_LEN; i++) {
 		assert_equal(rx_data[i], data[i], NULL);
 	}
-}
-
-/*entry of contexts*/
-static void tIsr_entry_put(void *p)
-{
-	tpipe_put((struct k_pipe *)p);
-}
-
-static void tIsr_entry_get(void *p)
-{
-	tpipe_get((struct k_pipe *)p);
 }
 
 static void tThread_entry(void *p1, void *p2, void *p3)
@@ -82,6 +88,12 @@ static void tThread_entry(void *p1, void *p2, void *p3)
 	k_sem_give(&end_sema);
 
 	tpipe_put((struct k_pipe *)p1);
+	k_sem_give(&end_sema);
+}
+
+static void tThread_block_put(void *p1, void *p2, void *p3)
+{
+	tpipe_block_put((struct k_pipe *)p1, (struct k_sem *)p2);
 	k_sem_give(&end_sema);
 }
 
@@ -103,18 +115,6 @@ static void tpipe_thread_thread(struct k_pipe *ppipe)
 	k_thread_abort(tid);
 }
 
-static void tpipe_thread_isr(struct k_pipe *ppipe)
-{
-	k_sem_init(&end_sema, 0, 1);
-
-	/**TESTPOINT: thread-isr data passing via pipe*/
-	irq_offload(tIsr_entry_put, ppipe);
-	tpipe_get(ppipe);
-
-	tpipe_put(ppipe);
-	irq_offload(tIsr_entry_get, ppipe);
-}
-
 /*test cases*/
 void test_pipe_thread2thread(void)
 {
@@ -126,12 +126,46 @@ void test_pipe_thread2thread(void)
 	tpipe_thread_thread(&kpipe);
 }
 
-void test_pipe_thread2isr(void)
+void test_pipe_block_put(void)
 {
-	/**TESTPOINT: test k_pipe_init pipe*/
-	k_pipe_init(&pipe, data, PIPE_LEN);
-	tpipe_thread_isr(&pipe);
 
-	/**TESTPOINT: test K_PIPE_DEFINE pipe*/
-	tpipe_thread_isr(&kpipe);
+	/**TESTPOINT: test k_pipe_block_put without semaphore*/
+	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+		tThread_block_put, &kpipe, NULL, NULL,
+		K_PRIO_PREEMPT(0), 0, 0);
+	k_sleep(10);
+	tpipe_get(&kpipe);
+	k_sem_take(&end_sema, K_FOREVER);
+
+	k_thread_abort(tid);
 }
+
+void test_pipe_block_put_sema(void)
+{
+	struct k_sem sync_sema;
+
+	k_sem_init(&sync_sema, 0, 1);
+	/**TESTPOINT: test k_pipe_block_put with semaphore*/
+	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+		tThread_block_put, &pipe, &sync_sema, NULL,
+		K_PRIO_PREEMPT(0), 0, 0);
+	k_sleep(10);
+	tpipe_get(&pipe);
+	k_sem_take(&end_sema, K_FOREVER);
+
+	k_thread_abort(tid);
+}
+
+void test_pipe_get_put(void)
+{
+	/**TESTPOINT: test API sequence: [get, put]*/
+	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+		tThread_block_put, &kpipe, NULL, NULL,
+		K_PRIO_PREEMPT(0), 0, 0);
+	/*get will be executed previor to put*/
+	tpipe_get(&kpipe);
+	k_sem_take(&end_sema, K_FOREVER);
+
+	k_thread_abort(tid);
+}
+

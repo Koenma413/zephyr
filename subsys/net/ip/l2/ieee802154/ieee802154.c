@@ -92,15 +92,14 @@ static inline void ieee802154_acknowledge(struct net_if *iface,
 		return;
 	}
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
+	buf = net_nbuf_get_reserve_tx(IEEE802154_ACK_PKT_LENGTH, K_FOREVER);
 	if (!buf) {
 		return;
 	}
 
-	frag = net_nbuf_get_reserve_data(IEEE802154_ACK_PKT_LENGTH, K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 
 	net_buf_frag_insert(buf, frag);
-	net_nbuf_set_ll_reserve(buf, net_buf_headroom(frag));
 
 	if (ieee802154_create_ack_frame(iface, buf, mpdu->mhr.fs->sequence)) {
 		const struct ieee802154_radio_api *radio =
@@ -140,6 +139,8 @@ static inline void set_buf_ll_addr(struct net_linkaddr *addr, bool comp,
 		addr->len = 0;
 		addr->addr = NULL;
 	}
+
+	addr->type = NET_LINK_IEEE802154;
 }
 
 #ifdef CONFIG_NET_6LO
@@ -264,16 +265,10 @@ static enum net_verdict ieee802154_send(struct net_if *iface,
 {
 	uint8_t reserved_space = net_nbuf_ll_reserve(buf);
 	struct net_buf *frag;
-	struct in6_addr dst;
 
 	if (net_nbuf_family(buf) != AF_INET6) {
 		return NET_DROP;
 	}
-
-	/* 6lo is going to compress the ipv6 header, and thus accessing
-	 * packet's ipv6 address won't be possible anymore when creating
-	 * the frame */
-	memcpy(&dst, &NET_IPV6_BUF(buf)->dst, sizeof(struct in6_addr));
 
 	if (!ieee802154_manage_send_buffer(iface, buf)) {
 		return NET_DROP;
@@ -287,7 +282,7 @@ static enum net_verdict ieee802154_send(struct net_if *iface,
 			return NET_DROP;
 		}
 
-		if (!ieee802154_create_data_frame(iface, &dst,
+		if (!ieee802154_create_data_frame(iface, net_nbuf_ll_dst(buf),
 						  frag->data - reserved_space,
 						  reserved_space)) {
 			return NET_DROP;
@@ -303,13 +298,13 @@ static enum net_verdict ieee802154_send(struct net_if *iface,
 	return NET_OK;
 }
 
-static uint16_t ieeee802154_reserve(struct net_if *iface, void *data)
+static uint16_t ieee802154_reserve(struct net_if *iface, void *data)
 {
 	return ieee802154_compute_header_size(iface, (struct in6_addr *)data);
 }
 
 NET_L2_INIT(IEEE802154_L2,
-	    ieee802154_recv, ieee802154_send, ieeee802154_reserve, NULL);
+	    ieee802154_recv, ieee802154_send, ieee802154_reserve, NULL);
 
 void ieee802154_init(struct net_if *iface)
 {

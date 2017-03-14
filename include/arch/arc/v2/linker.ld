@@ -57,6 +57,8 @@ MEMORY {
 #ifdef DCCM_START
 	DCCM  (rw)  : ORIGIN = DCCM_START,  LENGTH = DCCM_SIZE*1k
 #endif
+	/* Used by and documented in include/linker/intlist.ld */
+	IDT_LIST  (wx)      : ORIGIN = 0xFFFFF7FF, LENGTH = 2K
 }
 
 SECTIONS {
@@ -70,29 +72,11 @@ SECTIONS {
 
 		KEEP(*(.exc_vector_table))
 		KEEP(*(".exc_vector_table.*"))
-
-
 		KEEP(*(IRQ_VECTOR_TABLE))
 
-		KEEP(*(.isr_irq*))
-
-		/*
-		 * The following sections maps the location of the different
-		 * rows for the _sw_isr_table. Each row maps to an IRQ entry
-		 * (handler, argument).
-		 *
-		 * In ARC architecture, IRQ 0-15 are reserved for the system
-		 * and are not * assignable by the user, for that reason the
-		 * linker sections start on IRQ 16
-		 */
-
-		/* sections for IRQ16-19 */
-		KEEP(*(SORT(.gnu.linkonce.isr_irq[1][6-9])))
-		/* sections for IRQ20-99 */
-		KEEP(*(SORT(.gnu.linkonce.isr_irq[2-9][0-9])))
-		/* sections for IRQ100-999 */
-		KEEP(*(SORT(.gnu.linkonce.isr_irq[1-9][0-9][0-9])))
-
+#ifdef CONFIG_GEN_SW_ISR_TABLE
+		KEEP(*(SW_ISR_TABLE))
+#endif
 		*(.text)
 		*(".text.*")
 		*(.gnu.linkonce.t.*)
@@ -103,6 +87,8 @@ SECTIONS {
 #include <linker/common-rom.ld>
 
 	SECTION_PROLOGUE(_RODATA_SECTION_NAME,,) {
+		KEEP(*(.openocd_dbg))
+		KEEP(*(".openocd_dbg.*"))
 		*(.rodata)
 		*(".rodata.*")
 		*(.gnu.linkonce.r.*)
@@ -141,7 +127,7 @@ SECTIONS {
 
 	__data_ram_end = .;
 
-	SECTION_PROLOGUE(_BSS_SECTION_NAME,(NOLOAD),) {
+	SECTION_DATA_PROLOGUE(_BSS_SECTION_NAME,(NOLOAD),) {
 		/*
 		 * For performance, BSS section is assumed to be 4 byte aligned and
 		 * a multiple of 4 bytes
@@ -156,7 +142,7 @@ SECTIONS {
 		 * potential left over bytes.
 		 */
 		__bss_end = ALIGN(4);
-	} GROUP_LINK_IN(RAMABLE_REGION)
+	} GROUP_DATA_LINK_IN(RAMABLE_REGION, RAMABLE_REGION)
 
 	SECTION_PROLOGUE(_NOINIT_SECTION_NAME,(NOLOAD),) {
 		/*
@@ -189,4 +175,7 @@ SECTIONS {
 #include <custom-sections.ld>
 #endif
 
+#ifdef CONFIG_GEN_ISR_TABLES
+#include <linker/intlist.ld>
+#endif
 	}

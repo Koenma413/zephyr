@@ -21,6 +21,32 @@
 
 NET_BUF_POOL_DEFINE(http_msg_pool, HTTP_BUF_CTR, HTTP_BUF_SIZE, 0, NULL);
 
+void http_accept_cb(struct net_context *net_ctx, struct sockaddr *addr,
+		    socklen_t addr_len, int status, void *data)
+{
+	struct http_server_ctx *http_ctx = NULL;
+
+	ARG_UNUSED(addr_len);
+	ARG_UNUSED(data);
+
+	if (status != 0) {
+		net_context_put(net_ctx);
+		return;
+	}
+
+	print_client_banner(addr);
+
+	http_ctx = http_ctx_get();
+	if (!http_ctx) {
+		net_context_put(net_ctx);
+		return;
+	}
+
+	http_ctx_set(http_ctx, net_ctx);
+
+	net_context_recv(net_ctx, http_rx_tx, K_NO_WAIT, http_ctx);
+}
+
 /**
  * @brief http_ctx_release	Releases an HTTP context
  * @return			0, future versions may return error codes
@@ -118,7 +144,7 @@ void http_rx_tx(struct net_context *net_ctx, struct net_buf *rx, int status,
 	}
 
 	if (http_ctx->parser.http_errno != HPE_OK) {
-		http_write_400_bad_request(http_ctx);
+		http_response_400(http_ctx, NULL);
 	} else {
 		http_tx(http_ctx);
 	}
@@ -236,8 +262,7 @@ exit_routine:
 /**
  * @brief server_collection	This is a collection of server ctx structs
  */
-static
-struct http_server_ctx server_collection[HTTP_MAX_NUMBER_SERVER_CTX];
+static struct http_server_ctx server_collection[HTTP_MAX_NUMBER_SERVER_CTX];
 
 /**
  * @brief http_url_ctx	Just one URL context per application
@@ -262,7 +287,7 @@ struct http_server_ctx *http_ctx_get(void)
 
 	for (i = 0; i < HTTP_MAX_NUMBER_SERVER_CTX; i++) {
 
-		if (server_collection[i].used == HTTP_CTX_FREE) {
+		if (server_collection[i].state == HTTP_CTX_FREE) {
 
 			printf("[%s:%d] Free ctx found, index: %d\n",
 			       __func__, __LINE__, i);
@@ -283,7 +308,7 @@ int http_ctx_set(struct http_server_ctx *http_ctx, struct net_context *net_ctx)
 		return -EINVAL;
 	}
 
-	http_ctx->used = HTTP_CTX_IN_USE;
+	http_ctx->state = HTTP_CTX_IN_USE;
 	http_ctx->net_ctx = net_ctx;
 
 	return 0;
@@ -296,7 +321,7 @@ int http_ctx_release(struct http_server_ctx *http_ctx)
 		return 0;
 	}
 
-	http_ctx->used = HTTP_CTX_FREE;
+	http_ctx->state = HTTP_CTX_FREE;
 
 	return 0;
 }

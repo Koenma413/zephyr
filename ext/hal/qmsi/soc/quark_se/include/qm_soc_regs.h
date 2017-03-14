@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Intel Corporation
+ * Copyright (c) 2017, Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -517,6 +517,9 @@ qm_scss_peripheral_reg_t test_scss_peripheral;
 #define QM_SCSS_PERIPHERAL_BASE (0xB0800800)
 #define QM_SCSS_PERIPHERAL ((qm_scss_peripheral_reg_t *)QM_SCSS_PERIPHERAL_BASE)
 #endif
+
+/* SS code protection region Lock bit. */
+#define QM_SCSS_CFG_LOCK_PROT_RANGE_LOCK BIT(10)
 
 /** @} */
 
@@ -1567,6 +1570,10 @@ extern qm_flash_reg_t *qm_flash[QM_FLASH_NUM];
 #define ROM_RD_DIS_U BIT(3)
 /* ROM read disable for lower 4k. */
 #define ROM_RD_DIS_L BIT(2)
+/* Flash prefetch buffer flush bit. */
+#define QM_FLASH_CTRL_PRE_FLUSH_MASK BIT(1)
+/* Flash prefetch enable bit. */
+#define QM_FLASH_CTRL_PRE_EN_MASK BIT(0)
 
 #define QM_FLASH_ADDRESS_MASK (0x7FF)
 /* Increment by 4 bytes each time, but there is an offset of 2, so 0x10. */
@@ -1663,13 +1670,13 @@ qm_mpr_reg_t test_mpr;
 
 #endif
 
-#define QM_MPR_RD_EN_OFFSET (20)
-#define QM_MPR_RD_EN_MASK 0x700000
-#define QM_MPR_WR_EN_OFFSET (24)
-#define QM_MPR_WR_EN_MASK 0x7000000
+#define QM_MPR_UP_BOUND_OFFSET (10)
+#define QM_MPR_WR_EN_OFFSET (20)
+#define QM_MPR_WR_EN_MASK 0x700000
+#define QM_MPR_RD_EN_OFFSET (24)
+#define QM_MPR_RD_EN_MASK 0x7000000
 #define QM_MPR_EN_LOCK_OFFSET (30)
 #define QM_MPR_EN_LOCK_MASK 0xC0000000
-#define QM_MPR_UP_BOUND_OFFSET (10)
 #define QM_MPR_VSTS_VALID BIT(31)
 /** @} */
 

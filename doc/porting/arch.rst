@@ -83,7 +83,7 @@ When a device wants to signal the processor that there is some work to be done
 on its behalf, it raises an interrupt. When a thread does an operation that is
 not handled by the serial flow of the software itself, it raises an exception.
 Both, interrupts and exceptions, pass control to a handler. The handler is
-knowns as an :abbr:`ISR (Interrupt Service Routine)` in the case of
+known as an :abbr:`ISR (Interrupt Service Routine)` in the case of
 interrupts. The handler perform the work required the exception or the
 interrupt.  For interrupts, that work is device-specific. For exceptions, it
 depends on the exception, but most often the core kernel itself is responsible
@@ -134,7 +134,7 @@ parameter.
   executing. A common interrupt handler demuxer is installed for all entries of
   the real interrupt vector table, which then fetches the device's ISR and
   parameter from the separate table. This approach is commonly used in the ARC
-  and ARM architectures via the :option:`CONFIG_SW_ISR_TABLE` implementation.
+  and ARM architectures via the :option:`CONFIG_GEN_ISR_TABLES` implementation.
   You can find examples of the stubs by looking at :code:`_interrupt_enter()` in
   x86, :code:`_IntExit()` in ARM, :code:`_isr_wrapper()` in ARM, or the full
   implementation description for ARC in :file:`arch/arc/core/isr_wrapper.S`.

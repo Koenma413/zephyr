@@ -2,6 +2,7 @@
 
 #
 # Copyright (c) 2014-2015 Wind River Systems, Inc.
+# Copyright (c) 2016 Cadence Design Systems, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -105,6 +106,17 @@ config LOAPIC_TIMER_IRQ_PRIORITY
 	help
 	This options specifies the IRQ priority used by the LOAPIC timer.
 
+config TSC_CYCLES_PER_SEC
+	int
+	prompt "Frequency of x86 CPU timestamp counter"
+	default 0
+	depends on LOAPIC_TIMER
+	help
+	The x86 implementation of LOAPIC k_cycle_get_32() relies on the x86 TSC.
+	This runs at the CPU speed and not the bus speed. If set to 0, the
+	value of CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC will be used instead;
+	many MCUs these values are the same.
+
 config ARCV2_TIMER
 	bool "ARC Timer"
 	default y
@@ -163,6 +175,48 @@ config RISCV_MACHINE_TIMER
 	help
 	This module implements a kernel device driver for the generic RISCV machine
 	timer driver. It provides the standard "system clock driver" interfaces.
+
+config XTENSA_TIMER
+	bool "Xtensa timer support"
+	depends on XTENSA
+	default y
+	help
+	This module implements a kernel device driver for the Xtensa processor and
+	provides the standard "system clock driver" interfaces.
+	If unchecked, no timer will be used.
+	If checked it will use either an internal timer (default option) or an
+	external timer. In that case one shall unselect XTENSA_INTERNAL_TIMER and
+	define XTENSA_TIMER_IRQ and XTENSA_TIMER_IRQ_PRIORITY.
+
+config XTENSA_INTERNAL_TIMER
+	bool "Xtensa internal timer"
+	depends on XTENSA_TIMER
+	default y
+	help
+	This module implements a kernel device driver for the Xtensa processor
+	internal timer and provides the standard "system clock driver" interfaces.
+	If unchecked, an external timer will be used. It will rely on a tick
+	interrupt connected to an IRQ line. In this case one shall define
+	both XTENSA_TIMER_IRQ and XTENSA_TIMER_IRQ_PRIORITY.
+
+config XTENSA_TIMER_IRQ
+	int "Xtensa external timer interrupt number"
+	depends on XTENSA_TIMER && !XTENSA_INTERNAL_TIMER
+	range -1 31
+	default -1
+	help
+	This is the number of interrupt line used by the external timer.
+	The special value of -1 allows using the internal timer in order to
+	emulate an external timer. This is generally useful for running the project on
+	a simulator	where it is hard to emulate an external interrupt.
+
+config XTENSA_TIMER_IRQ_PRIORITY
+	int "Xtensa external timer interrupt priority"
+	depends on XTENSA_TIMER && !XTENSA_INTERNAL_TIMER
+	range 1 6
+	default 1
+	help
+	This is the priority of interrupt line.
 
 config SYSTEM_CLOCK_DISABLE
 	bool "API to disable system clock"

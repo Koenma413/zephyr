@@ -75,7 +75,12 @@ struct net_if_addr {
  */
 struct net_if_mcast_addr {
 	/** Is this multicast IP address used or not */
-	bool is_used;
+	uint8_t is_used : 1;
+
+	/** Did we join to this group */
+	uint8_t is_joined : 1;
+
+	uint8_t _unused : 6;
 
 	/** IP address */
 	struct net_addr address;
@@ -178,7 +183,7 @@ struct net_if {
 	ATOMIC_DEFINE(flags, NET_IF_NUM_FLAGS);
 
 	/** Interface's L2 layer */
-	const struct net_l2 const *l2;
+	const struct net_l2 * const l2;
 
 	/** Interface's private L2 data pointer */
 	void *l2_data;
@@ -197,12 +202,6 @@ struct net_if {
 
 	/** Queue for outgoing packets from apps */
 	struct k_fifo tx_queue;
-
-	/** Stack for the TX thread tied to this interface */
-#ifndef CONFIG_NET_TX_STACK_SIZE
-#define CONFIG_NET_TX_STACK_SIZE 1024
-#endif
-	NET_STACK_DEFINE_EMBEDDED(tx_stack, CONFIG_NET_TX_STACK_SIZE);
 
 #if defined(CONFIG_NET_IPV6)
 #define NET_IF_MAX_IPV6_ADDR CONFIG_NET_IF_UNICAST_IPV6_ADDR_COUNT
@@ -274,6 +273,9 @@ struct net_if {
 		/** IP address Renewal time */
 		uint32_t renewal_time;
 
+		/** IP address Rebinding time */
+		uint32_t rebinding_time;
+
 		/** Server ID */
 		struct in_addr server_id;
 
@@ -288,13 +290,19 @@ struct net_if {
 
 		/** Number of attempts made for REQUEST and RENEWAL messages */
 		uint8_t attempts;
+
+		/** Timer for DHCPv4 Client requests (DISCOVER,
+		 * REQUEST or RENEWAL)
+		 */
+		struct k_delayed_work timer;
+
+		/** T1 (Renewal) timer */
+		struct k_delayed_work t1_timer;
+
+		/** T2 (Rebinding) timer */
+		struct k_delayed_work t2_timer;
 	} dhcpv4;
 
-	/** Timer for DHCPv4 Client requests (DISCOVER, REQUEST or RENEWAL) */
-	struct k_delayed_work dhcpv4_timeout;
-
-	/** T1 (Renewal) timer */
-	struct k_delayed_work dhcpv4_t1_timer;
 #endif
 } __net_if_align;
 
@@ -419,11 +427,13 @@ void net_if_start_rs(struct net_if *iface);
  * @param iface Pointer to a network interface structure
  * @param addr a pointer on a uint8_t buffer representing the address
  * @param len length of the address buffer
+ * @param type network bearer type of this link address
  *
  * @return 0 on success
  */
 static inline int net_if_set_link_addr(struct net_if *iface,
-					uint8_t *addr, uint8_t len)
+				       uint8_t *addr, uint8_t len,
+				       enum net_link_type type)
 {
 	if (atomic_test_bit(iface->flags, NET_IF_UP)) {
 		return -EPERM;
@@ -431,6 +441,7 @@ static inline int net_if_set_link_addr(struct net_if *iface,
 
 	iface->link_addr.addr = addr;
 	iface->link_addr.len = len;
+	iface->link_addr.type = type;
 
 	return 0;
 }
@@ -618,6 +629,44 @@ bool net_if_ipv6_maddr_rm(struct net_if *iface, const struct in6_addr *addr);
  */
 struct net_if_mcast_addr *net_if_ipv6_maddr_lookup(const struct in6_addr *addr,
 						   struct net_if **iface);
+
+/**
+ * @brief Mark a given multicast address to be joined.
+ *
+ * @param addr IPv6 multicast address
+ */
+static inline void net_if_ipv6_maddr_join(struct net_if_mcast_addr *addr)
+{
+	NET_ASSERT(addr);
+
+	addr->is_joined = true;
+}
+
+/**
+ * @brief Check if given multicast address is joined or not.
+ *
+ * @param addr IPv6 multicast address
+ *
+ * @return True if address is joined, False otherwise.
+ */
+static inline bool net_if_ipv6_maddr_is_joined(struct net_if_mcast_addr *addr)
+{
+	NET_ASSERT(addr);
+
+	return addr->is_joined;
+}
+
+/**
+ * @brief Mark a given multicast address to be left.
+ *
+ * @param addr IPv6 multicast address
+ */
+static inline void net_if_ipv6_maddr_leave(struct net_if_mcast_addr *addr)
+{
+	NET_ASSERT(addr);
+
+	addr->is_joined = false;
+}
 
 /**
  * @brief Check if this IPv6 prefix belongs to this interface
@@ -1114,7 +1163,7 @@ void net_if_foreach(net_if_cb_t cb, void *user_data);
  */
 int net_if_up(struct net_if *iface);
 
-/*
+/**
  * @brief Bring interface down
  *
  * @param iface Pointer to network interface
@@ -1128,7 +1177,16 @@ struct net_if_api {
 	int (*send)(struct net_if *iface, struct net_buf *buf);
 };
 
+#if defined(CONFIG_NET_DHCPV4)
+#define NET_IF_DHCPV4_INIT .dhcpv4.state = NET_DHCPV4_DISABLED,
+#else
+#define NET_IF_DHCPV4_INIT
+#endif
+
 #define NET_IF_GET_NAME(dev_name, sfx) (__net_if_##dev_name##_##sfx)
+#define NET_IF_EVENT_GET_NAME(dev_name, sfx)	\
+	(__net_if_event_##dev_name##_##sfx)
+
 #define NET_IF_GET(dev_name, sfx)					\
 	((struct net_if *)&NET_IF_GET_NAME(dev_name, sfx))
 
@@ -1139,13 +1197,11 @@ struct net_if_api {
 		.l2 = &(NET_L2_GET_NAME(_l2)),				\
 		.l2_data = &(NET_L2_GET_DATA(dev_name, sfx)),		\
 		.mtu = _mtu,						\
+		NET_IF_DHCPV4_INIT					\
 	};								\
-	NET_STACK_INFO_ADDR(TX,						\
-			    dev_name,					\
-			    CONFIG_NET_TX_STACK_SIZE,			\
-			    CONFIG_NET_TX_STACK_SIZE,			\
-			    NET_IF_GET(dev_name, sfx)->tx_stack,	\
-			    sfx)
+	static struct k_poll_event					\
+	(NET_IF_EVENT_GET_NAME(dev_name, sfx)) __used			\
+		__attribute__((__section__(".net_if_event.data"))) = {}
 
 
 /* Network device initialization macros */

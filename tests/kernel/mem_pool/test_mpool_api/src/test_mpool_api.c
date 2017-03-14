@@ -19,7 +19,6 @@
  */
 
 #include <ztest.h>
-#include <irq_offload.h>
 #include "test_mpool.h"
 
 /** TESTPOINT: Statically define and initialize a memory pool*/
@@ -76,11 +75,6 @@ void test_mpool_alloc_free_thread(void)
 	tmpool_alloc_free(NULL);
 }
 
-void test_mpool_alloc_free_isr(void)
-{
-	irq_offload(tmpool_alloc_free, NULL);
-}
-
 void test_mpool_alloc_size(void)
 {
 	struct k_mem_block block[BLK_NUM_MIN];
@@ -125,7 +119,7 @@ void test_mpool_alloc_size(void)
 void test_mpool_alloc_timeout(void)
 {
 	struct k_mem_block block[BLK_NUM_MIN], fblock;
-	uint64_t tms;
+	int64_t tms;
 
 	for (int i = 0; i < BLK_NUM_MIN; i++) {
 		assert_equal(k_mem_pool_alloc(&kmpool, &block[i], BLK_SIZE_MIN,

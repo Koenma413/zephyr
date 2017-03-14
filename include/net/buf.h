@@ -205,7 +205,7 @@ void net_buf_simple_push_le16(struct net_buf_simple *buf, uint16_t val);
 /**
  *  @brief Push 16-bit value to the beginning of the buffer
  *
- *  Adds 16-bit value in little endian format to the beginning of the
+ *  Adds 16-bit value in big endian format to the beginning of the
  *  buffer.
  *
  *  @param buf Buffer to update.
@@ -456,6 +456,17 @@ struct net_buf_pool {
 	/** Size of the user data associated with each buffer. */
 	const uint16_t user_data_size;
 
+#if defined(CONFIG_NET_BUF_POOL_USAGE)
+	/** Amount of available buffers in the pool. */
+	int16_t avail_count;
+
+	/** Total size of the pool. */
+	const uint16_t pool_size;
+
+	/** Name of the pool. Used when printing pool information. */
+	const char *name;
+#endif /* CONFIG_NET_BUF_POOL_USAGE */
+
 	/** Optional destroy callback when buffer is freed. */
 	void (*const destroy)(struct net_buf *buf);
 
@@ -463,6 +474,22 @@ struct net_buf_pool {
 	struct net_buf * const __bufs;
 };
 
+#if defined(CONFIG_NET_BUF_POOL_USAGE)
+#define NET_BUF_POOL_INITIALIZER(_pool, _bufs, _count, _size, _ud_size,      \
+				 _destroy)                                   \
+	{                                                                    \
+		.free = K_LIFO_INITIALIZER(_pool.free),                      \
+		.__bufs = (struct net_buf *)_bufs,                           \
+		.buf_count = _count,                                         \
+		.uninit_count = _count,                                      \
+		.avail_count = _count,                                       \
+		.pool_size = sizeof(_net_buf_pool_##_pool),                  \
+		.buf_size = _size,                                           \
+		.user_data_size = _ud_size,                                  \
+		.destroy = _destroy,                                         \
+		.name = STRINGIFY(_pool),                                    \
+	}
+#else
 #define NET_BUF_POOL_INITIALIZER(_pool, _bufs, _count, _size, _ud_size,      \
 				 _destroy)                                   \
 	{                                                                    \
@@ -474,6 +501,7 @@ struct net_buf_pool {
 		.user_data_size = _ud_size,                                  \
 		.destroy = _destroy,                                         \
 	}
+#endif /* CONFIG_NET_BUF_POOL_USAGE */
 
 /** @def NET_BUF_POOL_DEFINE
  *  @brief Define a new pool for buffers
@@ -939,7 +967,15 @@ struct net_buf *net_buf_frag_add(struct net_buf *head, struct net_buf *frag);
  *  @return Pointer to the buffer following the fragment, or NULL if it
  *          had no further fragments.
  */
+#if defined(CONFIG_NET_BUF_LOG)
+struct net_buf *net_buf_frag_del_debug(struct net_buf *parent,
+				       struct net_buf *frag,
+				       const char *func, int line);
+#define net_buf_frag_del(_parent, _frag) \
+	net_buf_frag_del_debug(_parent, _frag, __func__, __LINE__)
+#else
 struct net_buf *net_buf_frag_del(struct net_buf *parent, struct net_buf *frag);
+#endif
 
 /** @brief Calculate amount of bytes stored in fragments.
  *

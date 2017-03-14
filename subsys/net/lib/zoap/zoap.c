@@ -335,12 +335,15 @@ int zoap_packet_init(struct zoap_packet *pkt,
 }
 
 int zoap_pending_init(struct zoap_pending *pending,
-		      const struct zoap_packet *request)
+		      const struct zoap_packet *request,
+		      const struct sockaddr *addr)
 {
 	memset(pending, 0, sizeof(*pending));
-	memcpy(&pending->request, request, sizeof(*request));
+	pending->id = zoap_header_get_id(request);
+	memcpy(&pending->addr, addr, sizeof(*addr));
 
-	/* FIXME: keeping a reference to the original net_buf is necessary? */
+	/* Will increase the reference count when the pending is cycled */
+	pending->buf = request->buf;
 
 	return 0;
 }
@@ -352,9 +355,7 @@ struct zoap_pending *zoap_pending_next_unused(
 	size_t i;
 
 	for (i = 0, p = pendings; i < len; i++, p++) {
-		struct zoap_packet *pkt = &p->request;
-
-		if (p->timeout == 0 && !pkt->buf) {
+		if (p->timeout == 0 && !p->buf) {
 			return p;
 		}
 	}
@@ -408,41 +409,20 @@ struct zoap_observer *zoap_observer_next_unused(
 	return NULL;
 }
 
-static bool match_response(const struct zoap_packet *request,
-			   const struct zoap_packet *response)
-{
-	const uint8_t *req_token, *resp_token;
-	uint8_t req_tkl, resp_tkl;
-
-	if (zoap_header_get_id(request) != zoap_header_get_id(response)) {
-		return false;
-	}
-
-	req_token = zoap_header_get_token(request, &req_tkl);
-	resp_token = zoap_header_get_token(response, &resp_tkl);
-
-	if (req_tkl != resp_tkl) {
-		return false;
-	}
-
-	return req_tkl == 0 || memcmp(req_token, resp_token, req_tkl) == 0;
-}
-
 struct zoap_pending *zoap_pending_received(
 	const struct zoap_packet *response,
 	struct zoap_pending *pendings, size_t len)
 {
 	struct zoap_pending *p;
+	uint16_t resp_id = zoap_header_get_id(response);
 	size_t i;
 
 	for (i = 0, p = pendings; i < len; i++, p++) {
-		struct zoap_packet *req = &p->request;
-
 		if (!p->timeout) {
 			continue;
 		}
 
-		if (!match_response(req, response)) {
+		if (resp_id != p->id) {
 			continue;
 		}
 
@@ -489,15 +469,28 @@ static int32_t next_timeout(int32_t previous)
 bool zoap_pending_cycle(struct zoap_pending *pending)
 {
 	int32_t old = pending->timeout;
+	bool cont;
 
 	pending->timeout = next_timeout(pending->timeout);
 
-	return old != pending->timeout;
+	/* If the timeout changed, it's not the last, continue... */
+	cont = (old != pending->timeout);
+	if (cont) {
+		/*
+		 * When it it is the last retransmission, the buffer
+		 * will be destroyed when it is transmitted.
+		 */
+		net_nbuf_ref(pending->buf);
+	}
+
+	return cont;
 }
 
 void zoap_pending_clear(struct zoap_pending *pending)
 {
 	pending->timeout = 0;
+	net_nbuf_unref(pending->buf);
+	pending->buf = NULL;
 }
 
 static bool uri_path_eq(const struct zoap_packet *pkt,
@@ -548,7 +541,7 @@ static zoap_method_t method_from_code(const struct zoap_resource *resource,
 	}
 }
 
-static bool is_request(struct zoap_packet *pkt)
+static bool is_request(const struct zoap_packet *pkt)
 {
 	uint8_t code = zoap_header_get_code(pkt);
 
@@ -1210,15 +1203,16 @@ struct block_transfer {
 	bool more;
 };
 
-static unsigned int get_block_option(struct zoap_packet *pkt, uint16_t code)
+static int get_block_option(const struct zoap_packet *pkt, uint16_t code)
 {
 	struct zoap_option option;
 	unsigned int val;
 	int count = 1;
 
 	count = zoap_find_options(pkt, code, &option, count);
-	if (count <= 0)
-		return 0;
+	if (count <= 0) {
+		return -ENOENT;
+	}
 
 	val = zoap_option_value_to_int(&option);
 
@@ -1230,15 +1224,15 @@ static int update_descriptive_block(struct zoap_block_context *ctx,
 {
 	size_t new_current = GET_NUM(block) << (GET_BLOCK_SIZE(block) + 4);
 
-	if (block == 0) {
-		return -ENOENT;
+	if (block == -ENOENT) {
+		return 0;
 	}
 
 	if (size && ctx->total_size && ctx->total_size != size) {
 		return -EINVAL;
 	}
 
-	if (ctx->block_size > 0 && GET_BLOCK_SIZE(block) > ctx->block_size) {
+	if (ctx->current > 0 && GET_BLOCK_SIZE(block) > ctx->block_size) {
 		return -EINVAL;
 	}
 
@@ -1250,7 +1244,7 @@ static int update_descriptive_block(struct zoap_block_context *ctx,
 		ctx->total_size = size;
 	}
 	ctx->current = new_current;
-	ctx->block_size = GET_BLOCK_SIZE(block);
+	ctx->block_size = min(GET_BLOCK_SIZE(block), ctx->block_size);
 
 	return 0;
 }
@@ -1260,7 +1254,7 @@ static int update_control_block1(struct zoap_block_context *ctx,
 {
 	size_t new_current = GET_NUM(block) << (GET_BLOCK_SIZE(block) + 4);
 
-	if (block == 0) {
+	if (block == -ENOENT) {
 		return 0;
 	}
 
@@ -1283,7 +1277,7 @@ static int update_control_block2(struct zoap_block_context *ctx,
 {
 	size_t new_current = GET_NUM(block) << (GET_BLOCK_SIZE(block) + 4);
 
-	if (block == 0) {
+	if (block == -ENOENT) {
 		return 0;
 	}
 
@@ -1296,22 +1290,23 @@ static int update_control_block2(struct zoap_block_context *ctx,
 	}
 
 	ctx->current = new_current;
-	ctx->block_size = GET_BLOCK_SIZE(block);
-	ctx->total_size = size;
+	ctx->block_size = min(GET_BLOCK_SIZE(block), ctx->block_size);
 
 	return 0;
 }
 
-int zoap_update_from_block(struct zoap_packet *pkt,
+int zoap_update_from_block(const struct zoap_packet *pkt,
 			   struct zoap_block_context *ctx)
 {
-	unsigned int block1, block2, size1, size2;
-	int r;
+	int r, block1, block2, size1, size2;
 
 	block1 = get_block_option(pkt, ZOAP_OPTION_BLOCK1);
 	block2 = get_block_option(pkt, ZOAP_OPTION_BLOCK2);
 	size1 = get_block_option(pkt, ZOAP_OPTION_SIZE1);
 	size2 = get_block_option(pkt, ZOAP_OPTION_SIZE2);
+
+	size1 = size1 == -ENOENT ? 0 : size1;
+	size2 = size2 == -ENOENT ? 0 : size2;
 
 	if (is_request(pkt)) {
 		r = update_control_block2(ctx, block2, size2);

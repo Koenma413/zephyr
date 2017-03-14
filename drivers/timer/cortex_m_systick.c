@@ -28,7 +28,7 @@
 #include <arch/arm/cortex_m/cmsis.h>
 
 /* running total of timer count */
-static uint32_t clock_accumulated_count;
+static volatile uint32_t clock_accumulated_count;
 
 /*
  * A board support package's board.h header must provide definitions for the
@@ -557,9 +557,16 @@ int _sys_clock_driver_init(struct device *device)
  * systick counter is a 24-bit down counter which is reset to "reload" value
  * once it reaches 0.
  */
-uint32_t k_cycle_get_32(void)
+uint32_t _timer_cycle_get_32(void)
 {
-	return clock_accumulated_count + (SysTick->LOAD - SysTick->VAL);
+	uint32_t cac, count;
+
+	do {
+		cac = clock_accumulated_count;
+		count = SysTick->LOAD - SysTick->VAL;
+	} while (cac != clock_accumulated_count);
+
+	return cac + count;
 }
 
 #ifdef CONFIG_SYSTEM_CLOCK_DISABLE
