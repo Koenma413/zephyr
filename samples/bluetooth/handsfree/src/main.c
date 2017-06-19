@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
@@ -28,39 +28,44 @@ static void disconnected(struct bt_conn *conn)
 	printk("HFP HF Disconnected!\n");
 }
 
-static void service(struct bt_conn *conn, uint32_t value)
+static void service(struct bt_conn *conn, u32_t value)
 {
 	printk("Service indicator value: %u\n", value);
 }
 
-static void call(struct bt_conn *conn, uint32_t value)
+static void call(struct bt_conn *conn, u32_t value)
 {
 	printk("Call indicator value: %u\n", value);
 }
 
-static void call_setup(struct bt_conn *conn, uint32_t value)
+static void call_setup(struct bt_conn *conn, u32_t value)
 {
 	printk("Call Setup indicator value: %u\n", value);
 }
 
-static void call_held(struct bt_conn *conn, uint32_t value)
+static void call_held(struct bt_conn *conn, u32_t value)
 {
 	printk("Call Held indicator value: %u\n", value);
 }
 
-static void signal(struct bt_conn *conn, uint32_t value)
+static void signal(struct bt_conn *conn, u32_t value)
 {
 	printk("Signal indicator value: %u\n", value);
 }
 
-static void roam(struct bt_conn *conn, uint32_t value)
+static void roam(struct bt_conn *conn, u32_t value)
 {
 	printk("Roaming indicator value: %u\n", value);
 }
 
-static void battery(struct bt_conn *conn, uint32_t value)
+static void battery(struct bt_conn *conn, u32_t value)
 {
 	printk("Battery indicator value: %u\n", value);
+}
+
+static void ring_cb(struct bt_conn *conn)
+{
+	printk("Incoming Call...\n");
 }
 
 static struct bt_hfp_hf_cb hf_cb = {
@@ -73,6 +78,7 @@ static struct bt_hfp_hf_cb hf_cb = {
 	.signal = signal,
 	.roam = roam,
 	.battery = battery,
+	.ring_indication = ring_cb,
 };
 
 static void bt_ready(int err)

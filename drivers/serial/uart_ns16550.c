@@ -24,12 +24,12 @@
 
 #include <kernel.h>
 #include <arch/cpu.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 
 #include <board.h>
 #include <init.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <uart.h>
 #include <sys_io.h>
 
@@ -202,7 +202,7 @@
 
 
 struct uart_ns16550_device_config {
-	uint32_t sys_clk_freq;
+	u32_t sys_clk_freq;
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	uart_irq_config_func_t	irq_config_func;
@@ -211,28 +211,28 @@ struct uart_ns16550_device_config {
 
 /** Device data structure */
 struct uart_ns16550_dev_data_t {
-	uint32_t port;
-	uint32_t baud_rate;	/**< Baud rate */
-	uint8_t options;	/**< Serial port options */
+	u32_t port;
+	u32_t baud_rate;	/**< Baud rate */
+	u8_t options;	/**< Serial port options */
 
 #ifdef CONFIG_PCI
 	struct pci_dev_info  pci_dev;
 #endif /* CONFIG_PCI */
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	uint8_t iir_cache;	/**< cache of IIR since it clears when read */
+	u8_t iir_cache;	/**< cache of IIR since it clears when read */
 	uart_irq_callback_t	cb;	/**< Callback function pointer */
 #endif
 
 #ifdef CONFIG_UART_NS16550_DLF
-	uint8_t dlf;		/**< DLF value */
+	u8_t dlf;		/**< DLF value */
 #endif
 };
 
 static const struct uart_driver_api uart_ns16550_driver_api;
 
 #ifdef CONFIG_UART_NS16550_DLF
-static inline void set_dlf(struct device *dev, uint32_t val)
+static inline void set_dlf(struct device *dev, u32_t val)
 {
 	struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
 
@@ -241,12 +241,12 @@ static inline void set_dlf(struct device *dev, uint32_t val)
 }
 #endif
 
-static void set_baud_rate(struct device *dev, uint32_t baud_rate)
+static void set_baud_rate(struct device *dev, u32_t baud_rate)
 {
 	const struct uart_ns16550_device_config * const dev_cfg = DEV_CFG(dev);
 	struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
-	uint32_t divisor; /* baud rate divisor */
-	uint8_t lcr_cache;
+	u32_t divisor; /* baud rate divisor */
+	u8_t lcr_cache;
 
 	if ((baud_rate != 0) && (dev_cfg->sys_clk_freq != 0)) {
 		/* calculate baud rate divisor */
@@ -302,14 +302,14 @@ static inline int ns16550_pci_uart_scan(struct device *dev)
  *
  * @param dev UART device struct
  *
- * @return 0 if successful, failed othersie
+ * @return 0 if successful, failed otherwise
  */
 static int uart_ns16550_init(struct device *dev)
 {
 	struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
 
 	int old_level;     /* old interrupt lock level */
-	uint8_t mdc = 0;
+	u8_t mdc = 0;
 
 	if (!ns16550_pci_uart_scan(dev)) {
 		dev->driver_api = NULL;
@@ -433,7 +433,7 @@ static int uart_ns16550_err_check(struct device *dev)
  *
  * @return Number of bytes sent
  */
-static int uart_ns16550_fifo_fill(struct device *dev, const uint8_t *tx_data,
+static int uart_ns16550_fifo_fill(struct device *dev, const u8_t *tx_data,
 				  int size)
 {
 	int i;
@@ -453,7 +453,7 @@ static int uart_ns16550_fifo_fill(struct device *dev, const uint8_t *tx_data,
  *
  * @return Number of bytes read
  */
-static int uart_ns16550_fifo_read(struct device *dev, uint8_t *rx_data,
+static int uart_ns16550_fifo_read(struct device *dev, u8_t *rx_data,
 				  const int size)
 {
 	int i;
@@ -508,7 +508,7 @@ static int uart_ns16550_irq_tx_ready(struct device *dev)
  *
  * @return 1 if nothing remains to be transmitted, 0 otherwise
  */
-static int uart_ns16550_irq_tx_empty(struct device *dev)
+static int uart_ns16550_irq_tx_complete(struct device *dev)
 {
 	return (INBYTE(LSR(dev)) & (LSR_TEMT | LSR_THRE)) == (LSR_TEMT | LSR_THRE);
 }
@@ -648,9 +648,9 @@ static void uart_ns16550_isr(void *arg)
  * @return 0 if successful, failed otherwise
  */
 static int uart_ns16550_line_ctrl_set(struct device *dev,
-				      uint32_t ctrl, uint32_t val)
+				      u32_t ctrl, u32_t val)
 {
-	uint32_t mdc, chg;
+	u32_t mdc, chg;
 
 	switch (ctrl) {
 	case LINE_CTRL_BAUD_RATE:
@@ -692,7 +692,7 @@ static int uart_ns16550_line_ctrl_set(struct device *dev,
  *
  * @return 0 if successful, failed otherwise
  */
-static int uart_ns16550_drv_cmd(struct device *dev, uint32_t cmd, uint32_t p)
+static int uart_ns16550_drv_cmd(struct device *dev, u32_t cmd, u32_t p)
 {
 	switch (cmd) {
 
@@ -721,7 +721,7 @@ static const struct uart_driver_api uart_ns16550_driver_api = {
 	.irq_tx_enable = uart_ns16550_irq_tx_enable,
 	.irq_tx_disable = uart_ns16550_irq_tx_disable,
 	.irq_tx_ready = uart_ns16550_irq_tx_ready,
-	.irq_tx_empty = uart_ns16550_irq_tx_empty,
+	.irq_tx_complete = uart_ns16550_irq_tx_complete,
 	.irq_rx_enable = uart_ns16550_irq_rx_enable,
 	.irq_rx_disable = uart_ns16550_irq_rx_disable,
 	.irq_rx_ready = uart_ns16550_irq_rx_ready,

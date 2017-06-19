@@ -15,6 +15,8 @@ menuconfig UART_STM32
 	  processors. Say y if you wish to use serial port on STM32F10x
 	  MCU.
 
+if UART_STM32
+
 # --- port 1 ---
 
 config UART_STM32_PORT_1
@@ -25,30 +27,6 @@ config UART_STM32_PORT_1
 	  Enable support for USART1 port in the driver. Say y here
 	  if you want to use USART1 device.
 
-config UART_STM32_PORT_1_NAME
-	string "Device Name for STM32 USART1 Port"
-	default "UART_1"
-	depends on UART_STM32_PORT_1
-	help
-	  This is the device name for USART1 port, and is
-	  included in the device struct.
-
-if !HAS_DTS
-config UART_STM32_PORT_1_BAUD_RATE
-	int "STM32 USART1 Baud Rate"
-	default 9600
-	depends on UART_STM32_PORT_1
-	help
-	  The baud rate for USART1 port to be set to at boot.
-
-config UART_STM32_PORT_1_IRQ_PRI
-	int "STM32 USART1 Interrupt Priority"
-	default 0
-	depends on UART_STM32_PORT_1 && UART_INTERRUPT_DRIVEN
-	help
-	  The interrupt priority for USART1 port.
-
-endif # !HAS_DTS
 # --- port 2 ---
 
 config UART_STM32_PORT_2
@@ -58,31 +36,6 @@ config UART_STM32_PORT_2
 	help
 	  Enable support for USART2 port in the driver. Say y here
 	  if you want to use USART2 device.
-
-config UART_STM32_PORT_2_NAME
-	string "Device Name for STM32 USART2 Port"
-	default "UART_2"
-	depends on UART_STM32_PORT_2
-	help
-	  This is the device name for USART2 port, and is
-	  included in the device struct.
-
-if !HAS_DTS
-config UART_STM32_PORT_2_BAUD_RATE
-	int "STM32 USART2 Baud Rate"
-	default 9600
-	depends on UART_STM32_PORT_2
-	help
-	  The baud rate for USART2 port to be set to at boot.
-
-config UART_STM32_PORT_2_IRQ_PRI
-	int "STM32 USART2 Interrupt Priority"
-	default 0
-	depends on UART_STM32_PORT_2 && UART_INTERRUPT_DRIVEN
-	help
-	  The interrupt priority for USART2 port.
-
-endif # !HAS_DTS
 
 # --- port 3 ---
 
@@ -94,27 +47,74 @@ config UART_STM32_PORT_3
 	  Enable support for USART3 port in the driver. Say y here
 	  if you want to use USART3 device.
 
-config UART_STM32_PORT_3_NAME
-	string "Device Name for STM32 USART3 Port"
-	default "UART_3"
-	depends on UART_STM32_PORT_3
-	help
-	  This is the device name for USART3 port, and is
-	  included in the device struct.
+# --- port 4 ---
 
-if !HAS_DTS
-config UART_STM32_PORT_3_BAUD_RATE
-	int "STM32 USART3 Baud Rate"
-	default 9600
-	depends on UART_STM32_PORT_3
+config UART_STM32_PORT_4
+	bool "Enable STM32 UART4 Port"
+	default n
+	depends on UART_STM32
 	help
-	  The baud rate for USART3 port to be set to at boot.
+	  Enable support for UART4 port in the driver. Say y here
+	  if you want to use UART4 device.
 
-config UART_STM32_PORT_3_IRQ_PRI
-	int "STM32 USART3 Interrupt Priority"
-	default 0
-	depends on UART_STM32_PORT_3 && UART_INTERRUPT_DRIVEN
+# --- port 5 ---
+
+config UART_STM32_PORT_5
+	bool "Enable STM32 UART5 Port"
+	default n
+	depends on UART_STM32
 	help
-	  The interrupt priority for USART3 port.
+	  Enable support for UART5 port in the driver. Say y here
+	  if you want to use UART5 device.
 
-endif # !HAS_DTS
+# --- port 6 ---
+
+config UART_STM32_PORT_6
+	bool "Enable STM32 USART6 Port"
+	default n
+	depends on UART_STM32
+	help
+	  Enable support for USART6 port in the driver. Say y here
+	  if you want to use USART6 device.
+
+# --- port 7 ---
+
+config UART_STM32_PORT_7
+	bool "Enable STM32 UART7 Port"
+	default n
+	depends on UART_STM32
+	help
+	  Enable support for UART7 port in the driver. Say y here
+	  if you want to use UART7 device.
+
+# --- port 8 ---
+
+config UART_STM32_PORT_8
+	bool "Enable STM32 UART8 Port"
+	default n
+	depends on UART_STM32
+	help
+	  Enable support for UART8 port in the driver. Say y here
+	  if you want to use UART8 device.
+
+# --- port 9 ---
+
+config UART_STM32_PORT_9
+	bool "Enable STM32 UART9 Port"
+	default n
+	depends on UART_STM32
+	help
+	  Enable support for UART9 port in the driver. Say y here
+	  if you want to use UART9 device.
+
+# --- port 10 ---
+
+config UART_STM32_PORT_10
+	bool "Enable STM32 UART10 Port"
+	default n
+	depends on UART_STM32
+	help
+	  Enable support for UART10 port in the driver. Say y here
+	  if you want to use UART10 device.
+
+endif # UART_STM32

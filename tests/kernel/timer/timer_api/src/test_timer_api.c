@@ -22,7 +22,7 @@ static struct timer_data tdata;
 	do {						\
 		if (!(exp)) {				\
 			k_timer_stop(tmr);		\
-			assert_true(exp, NULL);		\
+			zassert_true(exp, NULL);		\
 		}					\
 	} while (0)
 
@@ -72,15 +72,21 @@ static void status_expire(struct k_timer *timer)
 	}
 }
 
-static void busy_wait_ms(int32_t ms)
+static void busy_wait_ms(s32_t ms)
 {
-	int32_t deadline = k_uptime_get() + ms;
+#ifdef CONFIG_TICKLESS_KERNEL
+	k_enable_sys_clock_always_on();
+#endif
+	s32_t deadline = k_uptime_get() + ms;
 
-	volatile int32_t now = k_uptime_get();
+	volatile s32_t now = k_uptime_get();
 
 	while (now < deadline) {
 		now = k_uptime_get();
 	}
+#ifdef CONFIG_TICKLESS_KERNEL
+	k_disable_sys_clock_always_on();
+#endif
 }
 
 static void status_stop(struct k_timer *timer)
@@ -247,7 +253,7 @@ void test_timer_user_data(void)
 				      (void *)user_data[ii]);
 		check = (intptr_t)k_timer_user_data_get(&user_data_timer[ii]);
 
-		assert_true(check == user_data[ii], NULL);
+		zassert_true(check == user_data[ii], NULL);
 	}
 
 	for (ii = 0; ii < 5; ii++) {
@@ -261,6 +267,6 @@ void test_timer_user_data(void)
 	}
 
 	for (ii = 0; ii < 5; ii++) {
-		assert_true(user_data_correct[ii], NULL);
+		zassert_true(user_data_correct[ii], NULL);
 	}
 }

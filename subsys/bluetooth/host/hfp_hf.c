@@ -12,12 +12,15 @@
 #include <misc/util.h>
 #include <misc/printk.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HFP_HF)
-#include <bluetooth/log.h>
 #include <bluetooth/conn.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HFP_HF)
+/* FIXME: #include "common/log.h" */
 #include <bluetooth/rfcomm.h>
 #include <bluetooth/hfp_hf.h>
 
+#include "hci_core.h"
+#include "conn_internal.h"
 #include "l2cap_internal.h"
 #include "rfcomm_internal.h"
 #include "at.h"
@@ -36,8 +39,8 @@ static struct bt_hfp_hf bt_hfp_hf_pool[CONFIG_BLUETOOTH_MAX_CONN];
 /* The order should follow the enum hfp_hf_ag_indicators */
 static const struct {
 	char *name;
-	uint32_t min;
-	uint32_t max;
+	u32_t min;
+	u32_t max;
 } ag_ind[] = {
 	{"service", 0, 1}, /* HF_SERVICE_IND */
 	{"call", 0, 1}, /* HF_CALL_IND */
@@ -99,7 +102,7 @@ int hfp_hf_send_cmd(struct bt_hfp_hf *hf, at_resp_cb_t resp,
 int brsf_handle(struct at_client *hf_at)
 {
 	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
-	uint32_t val;
+	u32_t val;
 	int ret;
 
 	ret = at_get_number(hf_at, &val);
@@ -132,8 +135,8 @@ int brsf_resp(struct at_client *hf_at, struct net_buf *buf)
 	return 0;
 }
 
-static void cind_handle_values(struct at_client *hf_at, uint32_t index,
-			       char *name, uint32_t min, uint32_t max)
+static void cind_handle_values(struct at_client *hf_at, u32_t index,
+			       char *name, u32_t min, u32_t max)
 {
 	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
 	int i;
@@ -155,12 +158,12 @@ static void cind_handle_values(struct at_client *hf_at, uint32_t index,
 
 int cind_handle(struct at_client *hf_at)
 {
-	uint32_t index = 0;
+	u32_t index = 0;
 
 	/* Parsing Example: CIND: ("call",(0,1)) etc.. */
 	while (at_has_next_list(hf_at)) {
 		char name[MAX_IND_STR_LEN];
-		uint32_t min, max;
+		u32_t min, max;
 
 		if (at_open_list(hf_at) < 0) {
 			BT_ERR("Could not get open list");
@@ -217,8 +220,8 @@ int cind_resp(struct at_client *hf_at, struct net_buf *buf)
 	return 0;
 }
 
-void ag_indicator_handle_values(struct at_client *hf_at, uint32_t index,
-				uint32_t value)
+void ag_indicator_handle_values(struct at_client *hf_at, u32_t index,
+				u32_t value)
 {
 	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
 	struct bt_conn *conn = hf->rfcomm_dlc.session->br_chan.chan.conn;
@@ -281,10 +284,10 @@ void ag_indicator_handle_values(struct at_client *hf_at, uint32_t index,
 
 int cind_status_handle(struct at_client *hf_at)
 {
-	uint32_t index = 0;
+	u32_t index = 0;
 
 	while (at_has_next_list(hf_at)) {
-		uint32_t value;
+		u32_t value;
 		int ret;
 
 		ret = at_get_number(hf_at, &value);
@@ -317,7 +320,7 @@ int cind_status_resp(struct at_client *hf_at, struct net_buf *buf)
 
 int ciev_handle(struct at_client *hf_at)
 {
-	uint32_t index, value;
+	u32_t index, value;
 	int ret;
 
 	ret = at_get_number(hf_at, &index);
@@ -342,14 +345,90 @@ int ciev_handle(struct at_client *hf_at)
 	return 0;
 }
 
+int ring_handle(struct at_client *hf_at)
+{
+	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
+	struct bt_conn *conn = hf->rfcomm_dlc.session->br_chan.chan.conn;
+
+	if (bt_hf->ring_indication) {
+		bt_hf->ring_indication(conn);
+	}
+
+	return 0;
+}
+
+static const struct unsolicited {
+	const char *cmd;
+	enum at_cmd_type type;
+	int (*func)(struct at_client *hf_at);
+} handlers[] = {
+	{ "CIEV", AT_CMD_TYPE_UNSOLICITED, ciev_handle },
+	{ "RING", AT_CMD_TYPE_OTHER, ring_handle }
+};
+
+static const struct unsolicited *hfp_hf_unsol_lookup(struct at_client *hf_at)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(handlers); i++) {
+		if (!strncmp(hf_at->buf, handlers[i].cmd,
+			     strlen(handlers[i].cmd))) {
+			return &handlers[i];
+		}
+	}
+
+	return NULL;
+}
+
 int unsolicited_cb(struct at_client *hf_at, struct net_buf *buf)
 {
-	if (!at_parse_cmd_input(hf_at, buf, "CIEV", ciev_handle,
-				AT_CMD_TYPE_UNSOLICITED)) {
+	const struct unsolicited *handler;
+
+	handler = hfp_hf_unsol_lookup(hf_at);
+	if (!handler) {
+		BT_ERR("Unhandled unsolicited response");
+		return -ENOMSG;
+	}
+
+	if (!at_parse_cmd_input(hf_at, buf, handler->cmd, handler->func,
+				handler->type)) {
 		return 0;
 	}
 
-	return -EINVAL;
+	return -ENOMSG;
+}
+
+int cmd_complete(struct at_client *hf_at, enum at_result result,
+	       enum at_cme cme_err)
+{
+	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
+	struct bt_conn *conn = hf->rfcomm_dlc.session->br_chan.chan.conn;
+	struct bt_hfp_hf_cmd_complete cmd = { 0 };
+
+	BT_DBG("");
+
+	switch (result) {
+	case AT_RESULT_OK:
+		cmd.type = HFP_HF_CMD_OK;
+		break;
+	case AT_RESULT_ERROR:
+		cmd.type = HFP_HF_CMD_ERROR;
+		break;
+	case AT_RESULT_CME_ERROR:
+		cmd.type = HFP_HF_CMD_CME_ERROR;
+		cmd.cme = cme_err;
+		break;
+	default:
+		BT_ERR("Unknown error code");
+		cmd.type = HFP_HF_CMD_UNKNOWN_ERROR;
+		break;
+	}
+
+	if (bt_hf->cmd_complete_cb) {
+		bt_hf->cmd_complete_cb(conn, &cmd);
+	}
+
+	return 0;
 }
 
 int cmee_finish(struct at_client *hf_at, enum at_result result,
@@ -467,6 +546,62 @@ int hf_slc_establish(struct bt_hfp_hf *hf)
 	if (err < 0) {
 		hf_slc_error(&hf->at);
 		return err;
+	}
+
+	return 0;
+}
+
+static struct bt_hfp_hf *bt_hfp_hf_lookup_bt_conn(struct bt_conn *conn)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(bt_hfp_hf_pool); i++) {
+		struct bt_hfp_hf *hf = &bt_hfp_hf_pool[i];
+
+		if (hf->rfcomm_dlc.session->br_chan.chan.conn == conn) {
+			return hf;
+		}
+	}
+
+	return NULL;
+}
+
+int bt_hfp_hf_send_cmd(struct bt_conn *conn, enum bt_hfp_hf_at_cmd cmd)
+{
+	struct bt_hfp_hf *hf;
+	int err;
+
+	BT_DBG("");
+
+	if (!conn) {
+		BT_ERR("Invalid connection");
+		return -ENOTCONN;
+	}
+
+	hf = bt_hfp_hf_lookup_bt_conn(conn);
+	if (!hf) {
+		BT_ERR("No HF connection found");
+		return -ENOTCONN;
+	}
+
+	switch (cmd) {
+	case BT_HFP_HF_ATA:
+		err = hfp_hf_send_cmd(hf, NULL, cmd_complete, "ATA");
+		if (err < 0) {
+			BT_ERR("Failed ATA");
+			return err;
+		}
+		break;
+	case BT_HFP_HF_AT_CHUP:
+		err = hfp_hf_send_cmd(hf, NULL, cmd_complete, "AT+CHUP");
+		if (err < 0) {
+			BT_ERR("Failed AT+CHUP");
+			return err;
+		}
+		break;
+	default:
+		BT_ERR("Invalid AT Command");
+		return -EINVAL;
 	}
 
 	return 0;

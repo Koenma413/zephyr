@@ -5,10 +5,15 @@
  */
 
 #include <zephyr.h>
-#include <tc_util.h>
+#include <ztest.h>
+
+#include <net/net_core.h>
+#define NET_LOG_ENABLED 1
+#define NET_SYS_LOG_LEVEL 4
+#include "net_private.h"
 
 #include <net/net_ip.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 
 #include <ieee802154_frame.h>
 #include <ipv6.h>
@@ -17,8 +22,8 @@ struct ieee802154_pkt_test {
 	char *name;
 	struct in6_addr src;
 	struct in6_addr dst;
-	uint8_t *pkt;
-	uint8_t length;
+	u8_t *pkt;
+	u8_t length;
 	struct {
 		struct ieee802154_fcf_seq *fc_seq;
 		struct ieee802154_address_field *dst_addr;
@@ -26,7 +31,7 @@ struct ieee802154_pkt_test {
 	} mhr_check;
 };
 
-uint8_t ns_pkt[] = {
+u8_t ns_pkt[] = {
 	0x41, 0xd8, 0x3e, 0xcd, 0xab, 0xff, 0xff, 0xc2, 0xa3, 0x9e, 0x00,
 	0x00, 0x4b, 0x12, 0x00, 0x7b, 0x09, 0x3a, 0x20, 0x01, 0x0d, 0xb8,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -50,7 +55,7 @@ struct ieee802154_pkt_test test_ns_pkt = {
 	.mhr_check.src_addr = (struct ieee802154_address_field *)(ns_pkt + 7),
 };
 
-uint8_t ack_pkt[] = { 0x02, 0x10, 0x16, 0xa2, 0x97 };
+u8_t ack_pkt[] = { 0x02, 0x10, 0x16 };
 
 struct ieee802154_pkt_test test_ack_pkt = {
 	.name = "ACK frame",
@@ -61,7 +66,7 @@ struct ieee802154_pkt_test test_ack_pkt = {
 	.mhr_check.src_addr = NULL,
 };
 
-uint8_t beacon_pkt[] = {
+u8_t beacon_pkt[] = {
 	0x00, 0xd0, 0x11, 0xcd, 0xab, 0xc2, 0xa3, 0x9e, 0x00, 0x00, 0x4b,
 	0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
@@ -76,107 +81,126 @@ struct ieee802154_pkt_test test_beacon_pkt = {
 	(struct ieee802154_address_field *) (beacon_pkt + 3),
 };
 
-struct net_buf *current_buf;
+u8_t sec_data_pkt[] = {
+	0x49, 0xd8, 0x03, 0xcd, 0xab, 0xff, 0xff, 0x02, 0x6d, 0xbb, 0xa7,
+	0x00, 0x4b, 0x12, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0xd3, 0x8e,
+	0x49, 0xa7, 0xe2, 0x00, 0x67, 0xd4, 0x00, 0x42, 0x52, 0x6f, 0x01,
+	0x02, 0x00, 0x12, 0x4b, 0x00, 0xa7, 0xbb, 0x6d, 0x02, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x19, 0x7f, 0x91, 0xcf, 0x73, 0xf0
+};
+
+struct ieee802154_pkt_test test_sec_data_pkt = {
+	.name = "Secured data frame",
+	.pkt = sec_data_pkt,
+	.length = sizeof(sec_data_pkt),
+	.mhr_check.fc_seq = (struct ieee802154_fcf_seq *)sec_data_pkt,
+	.mhr_check.dst_addr =
+	(struct ieee802154_address_field *)(sec_data_pkt + 3),
+	.mhr_check.src_addr =
+	(struct ieee802154_address_field *)(sec_data_pkt + 7),
+};
+
+struct net_pkt *current_pkt;
 struct k_sem driver_lock;
 struct net_if *iface;
 
-static void pkt_hexdump(uint8_t *pkt, uint8_t length)
+static void pkt_hexdump(u8_t *pkt, u8_t length)
 {
 	int i;
 
-	TC_PRINT(" -> Packet content:\n");
+	printk(" -> Packet content:\n");
 
 	for (i = 0; i < length;) {
 		int j;
 
-		TC_PRINT("\t");
+		printk("\t");
 
 		for (j = 0; j < 10 && i < length; j++, i++) {
-			TC_PRINT("%02x ", *pkt);
+			printk("%02x ", *pkt);
 			pkt++;
 		}
 
-		TC_PRINT("\n");
+		printk("\n");
 	}
 }
 
-static void ieee_addr_hexdump(uint8_t *addr, uint8_t length)
+static void ieee_addr_hexdump(u8_t *addr, u8_t length)
 {
 	int i;
 
-	TC_PRINT(" -> IEEE 802.15.4 Address: ");
+	printk(" -> IEEE 802.15.4 Address: ");
 
 	for (i = 0; i < length-1; i++) {
-		TC_PRINT("%02x:", *addr);
+		printk("%02x:", *addr);
 		addr++;
 	}
 
-	TC_PRINT("%02x\n", *addr);
+	printk("%02x\n", *addr);
 }
 
-static inline int test_packet_parsing(struct ieee802154_pkt_test *t)
+static bool test_packet_parsing(struct ieee802154_pkt_test *t)
 {
 	struct ieee802154_mpdu mpdu;
 
-	TC_PRINT("- Parsing packet 0x%p of frame %s\n", t->pkt, t->name);
+	NET_INFO("- Parsing packet 0x%p of frame %s\n", t->pkt, t->name);
 
 	if (!ieee802154_validate_frame(t->pkt, t->length, &mpdu)) {
-		TC_ERROR("*** Could not validate frame %s\n", t->name);
-		return TC_FAIL;
+		NET_ERR("*** Could not validate frame %s\n", t->name);
+		return false;
 	}
 
 	if (mpdu.mhr.fs != t->mhr_check.fc_seq ||
 	    mpdu.mhr.dst_addr != t->mhr_check.dst_addr ||
 	    mpdu.mhr.src_addr != t->mhr_check.src_addr) {
-		TC_PRINT("d: %p vs %p -- s: %p vs %p\n",
+		NET_INFO("d: %p vs %p -- s: %p vs %p\n",
 			 mpdu.mhr.dst_addr, t->mhr_check.dst_addr,
 			 mpdu.mhr.src_addr, t->mhr_check.src_addr);
-		TC_ERROR("*** Wrong MPDU information on frame %s\n",
-			 t->name);
+		NET_ERR("*** Wrong MPDU information on frame %s\n",
+			t->name);
 
-		return TC_FAIL;
+		return false;
 	}
 
-	return TC_PASS;
+	return true;
 }
 
-static inline int test_ns_sending(struct ieee802154_pkt_test *t)
+static bool test_ns_sending(struct ieee802154_pkt_test *t)
 {
 	struct ieee802154_mpdu mpdu;
 
-	TC_PRINT("- Sending NS packet\n");
+	NET_INFO("- Sending NS packet\n");
 
 	if (net_ipv6_send_ns(iface, NULL, &t->src, &t->dst, &t->dst, false)) {
-		TC_ERROR("*** Could not create IPv6 NS packet\n");
-		return TC_FAIL;
+		NET_ERR("*** Could not create IPv6 NS packet\n");
+		return false;
 	}
 
 	k_sem_take(&driver_lock, 10);
 
-	if (!current_buf->frags) {
-		TC_ERROR("*** Could not send IPv6 NS packet\n");
-		return TC_FAIL;
+	if (!current_pkt->frags) {
+		NET_ERR("*** Could not send IPv6 NS packet\n");
+		return false;
 	}
 
-	pkt_hexdump(net_nbuf_ll(current_buf), net_buf_frags_len(current_buf));
+	pkt_hexdump(net_pkt_ll(current_pkt), net_pkt_get_len(current_pkt));
 
-	if (!ieee802154_validate_frame(net_nbuf_ll(current_buf),
-				       net_buf_frags_len(current_buf), &mpdu)) {
-		TC_ERROR("*** Sent packet is not valid\n");
-		net_nbuf_unref(current_buf);
+	if (!ieee802154_validate_frame(net_pkt_ll(current_pkt),
+				       net_pkt_get_len(current_pkt), &mpdu)) {
+		NET_ERR("*** Sent packet is not valid\n");
+		net_pkt_unref(current_pkt);
 
-		return TC_FAIL;
+		return false;
 	}
 
-	net_nbuf_unref(current_buf->frags);
-	current_buf->frags = NULL;
+	net_pkt_frag_unref(current_pkt->frags);
+	current_pkt->frags = NULL;
 
-	return TC_PASS;
+	return true;
 }
 
-static inline int test_ack_reply(struct ieee802154_pkt_test *t)
+static bool test_ack_reply(struct ieee802154_pkt_test *t)
 {
-	static uint8_t data_pkt[] = {
+	static u8_t data_pkt[] = {
 		0x61, 0xdc, 0x16, 0xcd, 0xab, 0x26, 0x11, 0x32, 0x00, 0x00, 0x4b,
 		0x12, 0x00, 0x26, 0x18, 0x32, 0x00, 0x00, 0x4b, 0x12, 0x00, 0x7b,
 		0x00, 0x3a, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -188,112 +212,155 @@ static inline int test_ack_reply(struct ieee802154_pkt_test *t)
 		0xff, 0x16, 0xf0, 0x00, 0xff, 0x16, 0xf0, 0x00, 0xff, 0x16
 	};
 	struct ieee802154_mpdu mpdu;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
 
-	TC_PRINT("- Sending ACK reply to a data packet\n");
+	NET_INFO("- Sending ACK reply to a data packet\n");
 
-	buf = net_nbuf_get_reserve_rx(0, K_FOREVER);
-	frag = net_nbuf_get_frag(buf, K_FOREVER);
+	pkt = net_pkt_get_reserve_rx(0, K_FOREVER);
+	frag = net_pkt_get_frag(pkt, K_FOREVER);
 
 	memcpy(frag->data, data_pkt, sizeof(data_pkt));
 	frag->len = sizeof(data_pkt);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
-	net_recv_data(iface, buf);
+	net_recv_data(iface, pkt);
 
 	k_sem_take(&driver_lock, 20);
 
-	/* an ACK packet should be in current_buf */
-	if (!current_buf->frags) {
-		TC_ERROR("*** No ACK reply sent\n");
-		return TC_FAIL;
+	/* an ACK packet should be in current_pkt */
+	if (!current_pkt->frags) {
+		NET_ERR("*** No ACK reply sent\n");
+		return false;
 	}
 
-	pkt_hexdump(net_nbuf_ll(current_buf), net_buf_frags_len(current_buf));
+	pkt_hexdump(net_pkt_ll(current_pkt), net_pkt_get_len(current_pkt));
 
-	if (!ieee802154_validate_frame(net_nbuf_ll(current_buf),
-				       net_buf_frags_len(current_buf), &mpdu)) {
-		TC_ERROR("*** ACK Reply is invalid\n");
-		return TC_FAIL;
+	if (!ieee802154_validate_frame(net_pkt_ll(current_pkt),
+				       net_pkt_get_len(current_pkt), &mpdu)) {
+		NET_ERR("*** ACK Reply is invalid\n");
+		return false;
 	}
 
 	if (memcmp(mpdu.mhr.fs, t->mhr_check.fc_seq,
 		   sizeof(struct ieee802154_fcf_seq))) {
-		TC_ERROR("*** ACK Reply does not compare\n");
-		return TC_FAIL;
+		NET_ERR("*** ACK Reply does not compare\n");
+		return false;
 	}
 
-	net_nbuf_unref(current_buf->frags);
-	current_buf->frags = NULL;
+	net_pkt_frag_unref(current_pkt->frags);
+	current_pkt->frags = NULL;
 
-	return TC_PASS;
+	return true;
 }
 
-static inline int initialize_test_environment(void)
+static bool initialize_test_environment(void)
 {
 	struct device *dev;
 
 	k_sem_init(&driver_lock, 0, UINT_MAX);
 
-	current_buf = net_nbuf_get_reserve_rx(0, K_FOREVER);
-	if (!current_buf) {
-		TC_ERROR("*** No buffer to allocate\n");
-		return TC_FAIL;
+	current_pkt = net_pkt_get_reserve_rx(0, K_FOREVER);
+	if (!current_pkt) {
+		NET_ERR("*** No buffer to allocate\n");
+		return false;
 	}
 
 	dev = device_get_binding("fake_ieee802154");
 	if (!dev) {
-		TC_ERROR("*** Could not get fake device\n");
-		return TC_FAIL;
+		NET_ERR("*** Could not get fake device\n");
+		return false;
 	}
 
 	iface = net_if_lookup_by_dev(dev);
 	if (!iface) {
-		TC_ERROR("*** Could not get fake iface\n");
-		return TC_FAIL;
+		NET_ERR("*** Could not get fake iface\n");
+		return false;
 	}
 
-	TC_PRINT("Fake IEEE 802.15.4 network interface ready\n");
+	NET_INFO("Fake IEEE 802.15.4 network interface ready\n");
 
 	ieee_addr_hexdump(iface->link_addr.addr, 8);
 
-	return TC_PASS;
+	return true;
 }
 
-void main(void)
+static void init_test(void)
 {
-	int status = TC_FAIL;
+	bool ret;
 
-	TC_PRINT("Starting ieee802154 stack test\n");
+	ret = initialize_test_environment();
 
-	if (initialize_test_environment() != TC_PASS) {
-		goto end;
-	}
+	zassert_true(ret, "Test initialization");
+}
 
-	if (test_packet_parsing(&test_ns_pkt) != TC_PASS) {
-		goto end;
-	}
 
-	if (test_ns_sending(&test_ns_pkt) != TC_PASS) {
-		goto end;
-	}
+static void parsing_ns_pkt(void)
+{
+	bool ret;
 
-	if (test_packet_parsing(&test_ack_pkt) != TC_PASS) {
-		goto end;
-	}
+	ret = test_packet_parsing(&test_ns_pkt);
 
-	if (test_ack_reply(&test_ack_pkt) != TC_PASS) {
-		goto end;
-	}
+	zassert_true(ret, "NS parsed");
+}
 
-	if (test_packet_parsing(&test_beacon_pkt) != TC_PASS) {
-		goto end;
-	}
+static void sending_ns_pkt(void)
+{
+	bool ret;
 
-	status = TC_PASS;
+	ret = test_ns_sending(&test_ns_pkt);
 
-end:
-	TC_END_RESULT(status);
-	TC_END_REPORT(status);
+	zassert_true(ret, "NS sent");
+}
+
+static void parsing_ack_pkt(void)
+{
+	bool ret;
+
+	ret = test_packet_parsing(&test_ack_pkt);
+
+	zassert_true(ret, "ACK parsed");
+}
+
+static void replying_ack_pkt(void)
+{
+	bool ret;
+
+	ret = test_ack_reply(&test_ack_pkt);
+
+	zassert_true(ret, "ACK replied");
+}
+
+static void parsing_beacon_pkt(void)
+{
+	bool ret;
+
+	ret = test_packet_parsing(&test_beacon_pkt);
+
+	zassert_true(ret, "Beacon parsed");
+}
+
+static void parsing_sec_data_pkt(void)
+{
+	bool ret;
+
+	ret = test_packet_parsing(&test_sec_data_pkt);
+
+	zassert_true(ret, "Secured data frame parsed");
+}
+
+void test_main(void)
+{
+	ztest_test_suite(ieee802154_l2,
+			 ztest_unit_test(init_test),
+			 ztest_unit_test(parsing_ns_pkt),
+			 ztest_unit_test(sending_ns_pkt),
+			 ztest_unit_test(parsing_ack_pkt),
+			 ztest_unit_test(replying_ack_pkt),
+			 ztest_unit_test(parsing_beacon_pkt),
+			 ztest_unit_test(parsing_sec_data_pkt)
+		);
+
+	ztest_run_test_suite(ieee802154_l2);
 }

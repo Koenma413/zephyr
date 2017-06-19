@@ -21,7 +21,7 @@ some are optional:
   take when the CPU comes out of reset (required).
 
 * **Interrupt and exception handling**: each architecture handles asynchronous
-  and un-requested events in a specific manner (required).
+  and unrequested events in a specific manner (required).
 
 * **Thread context switching**: the Zephyr context switch is dependent on the
   ABI and each ISA has a different set of registers to save (required).
@@ -451,7 +451,7 @@ Toolchain and Linking
 
 Toolchain support has to be added to the build system.
 
-Some architecture-specific definitions are needed in :file:`toolchain/gcc.h`.
+Some architecture-specific definitions are needed in :file:`include/toolchain/gcc.h`.
 See what exists in that file for currently supported architectures.
 
 Each architecture also needs its own linker script, even if most sections can

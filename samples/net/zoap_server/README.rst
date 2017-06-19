@@ -1,3 +1,5 @@
+.. _zoap-server-sample:
+
 CoAP Server
 ###########
 
@@ -24,7 +26,7 @@ The sample exports the following resources:
    /location-query
    /large-update
 
-These resources allow a good part of the ETSI testcases to be run
+These resources allow a good part of the ETSI test cases to be run
 against zoap-server.
 
 Building And Running
@@ -44,7 +46,7 @@ It can be built and executed on QEMU as follows:
 
 
 Use this command on the host to run the`libcoap`_ implementation of
-the ETSI testcases:
+the ETSI test cases:
 
 .. code-block:: console
 
@@ -58,6 +60,6 @@ configuration file enabling IEEE 802.15.4:
     make CONF_FILE=prj_cc2520.conf run
 
 
-.. _`net-tools`: https://gerrit.zephyrproject.org/r/gitweb?p=net-tools.git;a=tree
+.. _`net-tools`: https://github.com/zephyrproject-rtos/net-tools
 
 .. _`libcoap`: https://github.com/obgm/libcoap

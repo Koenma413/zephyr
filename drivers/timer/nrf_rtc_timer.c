@@ -9,6 +9,7 @@
 #include <system_timer.h>
 #include <drivers/clock_control/nrf5_clock_control.h>
 #include <arch/arm/cortex_m/cmsis.h>
+#include <sys_clock.h>
 
 /*
  * Convenience defines.
@@ -28,34 +29,33 @@
  * representation as a large positive value).
  */
 #define RTC_HALF               (RTC_MASK / 2)
-#define RTC_TICKS_PER_SYS_TICK ((uint32_t)((((uint64_t)1000000UL / \
+#define RTC_TICKS_PER_SYS_TICK ((u32_t)((((u64_t)1000000UL / \
 				 CONFIG_SYS_CLOCK_TICKS_PER_SEC) * \
 				1000000000UL) / 30517578125UL) & RTC_MASK)
 
-extern int64_t _sys_clock_tick_count;
-extern int32_t _sys_idle_elapsed_ticks;
+extern s32_t _sys_idle_elapsed_ticks;
 
 /*
  * rtc_past holds the value of RTC_COUNTER at the time the last sys tick was
  * announced, in RTC ticks. It is therefore always a multiple of
  * RTC_TICKS_PER_SYS_TICK.
  */
-static uint32_t rtc_past;
+static u32_t rtc_past;
 
 #ifdef CONFIG_TICKLESS_IDLE
 /*
  * Holds the maximum sys ticks the kernel expects to see in the next
  * _sys_clock_tick_announce().
  */
-static uint32_t expected_sys_ticks;
+static u32_t expected_sys_ticks;
 #endif /* CONFIG_TICKLESS_IDLE */
 
 /*
  * Set RTC Counter Compare (CC) register to a given value in RTC ticks.
  */
-static void rtc_compare_set(uint32_t rtc_ticks)
+static void rtc_compare_set(u32_t rtc_ticks)
 {
-	uint32_t rtc_now;
+	u32_t rtc_now;
 
 	/* Try to set CC value. We assume the procedure is always successful. */
 	RTC_CC_VALUE = rtc_ticks;
@@ -96,7 +96,7 @@ static void rtc_compare_set(uint32_t rtc_ticks)
  */
 static void rtc_announce_set_next(void)
 {
-	uint32_t rtc_now, rtc_elapsed, sys_elapsed;
+	u32_t rtc_now, rtc_elapsed, sys_elapsed;
 
 	/* Read the RTC counter one single time in the beginning, so that an
 	 * increase in the counter during this procedure leads to no race
@@ -175,7 +175,7 @@ static void rtc_announce_set_next(void)
  *
  * @return N/A
  */
-void _timer_idle_enter(int32_t sys_ticks)
+void _timer_idle_enter(s32_t sys_ticks)
 {
 	/* Restrict ticks to max supported by RTC without risking overflow. */
 	if ((sys_ticks < 0) ||
@@ -292,6 +292,10 @@ int _sys_clock_driver_init(struct device *device)
 	SYS_CLOCK_RTC->EVTENSET = RTC_EVTENSET_COMPARE0_Msk;
 	SYS_CLOCK_RTC->INTENSET = RTC_INTENSET_COMPARE0_Msk;
 
+	/* Clear the event flag and possible pending interrupt */
+	RTC_CC_EVENT = 0;
+	NVIC_ClearPendingIRQ(NRF5_IRQ_RTC1_IRQn);
+
 	IRQ_CONNECT(NRF5_IRQ_RTC1_IRQn, 1, rtc1_nrf5_isr, 0, 0);
 	irq_enable(NRF5_IRQ_RTC1_IRQn);
 
@@ -301,15 +305,24 @@ int _sys_clock_driver_init(struct device *device)
 	return 0;
 }
 
-uint32_t _timer_cycle_get_32(void)
+u32_t _timer_cycle_get_32(void)
 {
-	uint32_t elapsed_cycles;
+	u32_t elapsed_cycles;
+	u32_t sys_clock_tick_count;
+	u32_t rtc_prev;
+	u32_t rtc_now;
 
-	elapsed_cycles = (RTC_COUNTER -
-			  (_sys_clock_tick_count * RTC_TICKS_PER_SYS_TICK))
-			  & RTC_MASK;
+	rtc_now = RTC_COUNTER;
+	do {
+		sys_clock_tick_count = _sys_clock_tick_count;
+		elapsed_cycles = (rtc_now - (sys_clock_tick_count *
+					     RTC_TICKS_PER_SYS_TICK)) &
+				 RTC_MASK;
+		rtc_prev = rtc_now;
+		rtc_now = RTC_COUNTER;
+	} while (rtc_now != rtc_prev);
 
-	return (_sys_clock_tick_count * sys_clock_hw_cycles_per_tick) +
+	return (sys_clock_tick_count * sys_clock_hw_cycles_per_tick) +
 	       elapsed_cycles;
 }
 
@@ -325,9 +338,19 @@ uint32_t _timer_cycle_get_32(void)
  */
 void sys_clock_disable(void)
 {
+	unsigned int key;
+
+	key = irq_lock();
+
 	irq_disable(NRF5_IRQ_RTC1_IRQn);
 
+	SYS_CLOCK_RTC->EVTENCLR = RTC_EVTENCLR_COMPARE0_Msk;
+	SYS_CLOCK_RTC->INTENCLR = RTC_INTENCLR_COMPARE0_Msk;
+
 	SYS_CLOCK_RTC->TASKS_STOP = 1;
+	SYS_CLOCK_RTC->TASKS_CLEAR = 1;
+
+	irq_unlock(key);
 
 	/* TODO: turn off (release) 32 KHz clock source.
 	 * Turning off of 32 KHz clock source is not implemented in clock

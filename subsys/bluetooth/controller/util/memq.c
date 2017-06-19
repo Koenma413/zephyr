@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
+#include <stddef.h>
 
 inline void *memq_peek(void *tail, void *head, void **mem);
 
@@ -64,7 +65,7 @@ void *memq_dequeue(void *tail, void **head, void **mem)
 	return link;
 }
 
-uint32_t memq_ut(void)
+u32_t memq_ut(void)
 {
 	void *head;
 	void *tail;
@@ -78,7 +79,7 @@ uint32_t memq_ut(void)
 		return 1;
 	}
 
-	link = memq_dequeue(tail, &head, 0);
+	link = memq_dequeue(tail, &head, NULL);
 	if ((link) || (head != &link_0[0])) {
 		return 2;
 	}
@@ -88,7 +89,7 @@ uint32_t memq_ut(void)
 		return 3;
 	}
 
-	link = memq_dequeue(tail, &head, 0);
+	link = memq_dequeue(tail, &head, NULL);
 	if ((link != &link_0[0]) || (tail != &link_1[0])
 	    || (head != &link_1[0])) {
 		return 4;

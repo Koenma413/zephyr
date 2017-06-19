@@ -23,7 +23,7 @@
 
 /* irq_controller.h interface */
 void __irq_controller_irq_config(unsigned int vector, unsigned int irq,
-				 uint32_t flags);
+				 u32_t flags);
 
 int __irq_controller_isr_vector_get(void);
 
@@ -48,7 +48,7 @@ static inline void __irq_controller_eoi(void)
 	loapic_eoi_reg = (CONFIG_LOAPIC_BASE_ADDRESS + LOAPIC_EOI)
 	movl %eax, loapic_eoi_reg	/* tell LOAPIC the IRQ is handled */
 .endm
-#endif /* CONFIG_EOI_FORMWARDING_BUG */
+#endif /* CONFIG_EOI_FORWARDING_BUG */
 
 #endif /* _ASMLANGUAGE */
 

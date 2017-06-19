@@ -43,9 +43,9 @@ static void skip_space(struct at_client *at)
 	}
 }
 
-int at_get_number(struct at_client *at, uint32_t *val)
+int at_get_number(struct at_client *at, u32_t *val)
 {
-	uint32_t i;
+	u32_t i;
 
 	skip_space(at);
 
@@ -91,7 +91,7 @@ static int get_cmd_value(struct at_client *at, struct net_buf *buf,
 			 char stop_byte, enum at_cmd_state cmd_state)
 {
 	int cmd_len = 0;
-	uint8_t pos = at->pos;
+	u8_t pos = at->pos;
 	const unsigned char *str = buf->data;
 
 	while (cmd_len < buf->len && at->pos != at->buf_max_len) {
@@ -121,7 +121,7 @@ static int get_response_string(struct at_client *at, struct net_buf *buf,
 			       char stop_byte, enum at_state state)
 {
 	int cmd_len = 0;
-	uint8_t pos = at->pos;
+	u8_t pos = at->pos;
 	const unsigned char *str = buf->data;
 
 	while (cmd_len < buf->len && at->pos != at->buf_max_len) {
@@ -216,6 +216,7 @@ static int at_state_process_cmd(struct at_client *at, struct net_buf *buf)
 
 	if (at->resp) {
 		at->resp(at, buf);
+		at->resp = NULL;
 		return 0;
 	}
 	at->state = AT_STATE_UNSOLICITED_CMD;
@@ -227,10 +228,24 @@ static int at_state_get_result_string(struct at_client *at, struct net_buf *buf)
 	return get_response_string(at, buf, '\r', AT_STATE_PROCESS_RESULT);
 }
 
+static bool is_ring(struct at_client *at)
+{
+	if (strncmp(at->buf, "RING", 4) == 0) {
+		return true;
+	}
+
+	return false;
+}
+
 static int at_state_process_result(struct at_client *at, struct net_buf *buf)
 {
 	enum at_cme cme_err;
 	enum at_result result;
+
+	if (is_ring(at)) {
+		at->state = AT_STATE_UNSOLICITED_CMD;
+		return 0;
+	}
 
 	if (at_parse_result(at->buf, buf, &result) == 0) {
 		if (at->finish) {
@@ -252,7 +267,7 @@ static int at_state_process_result(struct at_client *at, struct net_buf *buf)
 int cme_handle(struct at_client *at)
 {
 	enum at_cme cme_err;
-	int val;
+	u32_t val;
 
 	if (!at_get_number(at, &val) && val <= CME_ERROR_NETWORK_NOT_ALLOWED) {
 		cme_err = val;
@@ -306,6 +321,9 @@ int at_parse_input(struct at_client *at, struct net_buf *buf)
 		}
 		ret = parser_cb[at->state](at, buf);
 		if (ret < 0) {
+			/* Reset the state in case of error */
+			at->cmd_state = AT_CMD_START;
+			at->state = AT_STATE_START;
 			return ret;
 		}
 	}
@@ -324,8 +342,15 @@ static int at_cmd_start(struct at_client *at, struct net_buf *buf,
 		return -ENODATA;
 	}
 
-	reset_buffer(at);
-	at->cmd_state = AT_CMD_GET_VALUE;
+	if (type == AT_CMD_TYPE_OTHER) {
+		/* Skip for Other type such as ..RING.. which does not have
+		 * values to get processed.
+		 */
+		at->cmd_state = AT_CMD_PROCESS_VALUE;
+	} else {
+		at->cmd_state = AT_CMD_GET_VALUE;
+	}
+
 	return 0;
 }
 
@@ -333,6 +358,8 @@ static int at_cmd_get_value(struct at_client *at, struct net_buf *buf,
 			    const char *prefix, parse_val_t func,
 			    enum at_cmd_type type)
 {
+	/* Reset buffer before getting the values */
+	reset_buffer(at);
 	return get_cmd_value(at, buf, '\r', AT_CMD_PROCESS_VALUE);
 }
 
@@ -388,9 +415,7 @@ int at_parse_cmd_input(struct at_client *at, struct net_buf *buf,
 			return ret;
 		}
 		/* Check for main state, the end of cmd parsing and return. */
-		if (at->state == AT_STATE_START ||
-		    (at->state == AT_STATE_UNSOLICITED_CMD &&
-		     type == AT_CMD_TYPE_UNSOLICITED)) {
+		if (at->state == AT_STATE_START) {
 			return 0;
 		}
 	}
@@ -430,7 +455,7 @@ int at_close_list(struct at_client *at)
 	return 0;
 }
 
-int at_list_get_string(struct at_client *at, char *name, uint8_t len)
+int at_list_get_string(struct at_client *at, char *name, u8_t len)
 {
 	int i = 0;
 
@@ -465,9 +490,9 @@ int at_list_get_string(struct at_client *at, char *name, uint8_t len)
 	return 0;
 }
 
-int at_list_get_range(struct at_client *at, uint32_t *min, uint32_t *max)
+int at_list_get_range(struct at_client *at, u32_t *min, u32_t *max)
 {
-	uint32_t low, high;
+	u32_t low, high;
 	int ret;
 
 	ret = at_get_number(at, &low);

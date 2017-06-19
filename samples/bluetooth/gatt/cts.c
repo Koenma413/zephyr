@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
@@ -23,16 +23,16 @@
 #include <bluetooth/gatt.h>
 
 static struct bt_gatt_ccc_cfg ct_ccc_cfg[CONFIG_BLUETOOTH_MAX_PAIRED] = {};
-static uint8_t ct[10];
-static uint8_t ct_update;
+static u8_t ct[10];
+static u8_t ct_update;
 
-static void ct_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
+static void ct_ccc_cfg_changed(const struct bt_gatt_attr *attr, u16_t value)
 {
 	/* TODO: Handle value */
 }
 
 static ssize_t read_ct(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-		       void *buf, uint16_t len, uint16_t offset)
+		       void *buf, u16_t len, u16_t offset)
 {
 	const char *value = attr->user_data;
 
@@ -41,10 +41,10 @@ static ssize_t read_ct(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 }
 
 static ssize_t write_ct(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			const void *buf, uint16_t len, uint16_t offset,
-			uint8_t flags)
+			const void *buf, u16_t len, u16_t offset,
+			u8_t flags)
 {
-	uint8_t *value = attr->user_data;
+	u8_t *value = attr->user_data;
 
 	if (offset + len > sizeof(ct)) {
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
@@ -67,9 +67,11 @@ static struct bt_gatt_attr attrs[] = {
 	BT_GATT_CCC(ct_ccc_cfg, ct_ccc_cfg_changed),
 };
 
-static void generate_current_time(uint8_t *buf)
+static struct bt_gatt_service cts_svc = BT_GATT_SERVICE(attrs);
+
+static void generate_current_time(u8_t *buf)
 {
-	uint16_t year;
+	u16_t year;
 
 	/* 'Exact Time 256' contains 'Day Date Time' which contains
 	 * 'Date Time' - characteristic contains fields for:
@@ -99,7 +101,7 @@ void cts_init(void)
 	/* Simulate current time for Current Time Service */
 	generate_current_time(ct);
 
-	bt_gatt_register(attrs, ARRAY_SIZE(attrs));
+	bt_gatt_service_register(&cts_svc);
 }
 
 void cts_notify(void)

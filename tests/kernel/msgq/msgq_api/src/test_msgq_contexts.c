@@ -17,9 +17,10 @@
 /**TESTPOINT: init via K_MSGQ_DEFINE*/
 K_MSGQ_DEFINE(kmsgq, MSG_SIZE, MSGQ_LEN, 4);
 
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 static char __aligned(4) tbuffer[MSG_SIZE * MSGQ_LEN];
-static uint32_t data[MSGQ_LEN] = { MSG0, MSG1 };
+static u32_t data[MSGQ_LEN] = { MSG0, MSG1 };
 static struct k_sem end_sema;
 
 static void put_msgq(struct k_msgq *pmsgq)
@@ -28,35 +29,35 @@ static void put_msgq(struct k_msgq *pmsgq)
 
 	for (int i = 0; i < MSGQ_LEN; i++) {
 		ret = k_msgq_put(pmsgq, (void *)&data[i], K_NO_WAIT);
-		assert_false(ret, NULL);
+		zassert_false(ret, NULL);
 		/**TESTPOINT: msgq free get*/
-		assert_equal(k_msgq_num_free_get(pmsgq), MSGQ_LEN - 1 - i, NULL);
+		zassert_equal(k_msgq_num_free_get(pmsgq), MSGQ_LEN - 1 - i, NULL);
 		/**TESTPOINT: msgq used get*/
-		assert_equal(k_msgq_num_used_get(pmsgq), i + 1, NULL);
+		zassert_equal(k_msgq_num_used_get(pmsgq), i + 1, NULL);
 	}
 }
 
 static void get_msgq(struct k_msgq *pmsgq)
 {
-	uint32_t rx_data;
+	u32_t rx_data;
 	int ret;
 
 	for (int i = 0; i < MSGQ_LEN; i++) {
 		ret = k_msgq_get(pmsgq, &rx_data, K_FOREVER);
-		assert_false(ret, NULL);
-		assert_equal(rx_data, data[i], NULL);
+		zassert_false(ret, NULL);
+		zassert_equal(rx_data, data[i], NULL);
 		/**TESTPOINT: msgq free get*/
-		assert_equal(k_msgq_num_free_get(pmsgq), i + 1, NULL);
+		zassert_equal(k_msgq_num_free_get(pmsgq), i + 1, NULL);
 		/**TESTPOINT: msgq used get*/
-		assert_equal(k_msgq_num_used_get(pmsgq), MSGQ_LEN - 1 - i, NULL);
+		zassert_equal(k_msgq_num_used_get(pmsgq), MSGQ_LEN - 1 - i, NULL);
 	}
 }
 
 static void purge_msgq(struct k_msgq *pmsgq)
 {
 	k_msgq_purge(pmsgq);
-	assert_equal(k_msgq_num_free_get(pmsgq), MSGQ_LEN, NULL);
-	assert_equal(k_msgq_num_used_get(pmsgq), 0, NULL);
+	zassert_equal(k_msgq_num_free_get(pmsgq), MSGQ_LEN, NULL);
+	zassert_equal(k_msgq_num_used_get(pmsgq), 0, NULL);
 }
 
 static void tIsr_entry(void *p)
@@ -74,9 +75,9 @@ static void msgq_thread(struct k_msgq *pmsgq)
 {
 	k_sem_init(&end_sema, 0, 1);
 	/**TESTPOINT: thread-thread data passing via message queue*/
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
-				     tThread_entry, pmsgq, NULL, NULL,
-				     K_PRIO_PREEMPT(0), 0, 0);
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
+				      tThread_entry, pmsgq, NULL, NULL,
+				      K_PRIO_PREEMPT(0), 0, 0);
 	put_msgq(pmsgq);
 	k_sem_take(&end_sema, K_FOREVER);
 	k_thread_abort(tid);

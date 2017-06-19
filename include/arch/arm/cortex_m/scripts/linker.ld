@@ -15,11 +15,11 @@
 #define _ASMLANGUAGE
 
 #include <autoconf.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <generated_dts_board.h>
 
-#include <linker-defs.h>
-#include <linker-tool.h>
+#include <linker/linker-defs.h>
+#include <linker/linker-tool.h>
 
 /* physical address of RAM */
 #ifdef CONFIG_XIP
@@ -41,7 +41,18 @@
 #endif
 
 #define ROM_ADDR (CONFIG_FLASH_BASE_ADDRESS + CONFIG_FLASH_LOAD_OFFSET)
-#define ROM_SIZE (CONFIG_FLASH_SIZE*1K - CONFIG_FLASH_LOAD_OFFSET)
+#ifdef CONFIG_TI_CCFG_PRESENT
+  #define CCFG_SIZE 88
+  #define ROM_SIZE (CONFIG_FLASH_SIZE*1K - CONFIG_FLASH_LOAD_OFFSET - \
+		    CCFG_SIZE)
+  #define CCFG_ADDR (ROM_ADDR + ROM_SIZE)
+#else
+#if CONFIG_FLASH_LOAD_SIZE > 0
+  #define ROM_SIZE CONFIG_FLASH_LOAD_SIZE
+#else
+  #define ROM_SIZE (CONFIG_FLASH_SIZE*1K - CONFIG_FLASH_LOAD_OFFSET)
+#endif
+#endif
 
 #if defined(CONFIG_XIP)
 	#if defined(CONFIG_IS_BOOTLOADER)
@@ -60,9 +71,10 @@
 MEMORY
     {
     FLASH                 (rx) : ORIGIN = ROM_ADDR, LENGTH = ROM_SIZE
+#ifdef CONFIG_TI_CCFG_PRESENT
+    FLASH_CCFG            (rwx): ORIGIN = CCFG_ADDR, LENGTH = CCFG_SIZE
+#endif
     SRAM                  (wx) : ORIGIN = RAM_ADDR, LENGTH = RAM_SIZE
-    SYSTEM_CONTROL_SPACE  (wx) : ORIGIN = 0xE000E000,  LENGTH = 4K
-    SYSTEM_CONTROL_PERIPH (wx) : ORIGIN = 0x400FE000,  LENGTH = 4K
 
     /* Used by and documented in include/linker/intlist.ld */
     IDT_LIST  (wx)      : ORIGIN = (RAM_ADDR + RAM_SIZE), LENGTH = 2K
@@ -76,6 +88,13 @@ SECTIONS
 
     SECTION_PROLOGUE(_TEXT_SECTION_NAME,,)
 	{
+#ifdef CONFIG_CC3220SF_DEBUG
+	/* Add CC3220SF flash header to disable flash verification */
+	. = 0x0;
+	KEEP(*(.dbghdr))
+	KEEP(*(".dbghdr.*"))
+#endif
+
 	. = CONFIG_TEXT_SECTION_OFFSET;
 	KEEP(*(.exc_vector_table))
 	KEEP(*(".exc_vector_table.*"))
@@ -147,6 +166,14 @@ SECTIONS
 
     GROUP_END(ROMABLE_REGION)
 
+/* Some TI SoCs have a special configuration footer, at the end of flash. */
+#ifdef CONFIG_TI_CCFG_PRESENT
+    SECTION_PROLOGUE(.ti_ccfg,,)
+    {
+    KEEP(*(TI_CCFG))
+    } > FLASH_CCFG
+#endif
+
     GROUP_START(RAMABLE_REGION)
 
     SECTION_DATA_PROLOGUE(_DATA_SECTION_NAME,,)
@@ -205,32 +232,6 @@ SECTIONS
     _end = .; /* end of image */
 
     GROUP_END(RAMABLE_REGION)
-
-    GROUP_START(SYSTEM_CONTROL_PERIPH)
-    SECTION_PROLOGUE(.scp,(NOLOAD),)
-	{
-	/*
-	 * The leading '.' in the ".scp" section name indicates that section is
-	 * mapped to neither a normal ROM nor a normal RAM area.
-	 */
-
-	*(.scp)
-	*(".scp.*")
-	 } GROUP_LINK_IN(SYSTEM_CONTROL_PERIPH)
-    GROUP_END(SYSTEM_CONTROL_PERIPH)
-
-    GROUP_START(SYSTEM_CONTROL_SPACE)
-    SECTION_PROLOGUE(.scs,(NOLOAD),)
-	{
-	/*
-	 * The leading '.' in the ".scs" section name indicates that section is
-	 * mapped to neither normal ROM nor normal RAM space.
-	 */
-
-	*(.scs)
-	*(".scs.*")
-	 } GROUP_LINK_IN(SYSTEM_CONTROL_SPACE)
-    GROUP_END(SYSTEM_CONTROL_SPACE)
 
 #ifdef CONFIG_CUSTOM_SECTIONS_LD
 /* Located in project source directory */

@@ -13,12 +13,12 @@
 
 #include "lis3mdl.h"
 
-static void lis3mdl_convert(struct sensor_value *val, int16_t raw_val,
-			    uint16_t divider)
+static void lis3mdl_convert(struct sensor_value *val, s16_t raw_val,
+			    u16_t divider)
 {
 	/* val = raw_val / divider */
 	val->val1 = raw_val / divider;
-	val->val2 = (((int64_t)raw_val % divider) * 1000000L) / divider;
+	val->val2 = (((s64_t)raw_val % divider) * 1000000L) / divider;
 }
 
 static int lis3mdl_channel_get(struct device *dev,
@@ -56,13 +56,13 @@ static int lis3mdl_channel_get(struct device *dev,
 int lis3mdl_sample_fetch(struct device *dev, enum sensor_channel chan)
 {
 	struct lis3mdl_data *drv_data = dev->driver_data;
-	int16_t buf[4];
+	s16_t buf[4];
 
 	__ASSERT_NO_MSG(chan == SENSOR_CHAN_ALL);
 
 	/* fetch magnetometer sample */
 	if (i2c_burst_read(drv_data->i2c, CONFIG_LIS3MDL_I2C_ADDR,
-			   LIS3MDL_REG_SAMPLE_START, (uint8_t *)buf, 8) < 0) {
+			   LIS3MDL_REG_SAMPLE_START, (u8_t *)buf, 8) < 0) {
 		SYS_LOG_DBG("Failed to fetch megnetometer sample.");
 		return -EIO;
 	}
@@ -74,7 +74,7 @@ int lis3mdl_sample_fetch(struct device *dev, enum sensor_channel chan)
 	 */
 	if (i2c_burst_read(drv_data->i2c, CONFIG_LIS3MDL_I2C_ADDR,
 			   LIS3MDL_REG_SAMPLE_START + 6,
-			   (uint8_t *)(buf + 3), 2) < 0) {
+			   (u8_t *)(buf + 3), 2) < 0) {
 		SYS_LOG_DBG("Failed to fetch temperature sample.");
 		return -EIO;
 	};
@@ -98,10 +98,11 @@ static const struct sensor_driver_api lis3mdl_driver_api = {
 int lis3mdl_init(struct device *dev)
 {
 	struct lis3mdl_data *drv_data = dev->driver_data;
-	uint8_t chip_cfg[5];
-	uint8_t id, idx;
+	u8_t chip_cfg[6];
+	u8_t id, idx;
 
 	drv_data->i2c = device_get_binding(CONFIG_LIS3MDL_I2C_MASTER_DEV_NAME);
+
 	if (drv_data->i2c == NULL) {
 		SYS_LOG_ERR("Could not get pointer to %s device.",
 			    CONFIG_LIS3MDL_I2C_MASTER_DEV_NAME);
@@ -132,17 +133,18 @@ int lis3mdl_init(struct device *dev)
 		return -EINVAL;
 	}
 
-	/* write chip configuration CTRL1-CTRL5 regs */
-	chip_cfg[0] = LIS3MDL_TEMP_EN | lis3mdl_odr_bits[idx];
-	chip_cfg[1] = LIS3MDL_FS_IDX << LIS3MDL_FS_SHIFT;
-	chip_cfg[2] = lis3mdl_odr_bits[idx] & LIS3MDL_FAST_ODR_MASK ?
+	/* Configure sensor */
+	chip_cfg[0] = LIS3MDL_REG_CTRL1;
+	chip_cfg[1] = LIS3MDL_TEMP_EN_MASK | lis3mdl_odr_bits[idx];
+	chip_cfg[2] = LIS3MDL_FS_IDX << LIS3MDL_FS_SHIFT;
+	chip_cfg[3] = lis3mdl_odr_bits[idx] & LIS3MDL_FAST_ODR_MASK ?
 		      LIS3MDL_MD_SINGLE : LIS3MDL_MD_CONTINUOUS;
-	chip_cfg[3] = ((lis3mdl_odr_bits[idx] & LIS3MDL_OM_MASK) >>
+	chip_cfg[4] = ((lis3mdl_odr_bits[idx] & LIS3MDL_OM_MASK) >>
 		       LIS3MDL_OM_SHIFT) << LIS3MDL_OMZ_SHIFT;
-	chip_cfg[4] = LIS3MDL_BDU_EN;
+	chip_cfg[5] = LIS3MDL_BDU_EN;
 
-	if (i2c_burst_write(drv_data->i2c, CONFIG_LIS3MDL_I2C_ADDR,
-			    LIS3MDL_REG_CTRL1, chip_cfg, 5) < 0) {
+	if (i2c_write(drv_data->i2c,
+			    chip_cfg, 6, CONFIG_LIS3MDL_I2C_ADDR) < 0) {
 		SYS_LOG_DBG("Failed to configure chip.");
 		return -EIO;
 	}

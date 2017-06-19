@@ -11,7 +11,7 @@
 #endif
 
 #include <zephyr.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <errno.h>
 #include <stdio.h>
 
@@ -20,13 +20,14 @@
 #include <net/net_mgmt.h>
 
 #define STACKSIZE 2000
-char __noinit __stack thread_stack[STACKSIZE];
+K_THREAD_STACK_DEFINE(thread_stack, STACKSIZE);
+static struct k_thread thread_data;
 
 #if defined(CONFIG_NET_DHCPV4)
 static struct net_mgmt_event_callback mgmt_cb;
 
 static void ipv4_addr_add_handler(struct net_mgmt_event_callback *cb,
-				  uint32_t mgmt_event,
+				  u32_t mgmt_event,
 				  struct net_if *iface)
 {
 	char hr_addr[NET_IPV4_ADDR_LEN];
@@ -70,7 +71,7 @@ static void setup_dhcpv4(struct net_if *iface)
 
 #if defined(CONFIG_NET_IPV4) && !defined(CONFIG_NET_DHCPV4)
 
-#if !defined(CONFIG_NET_SAMPLES_MY_IPV4_ADDR)
+#if !defined(CONFIG_NET_APP_MY_IPV4_ADDR)
 #error "You need to define an IPv4 Address or enable DHCPv4!"
 #endif
 
@@ -79,8 +80,8 @@ static void setup_ipv4(struct net_if *iface)
 	char hr_addr[NET_IPV4_ADDR_LEN];
 	struct in_addr addr;
 
-	if (net_addr_pton(AF_INET, CONFIG_NET_SAMPLES_MY_IPV4_ADDR, &addr)) {
-		NET_ERR("Invalid address: %s", CONFIG_NET_SAMPLES_MY_IPV4_ADDR);
+	if (net_addr_pton(AF_INET, CONFIG_NET_APP_MY_IPV4_ADDR, &addr)) {
+		NET_ERR("Invalid address: %s", CONFIG_NET_APP_MY_IPV4_ADDR);
 		return;
 	}
 
@@ -98,7 +99,7 @@ static void setup_ipv4(struct net_if *iface)
 
 #define MCAST_IP6ADDR "ff84::2"
 
-#ifndef CONFIG_NET_SAMPLES_MY_IPV6_ADDR
+#ifndef CONFIG_NET_APP_MY_IPV6_ADDR
 #error "You need to define an IPv6 Address!"
 #endif
 
@@ -107,8 +108,8 @@ static void setup_ipv6(struct net_if *iface)
 	char hr_addr[NET_IPV6_ADDR_LEN];
 	struct in6_addr addr;
 
-	if (net_addr_pton(AF_INET6, CONFIG_NET_SAMPLES_MY_IPV6_ADDR, &addr)) {
-		NET_ERR("Invalid address: %s", CONFIG_NET_SAMPLES_MY_IPV6_ADDR);
+	if (net_addr_pton(AF_INET6, CONFIG_NET_APP_MY_IPV6_ADDR, &addr)) {
+		NET_ERR("Invalid address: %s", CONFIG_NET_APP_MY_IPV6_ADDR);
 		return;
 	}
 
@@ -144,7 +145,7 @@ void main(void)
 {
 	NET_INFO("Starting Telnet sample");
 
-	k_thread_spawn(&thread_stack[0], STACKSIZE,
-		       (k_thread_entry_t)network_setup,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
+	k_thread_create(&thread_data, thread_stack, STACKSIZE,
+			(k_thread_entry_t)network_setup,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }

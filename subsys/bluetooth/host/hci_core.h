@@ -22,7 +22,8 @@
 /* k_poll event tags */
 enum {
 	BT_EVENT_CMD_TX,
-	BT_EVENT_CONN_TX,
+	BT_EVENT_CONN_TX_NOTIFY,
+	BT_EVENT_CONN_TX_QUEUE,
 };
 
 /* bt_dev flags: the flags defined here represent BT controller state */
@@ -53,24 +54,23 @@ enum {
 
 struct bt_dev_le {
 	/* LE features */
-	uint8_t			features[1][8];
+	u8_t			features[8];
 	/* LE states */
-	uint64_t                states;
+	u64_t			states;
 
+#if defined(CONFIG_BLUETOOTH_CONN)
 	/* Controller buffer information */
-	uint16_t		mtu;
+	u16_t			mtu;
 	struct k_sem		pkts;
+#endif /* CONFIG_BLUETOOTH_CONN */
 };
 
 #if defined(CONFIG_BLUETOOTH_BREDR)
-struct bt_dev_esco {
-	uint16_t                pkt_type;
-};
-
 struct bt_dev_br {
 	/* Max controller's acceptable ACL packet length */
-	uint16_t		mtu;
-	struct k_sem		pkts;
+	u16_t         mtu;
+	struct k_sem  pkts;
+	u16_t         esco_pkt_type;
 };
 #endif
 
@@ -83,17 +83,17 @@ struct bt_dev {
 	bt_addr_le_t		random_addr;
 
 	/* Controller version & manufacturer information */
-	uint8_t			hci_version;
-	uint8_t			lmp_version;
-	uint16_t		hci_revision;
-	uint16_t		lmp_subversion;
-	uint16_t		manufacturer;
+	u8_t			hci_version;
+	u8_t			lmp_version;
+	u16_t			hci_revision;
+	u16_t			lmp_subversion;
+	u16_t			manufacturer;
 
 	/* LMP features (pages 0, 1, 2) */
-	uint8_t			features[LMP_FEAT_PAGES_COUNT][8];
+	u8_t			features[LMP_FEAT_PAGES_COUNT][8];
 
 	/* Supported commands */
-	uint8_t			supported_commands[64];
+	u8_t			supported_commands[64];
 
 	struct k_work           init;
 
@@ -105,7 +105,6 @@ struct bt_dev {
 #if defined(CONFIG_BLUETOOTH_BREDR)
 	/* BR/EDR controller specific features */
 	struct bt_dev_br	br;
-	struct bt_dev_esco      esco;
 #endif
 
 	/* Number of commands controller can accept */
@@ -129,11 +128,11 @@ struct bt_dev {
 	struct k_fifo		cmd_tx_queue;
 
 	/* Registered HCI driver */
-	struct bt_hci_driver	*drv;
+	const struct bt_hci_driver *drv;
 
 #if defined(CONFIG_BLUETOOTH_PRIVACY)
 	/* Local Identity Resolving Key */
-	uint8_t			irk[16];
+	u8_t			irk[16];
 
 	/* Work used for RPA rotation */
 	struct k_delayed_work rpa_update;
@@ -148,16 +147,10 @@ extern const struct bt_conn_auth_cb *bt_auth;
 
 bool bt_le_conn_params_valid(const struct bt_le_conn_param *param);
 
-struct net_buf *bt_hci_cmd_create(uint16_t opcode, uint8_t param_len);
-int bt_hci_cmd_send(uint16_t opcode, struct net_buf *buf);
-int bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *buf,
+struct net_buf *bt_hci_cmd_create(u16_t opcode, u8_t param_len);
+int bt_hci_cmd_send(u16_t opcode, struct net_buf *buf);
+int bt_hci_cmd_send_sync(u16_t opcode, struct net_buf *buf,
 			 struct net_buf **rsp);
-
-/* The helper is only safe to be called from internal threads as it's
- * not multi-threading safe
- */
-const char *bt_addr_str(const bt_addr_t *addr);
-const char *bt_addr_le_str(const bt_addr_le_t *addr);
 
 int bt_le_scan_update(bool fast_scan);
 
@@ -165,4 +158,4 @@ bool bt_addr_le_is_bonded(const bt_addr_le_t *addr);
 
 int bt_send(struct net_buf *buf);
 
-uint16_t bt_hci_get_cmd_opcode(struct net_buf *buf);
+u16_t bt_hci_get_cmd_opcode(struct net_buf *buf);

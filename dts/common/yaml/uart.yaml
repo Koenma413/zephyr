@@ -12,7 +12,7 @@ properties:
       category: optional
       description: Clock frequency information for UART operation
       generation: define
-  - baud-rate:
+  - current-speed:
       type: int
       category: required
       description: Initial baud rate setting for UART
@@ -21,5 +21,10 @@ properties:
       type: array
       category: required
       description: Clock gate information
+      generation: define
+  - label:
+      type: string
+      category: required
+      description: Human readable string describing the device (used by Zephyr for API name)
       generation: define
 ...

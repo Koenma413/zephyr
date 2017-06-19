@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
 #include <misc/printk.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 #include <tc_util.h>
 

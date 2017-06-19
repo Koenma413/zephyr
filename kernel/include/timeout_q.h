@@ -15,6 +15,7 @@
  */
 
 #include <misc/dlist.h>
+#include <drivers/system_timer.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -188,16 +189,13 @@ static inline void _dump_timeout_q(void)
  * they were queued. This could be changed at the cost of potential longer
  * interrupt latency.
  *
- * NOTE: The current implementation of the legacy semaphore feature depends on
- * the timeouts being queued in reverse order.
- *
  * Must be called with interrupts locked.
  */
 
 static inline void _add_timeout(struct k_thread *thread,
 				struct _timeout *timeout,
 				_wait_q_t *wait_q,
-				int32_t timeout_in_ticks)
+				s32_t timeout_in_ticks)
 {
 	__ASSERT(timeout_in_ticks > 0, "");
 
@@ -209,9 +207,25 @@ static inline void _add_timeout(struct k_thread *thread,
 	_dump_timeout(timeout, 0);
 	_dump_timeout_q();
 
-	int32_t *delta = &timeout->delta_ticks_from_prev;
+	s32_t *delta = &timeout->delta_ticks_from_prev;
 	struct _timeout *in_q;
 
+#ifdef CONFIG_TICKLESS_KERNEL
+	/*
+	 * If some time has already passed since timer was last
+	 * programmed, then that time needs to be accounted when
+	 * inserting the new timeout. We account for this
+	 * by adding the already elapsed time to the new timeout.
+	 * This is like adding this timout back in history.
+	 */
+	u32_t adjusted_timeout;
+	u32_t program_time = _get_program_time();
+
+	if (program_time > 0) {
+		*delta += _get_elapsed_program_time();
+	}
+	adjusted_timeout = *delta;
+#endif
 	SYS_DLIST_FOR_EACH_CONTAINER(&_timeout_q, in_q, node) {
 		if (*delta <= in_q->delta_ticks_from_prev) {
 			in_q->delta_ticks_from_prev -= *delta;
@@ -229,6 +243,12 @@ inserted:
 	K_DEBUG("after adding timeout %p\n", timeout);
 	_dump_timeout(timeout, 0);
 	_dump_timeout_q();
+
+#ifdef CONFIG_TICKLESS_KERNEL
+	if (!program_time || (adjusted_timeout < program_time)) {
+		_set_time(adjusted_timeout);
+	}
+#endif
 }
 
 /*
@@ -241,14 +261,14 @@ inserted:
 
 static inline void _add_thread_timeout(struct k_thread *thread,
 				       _wait_q_t *wait_q,
-				       int32_t timeout_in_ticks)
+				       s32_t timeout_in_ticks)
 {
 	_add_timeout(thread, &thread->base.timeout, wait_q, timeout_in_ticks);
 }
 
 /* find the closest deadline in the timeout queue */
 
-static inline int32_t _get_next_timeout_expiry(void)
+static inline s32_t _get_next_timeout_expiry(void)
 {
 	struct _timeout *t = (struct _timeout *)
 			     sys_dlist_peek_head(&_timeout_q);

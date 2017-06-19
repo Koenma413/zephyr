@@ -7,7 +7,8 @@
 #include "soc_watch_logger.h"
 
 #define STSIZE 512
-char __stack soc_watch_event_logger_stack[1][STSIZE];
+static K_THREAD_STACK_DEFINE(soc_watch_event_logger_stack, STSIZE);
+static struct k_thread soc_watch_event_logger_data;
 
 /**
  * @brief soc_watch data collector thread
@@ -21,9 +22,9 @@ void soc_watch_data_collector(void)
 {
 #ifdef CONFIG_SOC_WATCH
 	int res;
-	uint32_t data[4];
-	uint8_t dropped_count;
-	uint16_t event_id;
+	u32_t data[4];
+	u8_t dropped_count;
+	u16_t event_id;
 
 	/* We register the thread as collector to avoid this thread generating a
 	 * context switch event every time it collects the data
@@ -32,7 +33,7 @@ void soc_watch_data_collector(void)
 
 	while (1) {
 		/* collect the data */
-		uint8_t data_length = SIZE32_OF(data);
+		u8_t data_length = SIZE32_OF(data);
 
 		res = sys_k_event_logger_get_wait(&event_id, &dropped_count,
 				data, &data_length);
@@ -91,7 +92,8 @@ void soc_watch_logger_thread_start(void)
 {
 	PRINTF("\x1b[2J\x1b[15;1H");
 
-	k_thread_spawn(&soc_watch_event_logger_stack[0][0], STSIZE,
+	k_thread_create(&soc_watch_event_logger_data,
+			soc_watch_event_logger_stack, STSIZE,
 			(k_thread_entry_t) soc_watch_data_collector, 0, 0, 0,
 			6, 0, 0);
 }

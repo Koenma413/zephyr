@@ -27,8 +27,8 @@
 
 static int test_counter(void)
 {
-	uint32_t i = 0;
-	uint32_t p_val, c_val, delta;
+	u32_t i = 0;
+	u32_t p_val, c_val, delta;
 	struct device *aon_counter = device_get_binding(AON_COUNTER);
 
 	if (!aon_counter) {
@@ -74,5 +74,5 @@ static int test_counter(void)
 
 void test_aon_counter(void)
 {
-	assert_true(test_counter() == TC_PASS, NULL);
+	zassert_true(test_counter() == TC_PASS, NULL);
 }

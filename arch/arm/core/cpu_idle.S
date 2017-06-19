@@ -12,7 +12,7 @@
 
 #include <offsets_short.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <arch/cpu.h>
 #ifdef CONFIG_TICKLESS_IDLE
 #include <kernel_structs.h>
@@ -39,7 +39,7 @@ GTEXT(k_cpu_atomic_idle)
  *
  * @brief Initialization of CPU idle
  *
- * Only called by nanoArchInit(). Sets SEVONPEND bit once for the system's
+ * Only called by kernel_arch_init(). Sets SEVONPEND bit once for the system's
  * duration.
  *
  * @return N/A
@@ -67,7 +67,7 @@ SECTION_FUNC(TEXT, _CpuIdleInit)
  *
  * C function prototype:
  *
- * int32_t _NanoIdleValGet (void);
+ * s32_t _NanoIdleValGet (void);
  */
 
 SECTION_FUNC(TEXT, _NanoIdleValGet)

@@ -14,9 +14,10 @@
 
 #include "test_sched.h"
 #define THREADS_NUM     3
-static char __noinit __stack tstack[THREADS_NUM][STACK_SIZE];
+static K_THREAD_STACK_ARRAY_DEFINE(tstack, THREADS_NUM, STACK_SIZE);
 
 static struct thread_data tdata[THREADS_NUM];
+static struct k_thread tthread[THREADS_NUM];
 static int old_prio, init_prio;
 
 static void thread_entry(void *p1, void *p2, void *p3)
@@ -54,9 +55,10 @@ static void setup_threads(void)
 static void spawn_threads(int sleep_sec)
 {
 	for (int i = 0; i < THREADS_NUM; i++) {
-		tdata[i].tid = k_thread_spawn(tstack[i], STACK_SIZE,
-					      thread_entry, (void *)i, (void *)sleep_sec, NULL,
-					      tdata[i].priority, 0, 0);
+		tdata[i].tid = k_thread_create(&tthread[i], tstack[i],
+					       STACK_SIZE, thread_entry,
+					       (void *)i, (void *)sleep_sec,
+					       NULL, tdata[i].priority, 0, 0);
 	}
 }
 
@@ -79,10 +81,10 @@ void test_yield_cooperative(void)
 	spawn_threads(0);
 	/* checkpoint: only higher priority thread get executed when yield */
 	k_yield();
-	assert_true(tdata[0].executed == 1, NULL);
-	assert_true(tdata[1].executed == 1, NULL);
+	zassert_true(tdata[0].executed == 1, NULL);
+	zassert_true(tdata[1].executed == 1, NULL);
 	for (int i = 2; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 	/* restore environment */
 	teardown_threads();
@@ -98,7 +100,7 @@ void test_sleep_cooperative(void)
 	/* checkpoint: all ready threads get executed when k_sleep */
 	k_sleep(100);
 	for (int i = 0; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 1, NULL);
+		zassert_true(tdata[i].executed == 1, NULL);
 	}
 
 	/* restore environment */
@@ -115,7 +117,7 @@ void test_busy_wait_cooperative(void)
 	k_busy_wait(100000); /* 100 ms */
 	/* checkpoint: No other threads get executed */
 	for (int i = 0; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 	/* restore environment */
 	teardown_threads();
@@ -130,10 +132,10 @@ void test_sleep_wakeup_preemptible(void)
 	spawn_threads(10 * 1000); /* 10 second */
 	/* checkpoint: lower threads not executed, high threads are in sleep */
 	for (int i = 0; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 	k_wakeup(tdata[0].tid);
-	assert_true(tdata[0].executed == 1, NULL);
+	zassert_true(tdata[0].executed == 1, NULL);
 	/* restore environment */
 	teardown_threads();
 }
@@ -147,12 +149,12 @@ void test_time_slicing_preemptible(void)
 	k_sched_time_slice_set(200, 0); /* 200 ms */
 	spawn_threads(0);
 	/* checkpoint: higher priority threads get executed immediately */
-	assert_true(tdata[0].executed == 1, NULL);
+	zassert_true(tdata[0].executed == 1, NULL);
 	k_busy_wait(500000); /* 500 ms */
 	/* checkpoint: equal priority threads get executed every time slice */
-	assert_true(tdata[1].executed == 1, NULL);
+	zassert_true(tdata[1].executed == 1, NULL);
 	for (int i = 2; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 
 	/* restore environment */
@@ -168,12 +170,12 @@ void test_time_slicing_disable_preemptible(void)
 
 	spawn_threads(0);
 	/* checkpoint: higher priority threads get executed immediately */
-	assert_true(tdata[0].executed == 1, NULL);
+	zassert_true(tdata[0].executed == 1, NULL);
 	k_busy_wait(500000); /* 500 ms */
 	/* checkpoint: equal priority threads get executed every time slice */
-	assert_true(tdata[1].executed == 0, NULL);
+	zassert_true(tdata[1].executed == 0, NULL);
 	for (int i = 2; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 	/* restore environment */
 	teardown_threads();
@@ -191,13 +193,13 @@ void test_lock_preemptible(void)
 	k_busy_wait(100000);
 	/* checkpoint: all other threads not been executed */
 	for (int i = 0; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 	/* make current thread unready */
 	k_sleep(100);
 	/* checkpoint: all other threads get executed */
 	for (int i = 0; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 1, NULL);
+		zassert_true(tdata[i].executed == 1, NULL);
 	}
 	/* restore environment */
 	teardown_threads();
@@ -216,9 +218,9 @@ void test_unlock_preemptible(void)
 
 	k_sched_unlock();
 	/* checkpoint: higher threads get executed */
-	assert_true(tdata[0].executed == 1, NULL);
+	zassert_true(tdata[0].executed == 1, NULL);
 	for (int i = 1; i < THREADS_NUM; i++) {
-		assert_true(tdata[i].executed == 0, NULL);
+		zassert_true(tdata[i].executed == 0, NULL);
 	}
 	/* restore environment */
 	teardown_threads();

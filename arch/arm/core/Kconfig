@@ -20,6 +20,8 @@ config CPU_CORTEX_M
 	select CPU_CORTEX
 	select ARCH_HAS_CUSTOM_SWAP_TO_MAIN
 	select HAS_CMSIS
+	select HAS_FLASH_LOAD_OFFSET
+	select HAS_DTS
 	help
 	This option signifies the use of a CPU of the Cortex-M family.
 
@@ -29,6 +31,13 @@ config CPU_HAS_SYSTICK
 	default n
 	help
 	This option is enabled when the CPU has systick timer implemented.
+
+config CPU_HAS_MPU
+	bool
+	# Omit prompt to signify "hidden" option
+	default n
+	help
+	  This option is enabled when the CPU has a Memory Protection Unit (MPU).
 
 config CPU_HAS_FPU
 	# Hidden config selected by CPU family
@@ -87,4 +96,8 @@ endmenu
 
 if CPU_CORTEX_M
 source "arch/arm/core/cortex_m/Kconfig"
+endif
+
+if CPU_HAS_MPU
+source "arch/arm/core/cortex_m/mpu/Kconfig"
 endif

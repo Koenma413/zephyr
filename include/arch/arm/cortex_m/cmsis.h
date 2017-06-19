@@ -36,9 +36,9 @@ extern "C" {
 #define CPACR_CP11_RESERVED     (2UL << CPACR_CP11_Pos)
 #define CPACR_CP11_FULL_ACCESS  (3UL << CPACR_CP11_Pos)
 
-#define SCB_UFSR  (*((__IOM uint16_t *) &SCB->CFSR + 2))
-#define SCB_BFSR  (*((__IOM uint8_t *) &SCB->CFSR + 1))
-#define SCB_MMFSR (*((__IOM uint8_t *) &SCB->CFSR))
+#define SCB_UFSR  (*((__IOM u16_t *) &SCB->CFSR + 2))
+#define SCB_BFSR  (*((__IOM u8_t *) &SCB->CFSR + 1))
+#define SCB_MMFSR (*((__IOM u8_t *) &SCB->CFSR))
 
 /* CFSR[UFSR] */
 #define CFSR_DIVBYZERO_Pos		(25U)
@@ -116,13 +116,17 @@ typedef enum {
 #elif defined(CONFIG_CPU_CORTEX_M7)
 #define __CM7_REV        0
 #else
-#error "Uknown Cortex-M device"
+#error "Unknown Cortex-M device"
 #endif
 
 #define __MPU_PRESENT                  0 /* Zephyr has no MPU support */
 #define __NVIC_PRIO_BITS               CONFIG_NUM_IRQ_PRIO_BITS
 #define __Vendor_SysTickConfig         0 /* Default to standard SysTick */
 #endif /* __NVIC_PRIO_BITS */
+
+#if __NVIC_PRIO_BITS != CONFIG_NUM_IRQ_PRIO_BITS
+#error "CONFIG_NUM_IRQ_PRIO_BITS and __NVIC_PRIO_BITS are not set to the same value"
+#endif
 
 #if defined(CONFIG_CPU_CORTEX_M0)
 #include <core_cm0.h>
@@ -135,7 +139,7 @@ typedef enum {
 #elif defined(CONFIG_CPU_CORTEX_M7)
 #include <core_cm7.h>
 #else
-#error "Uknown Cortex-M device"
+#error "Unknown Cortex-M device"
 #endif
 
 #ifdef __cplusplus

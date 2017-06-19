@@ -32,6 +32,18 @@ static enum power_states states_list[] = {
 #define MAX_SUSPEND_DEVICE_COUNT 15
 #define NB_STATES ARRAY_SIZE(states_list)
 
+/* In Tickless Kernel mode, time is passed in milliseconds instead of ticks */
+#ifdef CONFIG_TICKLESS_KERNEL
+#define TICKS_TO_SECONDS_MULTIPLIER 1000
+#define TIME_UNIT_STRING "milliseconds"
+#else
+#define TICKS_TO_SECONDS_MULTIPLIER CONFIG_SYS_CLOCK_TICKS_PER_SEC
+#define TIME_UNIT_STRING "ticks"
+#endif
+
+#define MIN_TIME_TO_SUSPEND	((TIMEOUT * TICKS_TO_SECONDS_MULTIPLIER) - \
+				  (TICKS_TO_SECONDS_MULTIPLIER / 2))
+
 static struct device *suspend_devices[MAX_SUSPEND_DEVICE_COUNT];
 static int suspend_device_count;
 static unsigned int current_state = NB_STATES - 1;
@@ -82,8 +94,8 @@ static void setup_rtc(void)
 
 static void set_rtc_alarm(void)
 {
-	uint32_t now = rtc_read(rtc_dev);
-	uint32_t alarm = now + (RTC_ALARM_SECOND * (TIMEOUT - 1));
+	u32_t now = rtc_read(rtc_dev);
+	u32_t alarm = now + (RTC_ALARM_SECOND * (TIMEOUT - 1));
 
 	rtc_set_alarm(rtc_dev, alarm);
 
@@ -99,7 +111,7 @@ static struct device *counter_dev;
 
 static void setup_counter(void)
 {
-	volatile uint32_t delay = 0;
+	volatile u32_t delay = 0;
 
 	counter_dev = device_get_binding("AON_TIMER");
 
@@ -120,7 +132,7 @@ static void setup_counter(void)
 
 static void set_counter_alarm(void)
 {
-	uint32_t timer_initial_value = (RTC_ALARM_SECOND * (TIMEOUT - 1));
+	u32_t timer_initial_value = (RTC_ALARM_SECOND * (TIMEOUT - 1));
 
 	if (counter_set_alarm(counter_dev, NULL,
 			      timer_initial_value, NULL)
@@ -150,7 +162,7 @@ static struct device *cmp_dev;
 
 static void setup_aon_comparator(void)
 {
-	volatile uint32_t delay = 0;
+	volatile u32_t delay = 0;
 
 	cmp_dev = device_get_binding("AIO_CMP_0");
 	if (!cmp_dev) {
@@ -228,15 +240,15 @@ static void do_soc_sleep(enum power_states state)
 	}
 }
 
-int _sys_soc_suspend(int32_t ticks)
+int _sys_soc_suspend(s32_t ticks)
 {
 	enum power_states state;
 	int pm_operation = SYS_PM_NOT_HANDLED;
 	post_ops_done = 0;
 
-	if (ticks < (TIMEOUT * CONFIG_SYS_CLOCK_TICKS_PER_SEC)) {
-		printk("Not enough time for PM operations (ticks: %d).\n",
-			ticks);
+	if ((ticks != K_FOREVER) && (ticks < MIN_TIME_TO_SUSPEND)) {
+		printk("Not enough time for PM operations (" TIME_UNIT_STRING
+		       ": %d).\n", ticks);
 		return SYS_PM_NOT_HANDLED;
 	}
 

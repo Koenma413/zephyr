@@ -47,7 +47,7 @@ static void print_temp_data(struct device *bmg160)
 
 static void test_polling_mode(struct device *bmg160)
 {
-	int32_t remaining_test_time = MAX_TEST_TIME;
+	s32_t remaining_test_time = MAX_TEST_TIME;
 
 	do {
 		if (sensor_sample_fetch(bmg160) < 0) {
@@ -82,7 +82,7 @@ static void trigger_handler(struct device *bmg160, struct sensor_trigger *trigge
 
 static void test_trigger_mode(struct device *bmg160)
 {
-	int32_t remaining_test_time = MAX_TEST_TIME;
+	s32_t remaining_test_time = MAX_TEST_TIME;
 	struct sensor_trigger trig;
 	struct sensor_value attr;
 
@@ -168,7 +168,7 @@ static void test_trigger_mode(struct device *bmg160)
 void main(void)
 {
 	struct device *bmg160;
-#if defined(CONFIG_BMG160_GYRO_RANGE_RUNTIME)
+#if defined(CONFIG_BMG160_RANGE_RUNTIME)
 	struct sensor_value attr;
 #endif
 
@@ -178,7 +178,7 @@ void main(void)
 		return;
 	}
 
-#if defined(CONFIG_BMG160_GYRO_RANGE_RUNTIME)
+#if defined(CONFIG_BMG160_RANGE_RUNTIME)
 	/*
 	 * Set gyro range to +/- 250 degrees/s. Since the sensor API needs SI
 	 * units, convert the range to rad/s.

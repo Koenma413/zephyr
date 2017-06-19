@@ -19,14 +19,10 @@
 
 _ASM_FILE_PROLOGUE
 
-GTEXT(_Swap)
-#if defined(CONFIG_ARMV6_M)
-#elif defined(CONFIG_ARMV7_M)
+GTEXT(__swap)
 GTEXT(__svc)
-#else
-#error Unknown ARM architecture
-#endif /* CONFIG_ARMV6_M */
 GTEXT(__pendsv)
+GTEXT(_do_kernel_oops)
 GDATA(_k_neg_eagain)
 
 GDATA(_kernel)
@@ -47,22 +43,26 @@ GDATA(_kernel)
 SECTION_FUNC(TEXT, __pendsv)
 
 #ifdef CONFIG_KERNEL_EVENT_LOGGER_CONTEXT_SWITCH
-	/* Register the context switch */
-	push {lr}
-	bl _sys_k_event_logger_context_switch
-	pop {r0}
-	mov lr, r0
-#endif
+    /* Register the context switch */
+    push {lr}
+    bl _sys_k_event_logger_context_switch
+#if defined(CONFIG_ARMV6_M)
+    pop {r0}
+    mov lr, r0
+#else
+    pop {lr}
+#endif /* CONFIG_ARMV6_M */
+#endif /* CONFIG_KERNEL_EVENT_LOGGER_CONTEXT_SWITCH  */
 
     /* load _kernel into r1 and current k_thread into r2 */
     ldr r1, =_kernel
     ldr r2, [r1, #_kernel_offset_to_current]
 
-    /* addr of callee-saved regs in TCS in r0 */
+    /* addr of callee-saved regs in thread in r0 */
     ldr r0, =_thread_offset_to_callee_saved
     add r0, r2
 
-    /* save callee-saved + psp in TCS */
+    /* save callee-saved + psp in thread */
     mrs ip, PSP
 
 #if defined(CONFIG_ARMV6_M)
@@ -167,7 +167,15 @@ _thread_irq_disabled:
     vldmia r0, {s16-s31}
 #endif
 
-    /* load callee-saved + psp from TCS */
+#ifdef CONFIG_MPU_STACK_GUARD
+    /* r2 contains k_thread */
+    add r0, r2, #0
+    push {r2, lr}
+    blx configure_mpu_stack_guard
+    pop {r2, lr}
+#endif /* CONFIG_MPU_STACK_GUARD */
+
+    /* load callee-saved + psp from thread */
     add r0, r2, #_thread_offset_to_callee_saved
     ldmia r0, {v1-v8, ip}
 #else
@@ -176,16 +184,79 @@ _thread_irq_disabled:
 
     msr PSP, ip
 
+#ifdef CONFIG_EXECUTION_BENCHMARKING
+#if defined(CONFIG_ARMV6_M)
+    push {r3}
+#endif
+    push {lr}
+
+    bl read_systick_end_of_swap
+
+#if defined(CONFIG_ARMV6_M)
+    pop {r3}
+    mov lr,r3
+    pop {r3}
+#else
+    pop {lr}
+#endif
+#endif
+
     /* exc return */
     bx lr
 
 #if defined(CONFIG_ARMV6_M)
+SECTION_FUNC(TEXT, __svc)
+    /* Use EXC_RETURN state to find out if stack frame is on the
+     * MSP or PSP
+     */
+    ldr r0, =0x4
+    mov r1, lr
+    tst r1, r0
+    beq _stack_frame_msp
+    mrs r0, PSP
+    bne _stack_frame_endif
+_stack_frame_msp:
+    mrs r0, MSP
+_stack_frame_endif:
+
+    /* Figure out what SVC call number was invoked */
+    ldr r1, [r0, #24]   /* grab address of PC from stack frame */
+    /* SVC is a two-byte instruction, point to it and read  encoding */
+    subs r1, r1, #2
+    ldrb r1, [r1, #0]
+
+   /*
+    * grab service call number:
+    * 1: irq_offload (if configured)
+    * 2: kernel panic or oops (software generated fatal exception)
+    * Planned implementation of system calls for memory protection will
+    * expand this case.
+    */
+
+    cmp r1, #2
+    beq _oops
+
+#if CONFIG_IRQ_OFFLOAD
+    push {lr}
+    blx _irq_do_offload  /* call C routine which executes the offload */
+    pop {r3}
+    mov lr, r3
+#endif
+
+    /* exception return is done in _IntExit() */
+    b _IntExit
+
+_oops:
+    push {lr}
+    blx _do_kernel_oops
+    pop {pc}
+
 #elif defined(CONFIG_ARMV7_M)
 /**
  *
  * @brief Service call handler
  *
- * The service call (svc) is only used in _Swap() to enter handler mode so we
+ * The service call (svc) is only used in __swap() to enter handler mode so we
  * can go through the PendSV exception to perform a context switch.
  *
  * @return N/A
@@ -193,32 +264,39 @@ _thread_irq_disabled:
 
 SECTION_FUNC(TEXT, __svc)
 
-#if CONFIG_IRQ_OFFLOAD
     tst lr, #0x4    /* did we come from thread mode ? */
     ite eq  /* if zero (equal), came from handler mode */
         mrseq r0, MSP   /* handler mode, stack frame is on MSP */
         mrsne r0, PSP   /* thread mode, stack frame is on PSP */
 
-    ldr r0, [r0, #24]   /* grab address of PC from stack frame */
+    ldr r1, [r0, #24]   /* grab address of PC from stack frame */
     /* SVC is a two-byte instruction, point to it and read  encoding */
-    ldrh r0, [r0, #-2]
+    ldrh r1, [r1, #-2]
 
    /*
-    * grab service call number: if zero, it's a context switch;  if not,
-    * it's an irq offload
+    * grab service call number:
+    * 0: context switch
+    * 1: irq_offload (if configured)
+    * 2: kernel panic or oops (software generated fatal exception)
+    * Planned implementation of system calls for memory protection will
+    * expand this case.
     */
-    ands r0, #0xff
+    ands r1, #0xff
     beq _context_switch
 
+    cmp r1, #2
+    beq _oops
+
+#if CONFIG_IRQ_OFFLOAD
     push {lr}
     blx _irq_do_offload  /* call C routine which executes the offload */
     pop {lr}
 
     /* exception return is done in _IntExit() */
     b _IntExit
+#endif
 
 _context_switch:
-#endif
 
     /*
      * Unlock interrupts:
@@ -235,6 +313,12 @@ _context_switch:
 
     /* handler mode exit, to PendSV */
     bx lr
+
+_oops:
+    push {lr}
+    blx _do_kernel_oops
+    pop {pc}
+
 #else
 #error Unknown ARM architecture
 #endif /* CONFIG_ARMV6_M */
@@ -243,13 +327,13 @@ _context_switch:
  *
  * @brief Initiate a cooperative context switch
  *
- * The _Swap() routine is invoked by various kernel services to effect
- * a cooperative context context switch.  Prior to invoking _Swap(), the caller
+ * The __swap() routine is invoked by various kernel services to effect
+ * a cooperative context context switch.  Prior to invoking __swap(), the caller
  * disables interrupts via irq_lock() and the return 'key' is passed as a
- * parameter to _Swap().  The 'key' actually represents the BASEPRI register
+ * parameter to __swap().  The 'key' actually represents the BASEPRI register
  * prior to disabling interrupts via the BASEPRI mechanism.
  *
- * _Swap() itself does not do much.
+ * __swap() itself does not do much.
  *
  * It simply stores the intlock key (the BASEPRI value) parameter into
  * current->basepri, and then triggers a service call exception (svc) to setup
@@ -259,8 +343,8 @@ _context_switch:
  * __pendsv all come from handling an interrupt, which means we know the
  * interrupts were not locked: in that case the BASEPRI value is 0.
  *
- * Given that _Swap() is called to effect a cooperative context switch,
- * only the caller-saved integer registers need to be saved in the TCS of the
+ * Given that __swap() is called to effect a cooperative context switch,
+ * only the caller-saved integer registers need to be saved in the thread of the
  * outgoing thread. This is all performed by the hardware, which stores it in
  * its exception stack frame, created when handling the svc exception.
  *
@@ -272,18 +356,32 @@ _context_switch:
  *
  * C function prototype:
  *
- * unsigned int _Swap (unsigned int basepri);
+ * unsigned int __swap (unsigned int basepri);
  *
  */
 
-SECTION_FUNC(TEXT, _Swap)
+SECTION_FUNC(TEXT, __swap)
 
+#ifdef CONFIG_EXECUTION_BENCHMARKING
+#if defined(CONFIG_ARMV6_M)
+    push {r3}
+#endif
+    push {lr}
+    bl read_systick_start_of_swap
+#if defined(CONFIG_ARMV6_M)
+    pop {r3}
+    mov lr,r3
+    pop {r3}
+#else
+    pop {lr}
+#endif
+#endif
     ldr r1, =_kernel
     ldr r2, [r1, #_kernel_offset_to_current]
     str r0, [r2, #_thread_offset_to_basepri]
 
     /*
-     * Set _Swap()'s default return code to -EAGAIN. This eliminates the need
+     * Set __swap()'s default return code to -EAGAIN. This eliminates the need
      * for the timeout code to set it itself.
      */
     ldr r1, =_k_neg_eagain

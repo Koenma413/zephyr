@@ -15,7 +15,8 @@
 #include <ztest.h>
 
 #define STACK_SIZE (256 + CONFIG_TEST_EXTRA_STACKSIZE)
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 
 static char tp1[8];
 static int tp2 = 100;
@@ -25,15 +26,15 @@ static int spawn_prio;
 static void thread_entry_params(void *p1, void *p2, void *p3)
 {
 	/* checkpoint: check parameter 1, 2, 3 */
-	assert_equal((char *)p1, tp1, NULL);
-	assert_equal((int)p2, tp2, NULL);
-	assert_equal((struct k_sema *)p3, tp3, NULL);
+	zassert_equal((char *)p1, tp1, NULL);
+	zassert_equal((int)p2, tp2, NULL);
+	zassert_equal((struct k_sema *)p3, tp3, NULL);
 }
 
 static void thread_entry_priority(void *p1, void *p2, void *p3)
 {
 	/* checkpoint: check priority */
-	assert_equal(k_thread_priority_get(k_current_get()), spawn_prio, NULL);
+	zassert_equal(k_thread_priority_get(k_current_get()), spawn_prio, NULL);
 }
 
 static void thread_entry_delay(void *p1, void *p2, void *p3)
@@ -44,9 +45,9 @@ static void thread_entry_delay(void *p1, void *p2, void *p3)
 /*test cases*/
 void test_threads_spawn_params(void)
 {
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
-				     thread_entry_params, (void *)tp1, (void *)tp2, (void *)tp3,
-				     0, 0, 0);
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
+				      thread_entry_params, (void *)tp1,
+				      (void *)tp2, (void *)tp3, 0, 0, 0);
 
 	k_sleep(100);
 	k_thread_abort(tid);
@@ -56,9 +57,9 @@ void test_threads_spawn_priority(void)
 {
 	/* spawn thread with higher priority */
 	spawn_prio = k_thread_priority_get(k_current_get()) - 1;
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
-				     thread_entry_priority, NULL, NULL, NULL,
-				     spawn_prio, 0, 0);
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
+				      thread_entry_priority, NULL, NULL, NULL,
+				      spawn_prio, 0, 0);
 	k_sleep(100);
 	k_thread_abort(tid);
 }
@@ -67,15 +68,15 @@ void test_threads_spawn_delay(void)
 {
 	/* spawn thread with higher priority */
 	tp2 = 10;
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
-				     thread_entry_delay, NULL, NULL, NULL,
-				     0, 0, 120);
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
+				      thread_entry_delay, NULL, NULL, NULL,
+				      0, 0, 120);
 	/* 100 < 120 ensure spawn thread not start */
 	k_sleep(100);
 	/* checkpoint: check spawn thread not execute */
-	assert_true(tp2 == 10, NULL);
+	zassert_true(tp2 == 10, NULL);
 	/* checkpoint: check spawn thread executed */
 	k_sleep(100);
-	assert_true(tp2 == 100, NULL);
+	zassert_true(tp2 == 100, NULL);
 	k_thread_abort(tid);
 }

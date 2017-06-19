@@ -16,15 +16,15 @@
 #define SYS_LOG_LEVEL CONFIG_SYS_LOG_CRYPTO_LEVEL
 #include <logging/sys_log.h>
 
-uint8_t key[16] = {
+u8_t key[16] = {
 	0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88,
 	0x09, 0xcf, 0x4f, 0x3c
 };
-uint8_t iv[16] = {
+u8_t iv[16] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
 	0x0c, 0x0d, 0x0e, 0x0f
 };
-uint8_t plaintext[64] = {
+u8_t plaintext[64] = {
 	0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11,
 	0x73, 0x93, 0x17, 0x2a, 0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c,
 	0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf, 0x8e, 0x51, 0x30, 0xc8, 0x1c, 0x46,
@@ -32,7 +32,7 @@ uint8_t plaintext[64] = {
 	0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b,
 	0xe6, 0x6c, 0x37, 0x10
 };
-uint8_t ciphertext[80] = {
+u8_t ciphertext[80] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
 	0x0c, 0x0d, 0x0e, 0x0f, 0x76, 0x49, 0xab, 0xac, 0x81, 0x19, 0xb2, 0x46,
 	0xce, 0xe9, 0x8e, 0x9b, 0x12, 0xe9, 0x19, 0x7d, 0x50, 0x86, 0xcb, 0x9b,
@@ -42,28 +42,28 @@ uint8_t ciphertext[80] = {
 	0x12, 0x0e, 0xca, 0x30, 0x75, 0x86, 0xe1, 0xa7
 };
 
-uint32_t cap_flags;
+u32_t cap_flags;
 
 int validate_hw_compatibility(struct device *dev)
 {
-	uint32_t flags = 0;
+	u32_t flags = 0;
 
 	flags = cipher_query_hwcaps(dev);
 	if ((flags & CAP_RAW_KEY) == 0) {
 		SYS_LOG_INF(" Please provision the key separately "
-			"as the module doesnt support a raw key\n");
+			"as the module doesnt support a raw key");
 		return -1;
 	}
 
 	if ((flags & CAP_SYNC_OPS) == 0) {
 		SYS_LOG_ERR("The app assumes sync semantics. "
-		  "Please rewrite the app accordingly before proceeding\n");
+		  "Please rewrite the app accordingly before proceeding");
 		return -1;
 	}
 
 	if ((flags & CAP_SEPARATE_IO_BUFS) == 0) {
 		SYS_LOG_ERR("The app assumes distinct IO buffers. "
-		"Please rewrite the app accordingly before proceeding\n");
+		"Please rewrite the app accordingly before proceeding");
 		return -1;
 	}
 
@@ -79,19 +79,19 @@ void cbc_mode(void)
 	struct cipher_ctx ini;
 	struct cipher_pkt  encrpt;
 	struct cipher_pkt decrypt;
-	uint8_t encrypted[80];
-	uint8_t decrypted[64];
+	u8_t encrypted[80];
+	u8_t decrypted[64];
 
-	SYS_LOG_INF("CBC Mode\n");
+	SYS_LOG_INF("CBC Mode");
 
-	dev = device_get_binding(CONFIG_CRYPTO_0_NAME);
+	dev = device_get_binding(CONFIG_CRYPTO_TINYCRYPT_SHIM_DRV_NAME);
 	if (!dev) {
-		SYS_LOG_ERR("TinyCrypt pseudo device not found\n");
+		SYS_LOG_ERR("TinyCrypt pseudo device not found");
 		return;
 	}
 
 	if (validate_hw_compatibility(dev)) {
-		SYS_LOG_ERR("Incompatible h/w\n");
+		SYS_LOG_ERR("Incompatible h/w");
 		return;
 	}
 
@@ -99,8 +99,11 @@ void cbc_mode(void)
 	ini.key.bit_stream = key;
 	ini.flags =  cap_flags;
 
-	cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
-			     CRYPTO_CIPHER_MODE_CBC, CRYPTO_CIPHER_OP_ENCRYPT);
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CBC,
+				 CRYPTO_CIPHER_OP_ENCRYPT)) {
+		return;
+	}
 
 	encrpt.in_buf = plaintext;
 	encrpt.in_len = sizeof(plaintext);
@@ -111,14 +114,18 @@ void cbc_mode(void)
 
 	if (memcmp(encrpt.out_buf, ciphertext, sizeof(ciphertext))) {
 		SYS_LOG_ERR("cbc mode ENCRYPT - Mismatch between expected and "
-			"returned cipher text\n");
-		return;
+			    "returned cipher text");
+		goto out;
 	}
-	SYS_LOG_INF("cbc mode ENCRYPT - Match\n");
+
+	SYS_LOG_INF("cbc mode ENCRYPT - Match");
 	cipher_free_session(dev, &ini);
 
-	cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
-			     CRYPTO_CIPHER_MODE_CBC, CRYPTO_CIPHER_OP_DECRYPT);
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CBC,
+				 CRYPTO_CIPHER_OP_DECRYPT)) {
+		return;
+	}
 
 	decrypt.in_buf = encrpt.out_buf;	/* encrypted */
 	decrypt.in_len = sizeof(encrypted);
@@ -130,15 +137,16 @@ void cbc_mode(void)
 
 	if (memcmp(decrypt.out_buf, plaintext, sizeof(plaintext))) {
 		SYS_LOG_ERR("cbc mode DECRYPT - Mismatch between plaintext and "
-			 "decrypted cipher text\n");
-		return;
+			    "decrypted cipher text");
+		goto out;
 	}
-	SYS_LOG_INF("cbc mode DECRYPT - Match\n");
 
+	SYS_LOG_INF("cbc mode DECRYPT - Match");
+out:
 	cipher_free_session(dev, &ini);
 }
 
-uint8_t ctr_ciphertext[64] = {
+u8_t ctr_ciphertext[64] = {
 	0x22, 0xe5, 0x2f, 0xb1, 0x77, 0xd8, 0x65, 0xb2,
 	0xf7, 0xc6, 0xb5, 0x12, 0x69, 0x2d, 0x11, 0x4d,
 	0xed, 0x6c, 0x1c, 0x72, 0x25, 0xda, 0xf6, 0xa2,
@@ -155,23 +163,23 @@ void ctr_mode(void)
 	struct cipher_ctx ini;
 	struct cipher_pkt  encrpt;
 	struct cipher_pkt decrypt;
-	uint8_t encrypted[64] = {0};
-	uint8_t decrypted[64] = {0};
-	uint8_t iv[12] = {
+	u8_t encrypted[64] = {0};
+	u8_t decrypted[64] = {0};
+	u8_t iv[12] = {
 		0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
 		0xf8, 0xf9, 0xfa, 0xfb
 	};
 
-	SYS_LOG_INF("CTR Mode\n");
+	SYS_LOG_INF("CTR Mode");
 
-	dev = device_get_binding(CONFIG_CRYPTO_0_NAME);
+	dev = device_get_binding(CONFIG_CRYPTO_TINYCRYPT_SHIM_DRV_NAME);
 	if (!dev) {
-		SYS_LOG_ERR("TinyCrypt pseudo device not found\n");
+		SYS_LOG_ERR("TinyCrypt pseudo device not found");
 		return;
 	}
 
 	if (validate_hw_compatibility(dev)) {
-		SYS_LOG_ERR("Incompatible h/w\n");
+		SYS_LOG_ERR("Incompatible h/w");
 		return;
 	}
 
@@ -181,8 +189,11 @@ void ctr_mode(void)
 	/*  ivlen + ctrlen = keylen , so ctrlen is 128 - 96 = 32 bits */
 	ini.mode_params.ctr_info.ctr_len =  32;
 
-	cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
-			     CRYPTO_CIPHER_MODE_CTR, CRYPTO_CIPHER_OP_ENCRYPT);
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CTR,
+				 CRYPTO_CIPHER_OP_ENCRYPT)) {
+		return;
+	}
 
 	encrpt.in_buf = plaintext;
 
@@ -194,14 +205,19 @@ void ctr_mode(void)
 
 	if (memcmp(encrpt.out_buf, ctr_ciphertext, sizeof(ctr_ciphertext))) {
 		SYS_LOG_ERR("ctr mode ENCRYPT - Mismatch between expected "
-				"and returned cipher text\n");
-		return;
+			    "and returned cipher text");
+		goto out;
 	}
-	SYS_LOG_INF("ctr mode ENCRYPT - Match\n");
+
+	SYS_LOG_INF("ctr mode ENCRYPT - Match");
 	cipher_free_session(dev, &ini);
 
-	cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
-			     CRYPTO_CIPHER_MODE_CTR, CRYPTO_CIPHER_OP_DECRYPT);
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CTR,
+				 CRYPTO_CIPHER_OP_DECRYPT)) {
+		return;
+	}
+
 
 	decrypt.in_buf = encrypted;
 	decrypt.in_len = sizeof(encrypted);
@@ -212,31 +228,32 @@ void ctr_mode(void)
 
 	if (memcmp(decrypt.out_buf, plaintext, sizeof(plaintext))) {
 		SYS_LOG_ERR("ctr mode DECRYPT - Mismatch between plaintext "
-			"and decypted cipher text\n");
-		return;
+			    "and decypted cipher text");
+		goto out;
 	}
-	SYS_LOG_INF("ctr mode DECRYPT - Match\n");
 
+	SYS_LOG_INF("ctr mode DECRYPT - Match");
+out:
 	cipher_free_session(dev, &ini);
 }
 
 /* RFC 3610 test vector #1 */
-uint8_t ccm_key[16] = {
+u8_t ccm_key[16] = {
 	0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb,
 	0xcc, 0xcd, 0xce, 0xcf
 };
-uint8_t ccm_nonce[13] = {
+u8_t ccm_nonce[13] = {
 	0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4,
 	0xa5
 };
-uint8_t ccm_hdr[8] = {
+u8_t ccm_hdr[8] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
 };
-uint8_t ccm_data[23] = {
+u8_t ccm_data[23] = {
 	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
 	0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e
 };
-uint8_t ccm_expected[31] = {
+u8_t ccm_expected[31] = {
 	0x58, 0x8c, 0x97, 0x9a, 0x61, 0xc6, 0x63, 0xd2, 0xf0, 0x66, 0xd0, 0xc2,
 	0xc0, 0xf9, 0x89, 0x80, 0x6d, 0x5f, 0x6b, 0x61, 0xda, 0xc3, 0x84, 0x17,
 	0xe8, 0xd1, 0x2c, 0xfd, 0xf9, 0x26, 0xe0
@@ -249,19 +266,19 @@ void ccm_mode(void)
 	struct cipher_pkt  encrpt;
 	struct cipher_aead_pkt ccm_op;
 	struct cipher_pkt decrypt;
-	uint8_t encrypted[50];
-	uint8_t decrypted[25];
+	u8_t encrypted[50];
+	u8_t decrypted[25];
 
-	SYS_LOG_INF("CCM Mode\n");
+	SYS_LOG_INF("CCM Mode");
 
-	dev = device_get_binding(CONFIG_CRYPTO_0_NAME);
+	dev = device_get_binding(CONFIG_CRYPTO_TINYCRYPT_SHIM_DRV_NAME);
 	if (!dev) {
-		SYS_LOG_ERR("TinyCrypt pseudo device not found\n");
+		SYS_LOG_ERR("TinyCrypt pseudo device not found");
 		return;
 	}
 
 	if (validate_hw_compatibility(dev)) {
-		SYS_LOG_ERR("Incompatible h/w\n");
+		SYS_LOG_ERR("Incompatible h/w");
 		return;
 	}
 
@@ -271,8 +288,11 @@ void ccm_mode(void)
 	ini.mode_params.ccm_info.tag_len = 8;
 	ini.flags =  cap_flags;
 
-	cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
-			     CRYPTO_CIPHER_MODE_CCM, CRYPTO_CIPHER_OP_ENCRYPT);
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CCM,
+				 CRYPTO_CIPHER_OP_ENCRYPT)) {
+		return;
+	}
 
 	encrpt.in_buf = ccm_data;
 	encrpt.in_len = sizeof(ccm_data);
@@ -287,14 +307,18 @@ void ccm_mode(void)
 
 	if (memcmp(encrpt.out_buf, ccm_expected, sizeof(ccm_expected))) {
 		SYS_LOG_ERR("CCM mode ENCRYPT - Mismatch between expected "
-				"and returned cipher text\n");
-		return;
+			    "and returned cipher text");
+		goto out;
 	}
-	SYS_LOG_INF("CCM mode ENCRYPT - Match\n");
+
+	SYS_LOG_INF("CCM mode ENCRYPT - Match");
 	cipher_free_session(dev, &ini);
 
-	cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
-			     CRYPTO_CIPHER_MODE_CCM, CRYPTO_CIPHER_OP_DECRYPT);
+	if (cipher_begin_session(dev, &ini, CRYPTO_CIPHER_ALGO_AES,
+				 CRYPTO_CIPHER_MODE_CCM,
+				 CRYPTO_CIPHER_OP_DECRYPT)) {
+		return;
+	}
 
 	decrypt.in_buf = encrypted;
 	decrypt.in_len = sizeof(ccm_data);
@@ -305,22 +329,23 @@ void ccm_mode(void)
 
 	if (cipher_ccm_op(&ini, &ccm_op, ccm_nonce)) {
 		SYS_LOG_ERR("CCM mode DECRYPT - Failed");
-		return;
+		goto out;
 	}
 
 	if (memcmp(decrypt.out_buf, ccm_data, sizeof(ccm_data))) {
 		SYS_LOG_ERR("CCM mode DECRYPT - Mismatch between plaintext "
-			"and decrypted cipher text\n");
-		return;
+			"and decrypted cipher text");
+		goto out;
 	}
-	SYS_LOG_INF("CCM mode DECRYPT - Match\n");
 
+	SYS_LOG_INF("CCM mode DECRYPT - Match");
+out:
 	cipher_free_session(dev, &ini);
 }
 
 void main(void)
 {
-	SYS_LOG_INF("Cipher Sample\n");
+	SYS_LOG_INF("Cipher Sample");
 	cbc_mode();
 	ctr_mode();
 	ccm_mode();

@@ -73,6 +73,9 @@ extern "C" {
 #define _ARC_V2_IRQ_PRIORITY 0x206
 #define _ARC_V2_KSTACK_TOP 0x264
 #define _ARC_V2_KSTACK_BASE 0x265
+#define _ARC_V2_JLI_BASE 0x290
+#define _ARC_V2_LDI_BASE 0x291
+#define _ARC_V2_EI_BASE 0x292
 #define _ARC_V2_ERET 0x400
 #define _ARC_V2_ERSTATUS 0x402
 #define _ARC_V2_ECR 0x403
@@ -84,6 +87,12 @@ extern "C" {
 #define _ARC_V2_IRQ_STATUS 0x40f
 #define _ARC_V2_IRQ_PULSE_CANCEL 0x415
 #define _ARC_V2_IRQ_PENDING 0x416
+#define _ARC_V2_FPU_CTRL 0x300
+#define _ARC_V2_FPU_STATUS 0x301
+#define _ARC_V2_FPU_DPFP1L 0x302
+#define _ARC_V2_FPU_DPFP1H 0x303
+#define _ARC_V2_FPU_DPFP2L 0x304
+#define _ARC_V2_FPU_DPFP2H 0x305
 
 /* STATUS32/STATUS32_P0 bits */
 #define _ARC_V2_STATUS32_H (1 << 0)
@@ -112,9 +121,9 @@ extern "C" {
 #ifndef _ASMLANGUAGE
 #if defined(__GNUC__)
 
-#include <stdint.h>
-#define _arc_v2_aux_reg_read(reg) __builtin_arc_lr((volatile uint32_t)reg)
-#define _arc_v2_aux_reg_write(reg, val) __builtin_arc_sr((unsigned int)val, (volatile uint32_t)reg)
+#include <zephyr/types.h>
+#define _arc_v2_aux_reg_read(reg) __builtin_arc_lr((volatile u32_t)reg)
+#define _arc_v2_aux_reg_write(reg, val) __builtin_arc_sr((unsigned int)val, (volatile u32_t)reg)
 
 #else /* ! __GNUC__ */
 

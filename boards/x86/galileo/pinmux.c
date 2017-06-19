@@ -42,11 +42,11 @@ enum pin_level {
 
 struct mux_pin {
 	enum gpio_chip	mux;
-	uint8_t		pin;
+	u8_t		pin;
 	enum pin_level	level;
 
 	/* Pin configuration (e.g. direction, pull up/down, etc.) */
-	uint32_t	cfg;
+	u32_t	cfg;
 };
 
 /*
@@ -55,8 +55,8 @@ struct mux_pin {
  * edit here unless you absolutely know what you are doing
  */
 struct mux_path {
-	uint8_t		io_pin;
-	uint8_t		func;
+	u8_t		io_pin;
+	u8_t		func;
 	struct mux_pin	path[5];
 };
 
@@ -482,12 +482,12 @@ static struct mux_path _galileo_path[PINMUX_NUM_PINS * NUM_PIN_FUNCS] = {
 			     { NONE,  0, DONT_CARE, (GPIO_DIR_IN)  } } },
 };
 
-int _galileo_pinmux_set_pin(struct device *port, uint8_t pin, uint32_t func)
+int _galileo_pinmux_set_pin(struct device *port, u8_t pin, u32_t func)
 {
 	struct galileo_data * const drv_data = port->driver_data;
 
-	uint8_t mux_index = 0;
-	uint8_t i = 0;
+	u8_t mux_index = 0;
+	u8_t i = 0;
 	struct mux_path *enable = NULL;
 	struct pin_config *mux_config = drv_data->mux_config;
 
@@ -534,11 +534,10 @@ int _galileo_pinmux_set_pin(struct device *port, uint8_t pin, uint32_t func)
 					   enable->path[i].cfg);
 			break;
 		case PWM0:
-			pwm_pin_configure(drv_data->pwm0,
-				enable->path[i].pin, 0);
-			pwm_pin_set_duty_cycle(drv_data->pwm0,
-				enable->path[i].pin,
-				enable->path[i].level ? 100 : 0);
+			pwm_pin_set_cycles(drv_data->pwm0,
+					   enable->path[i].pin,
+					   100,
+					   enable->path[i].level ? 100 : 0);
 			break;
 		case G_DW:
 			gpio_pin_write(drv_data->gpio_dw,
@@ -574,7 +573,7 @@ int _galileo_pinmux_set_pin(struct device *port, uint8_t pin, uint32_t func)
 	return 0;
 }
 
-int _galileo_pinmux_get_pin(struct device *port, uint32_t pin, uint32_t *func)
+int _galileo_pinmux_get_pin(struct device *port, u32_t pin, u32_t *func)
 {
 	struct galileo_data * const drv_data = port->driver_data;
 	struct pin_config *mux_config = drv_data->mux_config;
@@ -621,8 +620,8 @@ static struct pin_config mux_config[PINMUX_NUM_PINS] = {
 };
 
 static int pinmux_pullup(struct device *dev,
-				   uint32_t pin,
-				   uint8_t func)
+				   u32_t pin,
+				   u8_t func)
 {
 	/*
 	 * Nothing to do.
@@ -637,8 +636,8 @@ static int pinmux_pullup(struct device *dev,
 }
 
 static int pinmux_input_enable(struct device *dev,
-					 uint32_t pin,
-					 uint8_t func)
+					 u32_t pin,
+					 u8_t func)
 {
 	/*
 	 * Nothing to do.
@@ -653,8 +652,8 @@ static int pinmux_input_enable(struct device *dev,
 }
 
 static int pinmux_set(struct device *dev,
-				uint32_t pin,
-				uint32_t func)
+				u32_t pin,
+				u32_t func)
 {
 	if (pin > PINMUX_NUM_PINS) {
 		return -EINVAL;
@@ -664,8 +663,8 @@ static int pinmux_set(struct device *dev,
 }
 
 static int pinmux_get(struct device *dev,
-				uint32_t pin,
-				uint32_t *func)
+				u32_t pin,
+				u32_t *func)
 {
 	if (pin > PINMUX_NUM_PINS) {
 		return -EINVAL;

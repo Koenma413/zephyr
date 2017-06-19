@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdio.h>
 #include <xtensa_api.h>
 #include <kernel_arch_data.h>
@@ -27,7 +27,7 @@
  * @return N/A
  */
 
-void _irq_priority_set(unsigned int irq, unsigned int prio, uint32_t flags)
+void _irq_priority_set(unsigned int irq, unsigned int prio, u32_t flags)
 {
 	__ASSERT(prio < XCHAL_EXCM_LEVEL + 1,
 		 "invalid priority %d! values must be less than %d\n",

@@ -19,7 +19,7 @@ struct _kernel _kernel = {0};
 static void _set_ready_q_prio_bit(int prio)
 {
 	int bmap_index = _get_ready_q_prio_bmap_index(prio);
-	uint32_t *bmap = &_ready_q.prio_bmap[bmap_index];
+	u32_t *bmap = &_ready_q.prio_bmap[bmap_index];
 
 	*bmap |= _get_ready_q_prio_bit(prio);
 }
@@ -30,7 +30,7 @@ static void _set_ready_q_prio_bit(int prio)
 static void _clear_ready_q_prio_bit(int prio)
 {
 	int bmap_index = _get_ready_q_prio_bmap_index(prio);
-	uint32_t *bmap = &_ready_q.prio_bmap[bmap_index];
+	u32_t *bmap = &_ready_q.prio_bmap[bmap_index];
 
 	*bmap &= ~_get_ready_q_prio_bit(prio);
 }
@@ -174,17 +174,17 @@ void k_sched_unlock(void)
 /* convert milliseconds to ticks */
 
 #ifdef _NON_OPTIMIZED_TICKS_PER_SEC
-int32_t _ms_to_ticks(int32_t ms)
+s32_t _ms_to_ticks(s32_t ms)
 {
-	int64_t ms_ticks_per_sec = (int64_t)ms * sys_clock_ticks_per_sec;
+	s64_t ms_ticks_per_sec = (s64_t)ms * sys_clock_ticks_per_sec;
 
-	return (int32_t)ceiling_fraction(ms_ticks_per_sec, MSEC_PER_SEC);
+	return (s32_t)ceiling_fraction(ms_ticks_per_sec, MSEC_PER_SEC);
 }
 #endif
 
 /* pend the specified thread: it must *not* be in the ready queue */
 /* must be called with interrupts locked */
-void _pend_thread(struct k_thread *thread, _wait_q_t *wait_q, int32_t timeout)
+void _pend_thread(struct k_thread *thread, _wait_q_t *wait_q, s32_t timeout)
 {
 #ifdef CONFIG_MULTITHREADING
 	sys_dlist_t *wait_q_list = (sys_dlist_t *)wait_q;
@@ -206,7 +206,7 @@ inserted:
 	_mark_thread_as_pending(thread);
 
 	if (timeout != K_FOREVER) {
-		int32_t ticks = _TICK_ALIGN + _ms_to_ticks(timeout);
+		s32_t ticks = _TICK_ALIGN + _ms_to_ticks(timeout);
 
 		_add_thread_timeout(thread, wait_q, ticks);
 	}
@@ -215,11 +215,28 @@ inserted:
 
 /* pend the current thread */
 /* must be called with interrupts locked */
-void _pend_current_thread(_wait_q_t *wait_q, int32_t timeout)
+void _pend_current_thread(_wait_q_t *wait_q, s32_t timeout)
 {
 	_remove_thread_from_ready_q(_current);
 	_pend_thread(_current, wait_q, timeout);
 }
+
+#if defined(CONFIG_PREEMPT_ENABLED) && defined(CONFIG_KERNEL_DEBUG)
+/* debug aid */
+static void _dump_ready_q(void)
+{
+	K_DEBUG("bitmaps: ");
+	for (int bitmap = 0; bitmap < K_NUM_PRIO_BITMAPS; bitmap++) {
+		K_DEBUG("%x", _ready_q.prio_bmap[bitmap]);
+	}
+	K_DEBUG("\n");
+	for (int prio = 0; prio < K_NUM_PRIORITIES; prio++) {
+		K_DEBUG("prio: %d, head: %p\n",
+			prio - _NUM_COOP_PRIO,
+			sys_dlist_peek_head(&_ready_q.q[prio]));
+	}
+}
+#endif  /* CONFIG_PREEMPT_ENABLED && CONFIG_KERNEL_DEBUG */
 
 /*
  * Check if there is a thread of higher prio than the current one. Should only
@@ -231,8 +248,9 @@ int __must_switch_threads(void)
 	K_DEBUG("current prio: %d, highest prio: %d\n",
 		_current->base.prio, _get_highest_ready_prio());
 
-	extern void _dump_ready_q(void);
+#ifdef CONFIG_KERNEL_DEBUG
 	_dump_ready_q();
+#endif  /* CONFIG_KERNEL_DEBUG */
 
 	return _is_prio_higher(_get_highest_ready_prio(), _current->base.prio);
 #else
@@ -297,18 +315,21 @@ void k_yield(void)
 
 	if (_current == _get_next_ready_thread()) {
 		irq_unlock(key);
+#ifdef CONFIG_STACK_SENTINEL
+		_check_stack_sentinel();
+#endif
 	} else {
 		_Swap(key);
 	}
 }
 
-void k_sleep(int32_t duration)
+void k_sleep(s32_t duration)
 {
 #ifdef CONFIG_MULTITHREADING
 	/* volatile to guarantee that irq_lock() is executed after ticks is
 	 * populated
 	 */
-	volatile int32_t ticks;
+	volatile s32_t ticks;
 	unsigned int key;
 
 	__ASSERT(!_is_in_isr(), "");
@@ -361,27 +382,12 @@ k_tid_t k_current_get(void)
 	return _current;
 }
 
-/* debug aid */
-void _dump_ready_q(void)
-{
-	K_DEBUG("bitmaps: ");
-	for (int bitmap = 0; bitmap < K_NUM_PRIO_BITMAPS; bitmap++) {
-		K_DEBUG("%x", _ready_q.prio_bmap[bitmap]);
-	}
-	K_DEBUG("\n");
-	for (int prio = 0; prio < K_NUM_PRIORITIES; prio++) {
-		K_DEBUG("prio: %d, head: %p\n",
-			prio - _NUM_COOP_PRIO,
-			sys_dlist_peek_head(&_ready_q.q[prio]));
-	}
-}
-
 #ifdef CONFIG_TIMESLICING
-extern int32_t _time_slice_duration;    /* Measured in ms */
-extern int32_t _time_slice_elapsed;     /* Measured in ms */
+extern s32_t _time_slice_duration;    /* Measured in ms */
+extern s32_t _time_slice_elapsed;     /* Measured in ms */
 extern int _time_slice_prio_ceiling;
 
-void k_sched_time_slice_set(int32_t duration_in_ms, int prio)
+void k_sched_time_slice_set(s32_t duration_in_ms, int prio)
 {
 	__ASSERT(duration_in_ms >= 0, "");
 	__ASSERT((prio >= 0) && (prio < CONFIG_NUM_PREEMPT_PRIORITIES), "");
@@ -389,6 +395,47 @@ void k_sched_time_slice_set(int32_t duration_in_ms, int prio)
 	_time_slice_duration = duration_in_ms;
 	_time_slice_elapsed = 0;
 	_time_slice_prio_ceiling = prio;
+}
+
+int _is_thread_time_slicing(struct k_thread *thread)
+{
+	/*
+	 * Time slicing is done on the thread if following conditions are met
+	 *
+	 * Time slice duration should be set > 0
+	 * Should not be the idle thread
+	 * Priority should be higher than time slice priority ceiling
+	 * There should be multiple threads active with same priority
+	 */
+
+	if (!(_time_slice_duration > 0) || (_is_idle_thread_ptr(thread))
+	    || _is_prio_higher(thread->base.prio, _time_slice_prio_ceiling)) {
+		return 0;
+	}
+
+	int q_index = _get_ready_q_q_index(thread->base.prio);
+	sys_dlist_t *q = &_ready_q.q[q_index];
+
+	return sys_dlist_has_multiple_nodes(q);
+}
+
+/* Must be called with interrupts locked */
+/* Should be called only immediately before a thread switch */
+void _update_time_slice_before_swap(void)
+{
+#ifdef CONFIG_TICKLESS_KERNEL
+	if (!_is_thread_time_slicing(_get_next_ready_thread())) {
+		return;
+	}
+
+	u32_t remaining = _get_remaining_program_time();
+
+	if (!remaining || (_time_slice_duration < remaining)) {
+		_set_time(_time_slice_duration);
+	}
+#endif
+	/* Restart time slice count at new thread switch */
+	_time_slice_elapsed = 0;
 }
 #endif /* CONFIG_TIMESLICING */
 

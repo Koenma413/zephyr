@@ -40,6 +40,8 @@ config SENSOR_INIT_PRIORITY
 	help
 	 Sensor initialization priority.
 
+source "drivers/sensor/adxl362/Kconfig"
+
 source "drivers/sensor/ak8975/Kconfig"
 
 source "drivers/sensor/bma280/Kconfig"
@@ -54,6 +56,8 @@ source "drivers/sensor/bmi160/Kconfig"
 
 source "drivers/sensor/dht/Kconfig"
 
+source "drivers/sensor/fxas21002/Kconfig"
+
 source "drivers/sensor/fxos8700/Kconfig"
 
 source "drivers/sensor/hdc1008/Kconfig"
@@ -66,17 +70,25 @@ source "drivers/sensor/hts221/Kconfig"
 
 source "drivers/sensor/isl29035/Kconfig"
 
+source "drivers/sensor/lis2dh/Kconfig"
+
 source "drivers/sensor/lis3dh/Kconfig"
 
 source "drivers/sensor/lis3mdl/Kconfig"
+
+source "drivers/sensor/lps22hb/Kconfig"
 
 source "drivers/sensor/lps25hb/Kconfig"
 
 source "drivers/sensor/lsm6ds0/Kconfig"
 
+source "drivers/sensor/lsm6dsl/Kconfig"
+
 source "drivers/sensor/lsm9ds0_gyro/Kconfig"
 
 source "drivers/sensor/lsm9ds0_mfd/Kconfig"
+
+source "drivers/sensor/max30101/Kconfig"
 
 source "drivers/sensor/max44009/Kconfig"
 

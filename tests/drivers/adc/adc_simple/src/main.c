@@ -33,7 +33,7 @@
 #define CHANNEL 10
 #define BUFFER_SIZE 10
 
-static uint32_t seq_buffer[2][BUFFER_SIZE];
+static u32_t seq_buffer[2][BUFFER_SIZE];
 
 static struct adc_seq_entry sample = {
 	.sampling_delay = 12,
@@ -46,9 +46,9 @@ static struct adc_seq_table table = {
 	.num_entries = 1,
 };
 
-static void _print_sample_in_hex(const uint32_t *buf, uint32_t length)
+static void _print_sample_in_hex(const u32_t *buf, u32_t length)
 {
-	const uint32_t *top;
+	const u32_t *top;
 
 	printk("Buffer content:\n");
 	for (top = buf + length; buf < top; buf++)
@@ -70,7 +70,7 @@ static void adc_test(void)
 	unsigned int bufi0 = ~0, bufi;
 
 	adc = device_get_binding(ADC_DEVICE_NAME);
-	assert_not_null(adc, "Cannot get adc controller\n");
+	zassert_not_null(adc, "Cannot get adc controller\n");
 
 	adc_enable(adc);
 	while (loops--) {
@@ -78,7 +78,7 @@ static void adc_test(void)
 		/* .buffer should be void * ... */
 		sample.buffer = (void *) seq_buffer[bufi];
 		result = adc_read(adc, &table);
-		assert_equal(result, 0, "Sampling could not proceed, "
+		zassert_equal(result, 0, "Sampling could not proceed, "
 			"an error occurred\n");
 		printk("loop %u: sampling done to buffer #%u\n", loops, bufi);
 		_print_sample_in_hex(seq_buffer[bufi], BUFFER_SIZE);

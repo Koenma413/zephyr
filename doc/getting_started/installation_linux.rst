@@ -55,7 +55,7 @@ Install the required packages in a Ubuntu host system with:
 .. code-block:: console
 
    $ sudo apt-get install git make gcc g++ python3-ply ncurses-dev \
-   	python-yaml python2
+	 python3-yaml dfu-util device-tree-compiler
 
 Install the required packages in a Fedora host system with:
 
@@ -64,7 +64,7 @@ Install the required packages in a Fedora host system with:
    $ sudo dnf group install "Development Tools"
    $ sudo dnf install git make gcc glibc-static \
 	 libstdc++-static python3-ply ncurses-devel \
-	 python-yaml python2
+	 python-yaml dfu-util dtc
 
 .. _zephyr_sdk:
 
@@ -87,6 +87,8 @@ following architectures:
 
 * :abbr:`NIOS II`
 
+* :abbr:`Xtensa`
+
 Follow these steps to install the SDK on your Linux host system.
 
 #. Download the latest SDK self-extractable binary.
@@ -95,12 +97,12 @@ Follow these steps to install the SDK on your Linux host system.
    including the latest version.
 
    Alternatively, you can use the following command to download the
-   desired version (*0.9* can be replaced with the version number you
+   desired version (*0.9.1* can be replaced with the version number you
    wish to download).
 
    .. code-block:: console
 
-      $ wget https://nexus.zephyrproject.org/content/repositories/releases/org/zephyrproject/zephyr-sdk/0.9/zephyr-sdk-0.9-setup.run
+      $ wget https://github.com/zephyrproject-rtos/meta-zephyr-sdk/releases/download/0.9.1/zephyr-sdk-0.9.1-setup.run
 
 #. Run the installation binary, follow this example:
 
@@ -112,7 +114,6 @@ Follow these steps to install the SDK on your Linux host system.
    .. code-block:: console
 
       $ chmod +x zephyr-sdk-<version>-setup.run
-
       $ ./zephyr-sdk-<version>-setup.run
 
    There is no need for `sudo` if the SDK is installed in the current
@@ -129,7 +130,6 @@ Follow these steps to install the SDK on your Linux host system.
    .. code-block:: console
 
       $ export ZEPHYR_GCC_VARIANT=zephyr
-
       $ export ZEPHYR_SDK_INSTALL_DIR=<sdk installation directory>
 
   To use the same toolchain in new sessions in the future you can set the

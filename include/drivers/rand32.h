@@ -20,13 +20,13 @@
 #ifndef __INCrand32h
 #define __INCrand32h
 
-#include <stdint.h>
+#include <zephyr/types.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-extern uint32_t sys_rand32_get(void);
+extern u32_t sys_rand32_get(void);
 
 #ifdef __cplusplus
 }

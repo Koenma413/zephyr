@@ -25,7 +25,7 @@ int lsm9ds0_gyro_trigger_set(struct device *dev,
 	struct lsm9ds0_gyro_data *data = dev->driver_data;
 	const struct lsm9ds0_gyro_config * const config =
 					 dev->config->config_info;
-	uint8_t state;
+	u8_t state;
 
 	if (trig->type == SENSOR_TRIG_DATA_READY) {
 		gpio_pin_disable_callback(data->gpio_drdy,
@@ -58,7 +58,7 @@ int lsm9ds0_gyro_trigger_set(struct device *dev,
 }
 
 static void lsm9ds0_gyro_gpio_drdy_callback(struct device *dev,
-					    struct gpio_callback *cb, uint32_t pins)
+					    struct gpio_callback *cb, u32_t pins)
 {
 	struct lsm9ds0_gyro_data *data =
 		CONTAINER_OF(cb, struct lsm9ds0_gyro_data, gpio_cb);
@@ -97,10 +97,10 @@ int lsm9ds0_gyro_init_interrupt(struct device *dev)
 
 	k_sem_init(&data->sem, 0, UINT_MAX);
 
-	k_thread_spawn(data->thread_stack,
-			 CONFIG_LSM9DS0_GYRO_THREAD_STACK_SIZE,
-			 lsm9ds0_gyro_thread_main, dev, NULL, NULL,
-			 K_PRIO_COOP(10), 0, 0);
+	k_thread_create(&data->thread, data->thread_stack,
+			CONFIG_LSM9DS0_GYRO_THREAD_STACK_SIZE,
+			lsm9ds0_gyro_thread_main, dev, NULL, NULL,
+			K_PRIO_COOP(10), 0, 0);
 
 	data->gpio_drdy = device_get_binding(config->gpio_drdy_dev_name);
 	if (!data->gpio_drdy) {

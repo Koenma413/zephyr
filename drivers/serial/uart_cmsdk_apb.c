@@ -17,24 +17,24 @@
 #include <board.h>
 #include <init.h>
 #include <uart.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 /* UART registers struct */
 struct uart_cmsdk_apb {
 	/* offset: 0x000 (r/w) data register    */
-	volatile uint32_t  data;
+	volatile u32_t  data;
 	/* offset: 0x004 (r/w) status register  */
-	volatile uint32_t  state;
+	volatile u32_t  state;
 	/* offset: 0x008 (r/w) control register */
-	volatile uint32_t  ctrl;
+	volatile u32_t  ctrl;
 	union {
 		/* offset: 0x00c (r/ ) interrupt status register */
-		volatile uint32_t  intstatus;
+		volatile u32_t  intstatus;
 		/* offset: 0x00c ( /w) interrupt clear register  */
-		volatile uint32_t  intclear;
+		volatile u32_t  intclear;
 	};
 	/* offset: 0x010 (r/w) baudrate divider register */
-	volatile uint32_t  bauddiv;
+	volatile u32_t  bauddiv;
 };
 
 /* UART Bits */
@@ -61,7 +61,7 @@ struct uart_cmsdk_apb {
 
 /* Device data structure */
 struct uart_cmsdk_apb_dev_data {
-	uint32_t baud_rate;	/* Baud rate */
+	u32_t baud_rate;	/* Baud rate */
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	uart_irq_callback_t irq_cb;
 #endif
@@ -198,7 +198,7 @@ static unsigned char uart_cmsdk_apb_poll_out(struct device *dev,
 	}
 
 	/* Send a character */
-	uart->data = (uint32_t)c;
+	uart->data = (u32_t)c;
 	return c;
 }
 
@@ -213,7 +213,7 @@ static unsigned char uart_cmsdk_apb_poll_out(struct device *dev,
  * @return the number of characters that have been read
  */
 static int uart_cmsdk_apb_fifo_fill(struct device *dev,
-				    const uint8_t *tx_data, int len)
+				    const u8_t *tx_data, int len)
 {
 	volatile struct uart_cmsdk_apb *uart = UART_STRUCT(dev);
 
@@ -236,7 +236,7 @@ static int uart_cmsdk_apb_fifo_fill(struct device *dev,
  * @return the number of characters that have been read
  */
 static int uart_cmsdk_apb_fifo_read(struct device *dev,
-				    uint8_t *rx_data, const int size)
+				    u8_t *rx_data, const int size)
 {
 	volatile struct uart_cmsdk_apb *uart = UART_STRUCT(dev);
 
@@ -316,7 +316,7 @@ static void uart_cmsdk_apb_irq_rx_disable(struct device *dev)
  *
  * @return 1 if an interrupt is ready, 0 otherwise
  */
-static int uart_cmsdk_apb_irq_tx_empty(struct device *dev)
+static int uart_cmsdk_apb_irq_tx_complete(struct device *dev)
 {
 	return uart_cmsdk_apb_irq_tx_ready(dev);
 }
@@ -435,7 +435,7 @@ static const struct uart_driver_api uart_cmsdk_apb_driver_api = {
 	.irq_tx_ready = uart_cmsdk_apb_irq_tx_ready,
 	.irq_rx_enable = uart_cmsdk_apb_irq_rx_enable,
 	.irq_rx_disable = uart_cmsdk_apb_irq_rx_disable,
-	.irq_tx_empty = uart_cmsdk_apb_irq_tx_empty,
+	.irq_tx_complete = uart_cmsdk_apb_irq_tx_complete,
 	.irq_rx_ready = uart_cmsdk_apb_irq_rx_ready,
 	.irq_err_enable = uart_cmsdk_apb_irq_err_enable,
 	.irq_err_disable = uart_cmsdk_apb_irq_err_disable,
@@ -452,7 +452,7 @@ static void uart_cmsdk_apb_irq_config_func_0(struct device *dev);
 #endif
 
 static const struct uart_device_config uart_cmsdk_apb_dev_cfg_0 = {
-	.base = (uint8_t *)CMSDK_APB_UART0,
+	.base = (u8_t *)CMSDK_APB_UART0,
 	.sys_clk_freq = CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	.irq_config_func = uart_cmsdk_apb_irq_config_func_0,
@@ -517,7 +517,7 @@ static void uart_cmsdk_apb_irq_config_func_1(struct device *dev);
 #endif
 
 static const struct uart_device_config uart_cmsdk_apb_dev_cfg_1 = {
-	.base = (uint8_t *)CMSDK_APB_UART1,
+	.base = (u8_t *)CMSDK_APB_UART1,
 	.sys_clk_freq = CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	.irq_config_func = uart_cmsdk_apb_irq_config_func_1,
@@ -582,7 +582,7 @@ static void uart_cmsdk_apb_irq_config_func_2(struct device *dev);
 #endif
 
 static const struct uart_device_config uart_cmsdk_apb_dev_cfg_2 = {
-	.base = (uint8_t *)CMSDK_APB_UART2,
+	.base = (u8_t *)CMSDK_APB_UART2,
 	.sys_clk_freq = CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	.irq_config_func = uart_cmsdk_apb_irq_config_func_2,
@@ -647,7 +647,7 @@ static void uart_cmsdk_apb_irq_config_func_3(struct device *dev);
 #endif
 
 static const struct uart_device_config uart_cmsdk_apb_dev_cfg_3 = {
-	.base = (uint8_t *)CMSDK_APB_UART3,
+	.base = (u8_t *)CMSDK_APB_UART3,
 	.sys_clk_freq = CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	.irq_config_func = uart_cmsdk_apb_irq_config_func_3,
@@ -712,7 +712,7 @@ static void uart_cmsdk_apb_irq_config_func_4(struct device *dev);
 #endif
 
 static const struct uart_device_config uart_cmsdk_apb_dev_cfg_4 = {
-	.base = (uint8_t *)CMSDK_APB_UART4,
+	.base = (u8_t *)CMSDK_APB_UART4,
 	.sys_clk_freq = CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	.irq_config_func = uart_cmsdk_apb_irq_config_func_4,

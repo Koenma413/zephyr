@@ -34,7 +34,8 @@
 
 static ldata_t data[LIST_LEN];
 static struct k_lifo lifo;
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 static struct k_sem end_sema;
 
 static void tlifo_put(struct k_lifo *plifo)
@@ -53,7 +54,7 @@ static void tlifo_get(struct k_lifo *plifo)
 	for (int i = LIST_LEN-1; i >= 0; i--) {
 		/**TESTPOINT: lifo get*/
 		rx_data = k_lifo_get(plifo, K_FOREVER);
-		assert_equal(rx_data, (void *)&data[i], NULL);
+		zassert_equal(rx_data, (void *)&data[i], NULL);
 	}
 }
 
@@ -81,7 +82,7 @@ static void tlifo_read_write(struct k_lifo *plifo)
 {
 	k_sem_init(&end_sema, 0, 1);
 	/**TESTPOINT: thread-isr-thread data passing via lifo*/
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		tThread_entry, plifo, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 0);
 

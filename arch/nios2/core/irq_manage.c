@@ -18,6 +18,7 @@
 #include <misc/printk.h>
 #include <sw_isr_table.h>
 #include <logging/kernel_event_logger.h>
+#include <ksched.h>
 
 void _irq_spurious(void *unused)
 {
@@ -30,7 +31,7 @@ void _irq_spurious(void *unused)
 
 void _arch_irq_enable(unsigned int irq)
 {
-	uint32_t ienable;
+	u32_t ienable;
 	int key;
 
 	key = irq_lock();
@@ -46,7 +47,7 @@ void _arch_irq_enable(unsigned int irq)
 
 void _arch_irq_disable(unsigned int irq)
 {
-	uint32_t ienable;
+	u32_t ienable;
 	int key;
 
 	key = irq_lock();
@@ -66,7 +67,7 @@ void _arch_irq_disable(unsigned int irq)
  *
  * @param ipending Bitfield of interrupts
  */
-void _enter_irq(uint32_t ipending)
+void _enter_irq(u32_t ipending)
 {
 	int index;
 
@@ -91,5 +92,8 @@ void _enter_irq(uint32_t ipending)
 	}
 
 	_kernel.nested--;
+#ifdef CONFIG_STACK_SENTINEL
+	_check_stack_sentinel();
+#endif
 }
 

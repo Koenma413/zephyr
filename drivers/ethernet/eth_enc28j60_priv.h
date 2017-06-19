@@ -19,11 +19,11 @@
 #define ENC28J60_REG_ECON1 0x1F
 
 /* Register Encoding
- * Byte 3  : 0x0 ETH Register
- *           0x1 MAC Register
- *           0x2 MII Register
- * Byte 2  : Bank number
- * Byte 1-0: Register address
+ * Nibble 3  : 0x0 ETH Register
+ *             0x1 MAC Register
+ *             0x2 MII Register
+ * Nibble 2  : Bank number
+ * Nibble 1-0: Register address
  */
 
 /* Bank 0 Registers */
@@ -215,23 +215,25 @@
 
 struct eth_enc28j60_config {
 	const char *gpio_port;
-	uint8_t gpio_pin;
+	u8_t gpio_pin;
 	const char *spi_port;
-	uint32_t spi_freq;
-	uint8_t spi_slave;
-	uint8_t full_duplex;
-	int32_t timeout;
+	u32_t spi_freq;
+	u8_t spi_slave;
+	u8_t full_duplex;
+	s32_t timeout;
 };
 
 struct eth_enc28j60_runtime {
 	struct net_if *iface;
-	char __stack thread_stack[CONFIG_ETH_ENC28J60_RX_THREAD_STACK_SIZE];
+	K_THREAD_STACK_MEMBER(thread_stack,
+			      CONFIG_ETH_ENC28J60_RX_THREAD_STACK_SIZE);
+	struct k_thread thread;
 	struct device *gpio;
 	struct device *spi;
 	struct gpio_callback gpio_cb;
-	uint8_t mem_buf[MAX_BUFFER_LENGTH + 1];
-	uint8_t  tx_tsv[TSV_SIZE];
-	uint8_t  rx_rsv[RSV_SIZE];
+	u8_t mem_buf[MAX_BUFFER_LENGTH + 1];
+	u8_t  tx_tsv[TSV_SIZE];
+	u8_t  rx_rsv[RSV_SIZE];
 	struct k_sem tx_rx_sem;
 	struct k_sem int_sem;
 	struct k_sem spi_sem;

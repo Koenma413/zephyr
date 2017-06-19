@@ -10,7 +10,7 @@
  * @defgroup t_mpool_concept test_mpool_concept
  * @brief TestPurpose: verify memory pool concepts.
  * @details All TESTPOINTs extracted from kernel documentation.
- * TESTPOINTs cover testable kernel behaviours that preserve across internal
+ * TESTPOINTs cover testable kernel behaviors that preserve across internal
  * implementation change or kernel version change.
  * As a black-box test, TESTPOINTs do not cover internal operations.
  *
@@ -22,7 +22,7 @@
  * memory block
  * - TESTPOINT: memory pool blocks can be recursively partitioned into quarters
  * until blocks of the minimum size are obtained
- * - TESTPOINT: if a suitable block can’t be created, the allocation request
+ * - TESTPOINT: if a suitable block can't be created, the allocation request
  * fails
  *
  * TESTPOINTs related to kconfig are covered in kconfig test:
@@ -42,7 +42,8 @@
 #define THREAD_NUM 3
 K_MEM_POOL_DEFINE(mpool1, BLK_SIZE_MIN, BLK_SIZE_MAX, BLK_NUM_MAX, BLK_ALIGN);
 
-static char __noinit __stack tstack[THREAD_NUM][STACK_SIZE];
+static K_THREAD_STACK_ARRAY_DEFINE(tstack, THREAD_NUM, STACK_SIZE);
+static struct k_thread tdata[THREAD_NUM];
 static struct k_sem sync_sema;
 static struct k_mem_block block_ok;
 
@@ -51,14 +52,14 @@ void tmpool_alloc_wait_timeout(void *p1, void *p2, void *p3)
 {
 	struct k_mem_block block;
 
-	assert_true(k_mem_pool_alloc(&mpool1, &block, BLK_SIZE_MIN,
+	zassert_true(k_mem_pool_alloc(&mpool1, &block, BLK_SIZE_MIN,
 		TIMEOUT) == -EAGAIN, NULL);
 	k_sem_give(&sync_sema);
 }
 
 void tmpool_alloc_wait_ok(void *p1, void *p2, void *p3)
 {
-	assert_true(k_mem_pool_alloc(&mpool1, &block_ok, BLK_SIZE_MIN,
+	zassert_true(k_mem_pool_alloc(&mpool1, &block_ok, BLK_SIZE_MIN,
 		TIMEOUT) == 0, NULL);
 	k_sem_give(&sync_sema);
 }
@@ -72,7 +73,7 @@ void test_mpool_alloc_wait_prio(void)
 	k_sem_init(&sync_sema, 0, THREAD_NUM);
 	/*allocated up all blocks*/
 	for (int i = 0; i < BLK_NUM_MIN; i++) {
-		assert_true(k_mem_pool_alloc(&mpool1, &block[i], BLK_SIZE_MIN,
+		zassert_true(k_mem_pool_alloc(&mpool1, &block[i], BLK_SIZE_MIN,
 			K_NO_WAIT) == 0, NULL);
 	}
 
@@ -85,15 +86,15 @@ void test_mpool_alloc_wait_prio(void)
 	 * can optionally wait for one to become available
 	 */
 	/*the low-priority thread*/
-	tid[0] = k_thread_spawn(tstack[0], STACK_SIZE,
+	tid[0] = k_thread_create(&tdata[0], tstack[0], STACK_SIZE,
 		tmpool_alloc_wait_timeout, NULL, NULL, NULL,
 		K_PRIO_PREEMPT(1), 0, 0);
 	/*the highest-priority thread that has waited the longest*/
-	tid[1] = k_thread_spawn(tstack[1], STACK_SIZE,
+	tid[1] = k_thread_create(&tdata[1], tstack[1], STACK_SIZE,
 		tmpool_alloc_wait_ok, NULL, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 10);
 	/*the highest-priority thread that has waited shorter*/
-	tid[2] = k_thread_spawn(tstack[2], STACK_SIZE,
+	tid[2] = k_thread_create(&tdata[2], tstack[2], STACK_SIZE,
 		tmpool_alloc_wait_timeout, NULL, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 20);
 	/*relinquish CPU for above threads to start */

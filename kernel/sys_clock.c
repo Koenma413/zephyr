@@ -9,7 +9,7 @@
 
 #include <kernel_structs.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <wait_q.h>
 #include <drivers/system_timer.h>
 
@@ -36,10 +36,21 @@ int sys_clock_hw_cycles_per_sec;
 #endif
 
 /* updated by timer driver for tickless, stays at 1 for non-tickless */
-int32_t _sys_idle_elapsed_ticks = 1;
+s32_t _sys_idle_elapsed_ticks = 1;
 
-int64_t _sys_clock_tick_count;
+volatile u64_t _sys_clock_tick_count;
 
+#ifdef CONFIG_TICKLESS_KERNEL
+/*
+ * If this flag is set, system clock will run continuously even if
+ * there are no timer events programmed. This allows using the
+ * system clock to track passage of time without interruption.
+ * To save power, this should be turned on only when required.
+ */
+int _sys_clock_always_on;
+
+static u32_t next_ts;
+#endif
 /**
  *
  * @brief Return the lower part of the current system tick count
@@ -47,14 +58,22 @@ int64_t _sys_clock_tick_count;
  * @return the current system tick count
  *
  */
-uint32_t _tick_get_32(void)
+u32_t _tick_get_32(void)
 {
-	return (uint32_t)_sys_clock_tick_count;
+#ifdef CONFIG_TICKLESS_KERNEL
+	return (u32_t)_get_elapsed_clock_time();
+#else
+	return (u32_t)_sys_clock_tick_count;
+#endif
 }
-FUNC_ALIAS(_tick_get_32, sys_tick_get_32, uint32_t);
+FUNC_ALIAS(_tick_get_32, sys_tick_get_32, u32_t);
 
-uint32_t k_uptime_get_32(void)
+u32_t k_uptime_get_32(void)
 {
+#ifdef CONFIG_TICKLESS_KERNEL
+	__ASSERT(_sys_clock_always_on,
+		 "Call k_enable_sys_clock_always_on to use clock API");
+#endif
 	return __ticks_to_ms(_tick_get_32());
 }
 
@@ -65,9 +84,9 @@ uint32_t k_uptime_get_32(void)
  * @return the current system tick count
  *
  */
-int64_t _tick_get(void)
+s64_t _tick_get(void)
 {
-	int64_t tmp_sys_clock_tick_count;
+	s64_t tmp_sys_clock_tick_count;
 	/*
 	 * Lock the interrupts when reading _sys_clock_tick_count 64-bit
 	 * variable. Some architectures (x86) do not handle 64-bit atomically,
@@ -76,14 +95,22 @@ int64_t _tick_get(void)
 	 */
 	unsigned int imask = irq_lock();
 
+#ifdef CONFIG_TICKLESS_KERNEL
+	tmp_sys_clock_tick_count = _get_elapsed_clock_time();
+#else
 	tmp_sys_clock_tick_count = _sys_clock_tick_count;
+#endif
 	irq_unlock(imask);
 	return tmp_sys_clock_tick_count;
 }
-FUNC_ALIAS(_tick_get, sys_tick_get, int64_t);
+FUNC_ALIAS(_tick_get, sys_tick_get, s64_t);
 
-int64_t k_uptime_get(void)
+s64_t k_uptime_get(void)
 {
+#ifdef CONFIG_TICKLESS_KERNEL
+	__ASSERT(_sys_clock_always_on,
+		 "Call k_enable_sys_clock_always_on to use clock API");
+#endif
 	return __ticks_to_ms(_tick_get());
 }
 
@@ -103,7 +130,7 @@ int64_t k_uptime_get(void)
  * function concurrently.
  *
  * e.g.
- * uint64_t  reftime;
+ * u64_t  reftime;
  * (void) sys_tick_delta(&reftime);  /# prime it #/
  * [do stuff]
  * x = sys_tick_delta(&reftime);     /# how long since priming #/
@@ -115,10 +142,10 @@ int64_t k_uptime_get(void)
  * NOTE: We use inline function for both 64-bit and 32-bit functions.
  * Compiler optimizes out 64-bit result handling in 32-bit version.
  */
-static ALWAYS_INLINE int64_t _nano_tick_delta(int64_t *reftime)
+static ALWAYS_INLINE s64_t _nano_tick_delta(s64_t *reftime)
 {
-	int64_t  delta;
-	int64_t  saved;
+	s64_t  delta;
+	s64_t  saved;
 
 	/*
 	 * Lock the interrupts when reading _sys_clock_tick_count 64-bit
@@ -128,7 +155,11 @@ static ALWAYS_INLINE int64_t _nano_tick_delta(int64_t *reftime)
 	 */
 	unsigned int imask = irq_lock();
 
+#ifdef CONFIG_TICKLESS_KERNEL
+	saved = _get_elapsed_clock_time();
+#else
 	saved = _sys_clock_tick_count;
+#endif
 	irq_unlock(imask);
 	delta = saved - (*reftime);
 	*reftime = saved;
@@ -142,20 +173,20 @@ static ALWAYS_INLINE int64_t _nano_tick_delta(int64_t *reftime)
  *
  * @return tick count since reference time; undefined for first invocation
  */
-int64_t sys_tick_delta(int64_t *reftime)
+s64_t sys_tick_delta(s64_t *reftime)
 {
 	return _nano_tick_delta(reftime);
 }
 
 
-uint32_t sys_tick_delta_32(int64_t *reftime)
+u32_t sys_tick_delta_32(s64_t *reftime)
 {
-	return (uint32_t)_nano_tick_delta(reftime);
+	return (u32_t)_nano_tick_delta(reftime);
 }
 
-int64_t k_uptime_delta(int64_t *reftime)
+s64_t k_uptime_delta(s64_t *reftime)
 {
-	int64_t uptime, delta;
+	s64_t uptime, delta;
 
 	uptime = k_uptime_get();
 	delta = uptime - *reftime;
@@ -164,9 +195,9 @@ int64_t k_uptime_delta(int64_t *reftime)
 	return delta;
 }
 
-uint32_t k_uptime_delta_32(int64_t *reftime)
+u32_t k_uptime_delta_32(s64_t *reftime)
 {
-	return (uint32_t)k_uptime_delta(reftime);
+	return (u32_t)k_uptime_delta(reftime);
 }
 
 /* handle the expired timeouts in the nano timeout queue */
@@ -188,7 +219,7 @@ uint32_t k_uptime_delta_32(int64_t *reftime)
 
 volatile int _handling_timeouts;
 
-static inline void handle_timeouts(int32_t ticks)
+static inline void handle_timeouts(s32_t ticks)
 {
 	sys_dlist_t expired;
 	unsigned int key;
@@ -258,8 +289,8 @@ static inline void handle_timeouts(int32_t ticks)
 #endif
 
 #ifdef CONFIG_TIMESLICING
-int32_t _time_slice_elapsed;
-int32_t _time_slice_duration = CONFIG_TIMESLICE_SIZE;
+s32_t _time_slice_elapsed;
+s32_t _time_slice_duration = CONFIG_TIMESLICE_SIZE;
 int  _time_slice_prio_ceiling = CONFIG_TIMESLICE_PRIORITY;
 
 /*
@@ -272,13 +303,12 @@ int  _time_slice_prio_ceiling = CONFIG_TIMESLICE_PRIORITY;
  * - _time_slice_duration does not have to be protected, since it can only
  *   change at thread level
  */
-static void handle_time_slicing(int32_t ticks)
+static void handle_time_slicing(s32_t ticks)
 {
-	if (_time_slice_duration == 0) {
-		return;
-	}
-
-	if (_is_prio_higher(_current->base.prio, _time_slice_prio_ceiling)) {
+#ifdef CONFIG_TICKLESS_KERNEL
+	next_ts = 0;
+#endif
+	if (!_is_thread_time_slicing(_current)) {
 		return;
 	}
 
@@ -293,10 +323,15 @@ static void handle_time_slicing(int32_t ticks)
 		_move_thread_to_end_of_prio_q(_current);
 		irq_unlock(key);
 	}
+#ifdef CONFIG_TICKLESS_KERNEL
+	next_ts =
+	    _ms_to_ticks(_time_slice_duration - _time_slice_elapsed);
+#endif
 }
 #else
 #define handle_time_slicing(ticks) do { } while (0)
 #endif
+
 /**
  *
  * @brief Announce a tick to the kernel
@@ -307,8 +342,9 @@ static void handle_time_slicing(int32_t ticks)
  *
  * @return N/A
  */
-void _nano_sys_clock_tick_announce(int32_t ticks)
+void _nano_sys_clock_tick_announce(s32_t ticks)
 {
+#ifndef CONFIG_TICKLESS_KERNEL
 	unsigned int  key;
 
 	K_DEBUG("ticks: %d\n", ticks);
@@ -317,9 +353,24 @@ void _nano_sys_clock_tick_announce(int32_t ticks)
 	key = irq_lock();
 	_sys_clock_tick_count += ticks;
 	irq_unlock(key);
-
+#endif
 	handle_timeouts(ticks);
 
 	/* time slicing is basically handled like just yet another timeout */
 	handle_time_slicing(ticks);
+
+#ifdef CONFIG_TICKLESS_KERNEL
+	u32_t next_to = _get_next_timeout_expiry();
+
+	next_to = next_to == K_FOREVER ? 0 : next_to;
+	next_to = !next_to || (next_ts
+			       && next_to) > next_ts ? next_ts : next_to;
+
+	u32_t remaining = _get_remaining_program_time();
+
+	if ((!remaining && next_to) || (next_to < remaining)) {
+		/* Clears current program if next_to = 0 and remaining > 0 */
+		_set_time(next_to);
+	}
+#endif
 }

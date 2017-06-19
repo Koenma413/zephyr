@@ -8,9 +8,9 @@
 
 #include <kernel.h>
 #include <arch/cpu.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <misc/__assert.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <misc/util.h>
 #include <string.h>
 #include <board.h>

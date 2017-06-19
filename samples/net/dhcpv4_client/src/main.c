@@ -14,23 +14,23 @@
 #endif
 
 #include <zephyr.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <errno.h>
 #include <stdio.h>
 
-#include <net/nbuf.h>
 #include <net/net_if.h>
 #include <net/net_core.h>
 #include <net/net_context.h>
 #include <net/net_mgmt.h>
 
 #define STACKSIZE 2000
-char __noinit __stack thread_stack[STACKSIZE];
+K_THREAD_STACK_DEFINE(thread_stack, STACKSIZE);
+static struct k_thread thread_data;
 
 static struct net_mgmt_event_callback mgmt_cb;
 
 static void handler(struct net_mgmt_event_callback *cb,
-		    uint32_t mgmt_event,
+		    u32_t mgmt_event,
 		    struct net_if *iface)
 {
 	int i = 0;
@@ -79,7 +79,7 @@ void main(void)
 {
 	NET_INFO("In main");
 
-	k_thread_spawn(&thread_stack[0], STACKSIZE,
-		       (k_thread_entry_t)main_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
+	k_thread_create(&thread_data, &thread_stack[0], STACKSIZE,
+			(k_thread_entry_t)main_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }

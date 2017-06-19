@@ -14,6 +14,8 @@
 #ifndef _NANO_INTERNAL__H_
 #define _NANO_INTERNAL__H_
 
+#include <kernel.h>
+
 #define K_NUM_PRIORITIES \
 	(CONFIG_NUM_COOP_PRIORITIES + CONFIG_NUM_PREEMPT_PRIORITIES + 1)
 
@@ -38,21 +40,38 @@ static inline void _data_copy(void)
 #endif
 FUNC_NORETURN void _Cstart(void);
 
-/* helper type alias for thread control structure */
-
-typedef void (*_thread_entry_t)(void *, void *, void *);
-
-extern void _thread_entry(void (*)(void *, void *, void *),
+extern FUNC_NORETURN void _thread_entry(void (*)(void *, void *, void *),
 			  void *, void *, void *);
 
-extern void _new_thread(char *pStack, size_t stackSize,
+extern void _new_thread(struct k_thread *thread, char *pStack, size_t stackSize,
 			void (*pEntry)(void *, void *, void *),
 			void *p1, void *p2, void *p3,
-			int prio, unsigned options);
+			int prio, unsigned int options);
 
 /* context switching and scheduling-related routines */
 
-extern unsigned int _Swap(unsigned int);
+extern unsigned int __swap(unsigned int key);
+
+#ifdef CONFIG_TIMESLICING
+extern void _update_time_slice_before_swap(void);
+#endif
+
+#ifdef CONFIG_STACK_SENTINEL
+extern void _check_stack_sentinel(void);
+#endif
+
+static inline unsigned int _Swap(unsigned int key)
+{
+
+#ifdef CONFIG_STACK_SENTINEL
+	_check_stack_sentinel();
+#endif
+#ifdef CONFIG_TIMESLICING
+	_update_time_slice_before_swap();
+#endif
+
+	return __swap(key);
+}
 
 /* set and clear essential fiber/task flag */
 

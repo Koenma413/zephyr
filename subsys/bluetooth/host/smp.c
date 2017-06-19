@@ -4,6 +4,7 @@
  */
 
 /*
+ * Copyright (c) 2017 Nordic Semiconductor ASA
  * Copyright (c) 2015-2016 Intel Corporation
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -18,8 +19,6 @@
 #include <misc/byteorder.h>
 #include <misc/stack.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_SMP)
-#include <bluetooth/log.h>
 #include <net/buf.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/bluetooth.h>
@@ -30,6 +29,9 @@
 #include <tinycrypt/aes.h>
 #include <tinycrypt/utils.h>
 #include <tinycrypt/cmac_mode.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_SMP)
+#include "common/log.h"
 
 #include "hci_core.h"
 #include "ecc.h"
@@ -123,49 +125,49 @@ struct bt_smp {
 	ATOMIC_DEFINE(flags, SMP_NUM_FLAGS);
 
 	/* Type of method used for pairing */
-	uint8_t			method;
+	u8_t			method;
 
 	/* Pairing Request PDU */
-	uint8_t			preq[7];
+	u8_t			preq[7];
 
 	/* Pairing Response PDU */
-	uint8_t			prsp[7];
+	u8_t			prsp[7];
 
 	/* Pairing Confirm PDU */
-	uint8_t			pcnf[16];
+	u8_t			pcnf[16];
 
 	/* Local random number */
-	uint8_t			prnd[16];
+	u8_t			prnd[16];
 
 	/* Remote random number */
-	uint8_t			rrnd[16];
+	u8_t			rrnd[16];
 
 	/* Temporary key */
-	uint8_t			tk[16];
+	u8_t			tk[16];
 
 	/* Remote Public Key for LE SC */
-	uint8_t			pkey[64];
+	u8_t			pkey[64];
 
 	/* DHKey */
-	uint8_t			dhkey[32];
+	u8_t			dhkey[32];
 
 	/* Remote DHKey check */
-	uint8_t			e[16];
+	u8_t			e[16];
 
 	/* MacKey */
-	uint8_t			mackey[16];
+	u8_t			mackey[16];
 
 	/* LE SC passkey */
-	uint32_t		passkey;
+	u32_t		passkey;
 
 	/* LE SC passkey round */
-	uint8_t			passkey_round;
+	u8_t			passkey_round;
 
 	/* Local key distribution */
-	uint8_t			local_dist;
+	u8_t			local_dist;
 
 	/* Remote key distribution */
-	uint8_t			remote_dist;
+	u8_t			remote_dist;
 
 	/* Delayed work for timeout handling */
 	struct k_delayed_work work;
@@ -173,7 +175,7 @@ struct bt_smp {
 
 #if !defined(CONFIG_BLUETOOTH_SMP_SC_ONLY)
 /* based on table 2.8 Core Spec 2.3.5.1 Vol. 3 Part H */
-static const uint8_t gen_method_legacy[5 /* remote */][5 /* local */] = {
+static const u8_t gen_method_legacy[5 /* remote */][5 /* local */] = {
 	{ JUST_WORKS, JUST_WORKS, PASSKEY_INPUT, JUST_WORKS, PASSKEY_INPUT },
 	{ JUST_WORKS, JUST_WORKS, PASSKEY_INPUT, JUST_WORKS, PASSKEY_INPUT },
 	{ PASSKEY_DISPLAY, PASSKEY_DISPLAY, PASSKEY_INPUT, JUST_WORKS,
@@ -185,7 +187,7 @@ static const uint8_t gen_method_legacy[5 /* remote */][5 /* local */] = {
 #endif /* CONFIG_BLUETOOTH_SMP_SC_ONLY */
 
 /* based on table 2.8 Core Spec 2.3.5.1 Vol. 3 Part H */
-static const uint8_t gen_method_sc[5 /* remote */][5 /* local */] = {
+static const u8_t gen_method_sc[5 /* remote */][5 /* local */] = {
 	{ JUST_WORKS, JUST_WORKS, PASSKEY_INPUT, JUST_WORKS, PASSKEY_INPUT },
 	{ JUST_WORKS, PASSKEY_CONFIRM, PASSKEY_INPUT, JUST_WORKS,
 	  PASSKEY_CONFIRM },
@@ -196,7 +198,7 @@ static const uint8_t gen_method_sc[5 /* remote */][5 /* local */] = {
 	  PASSKEY_CONFIRM },
 };
 
-static const uint8_t sc_debug_public_key[64] = {
+static const u8_t sc_debug_public_key[64] = {
 	0xe6, 0x9d, 0x35, 0x0e, 0x48, 0x01, 0x03, 0xcc, 0xdb, 0xfd, 0xf4, 0xac,
 	0x11, 0x91, 0xf4, 0xef, 0xb9, 0xa5, 0xf9, 0xe9, 0xa7, 0x83, 0x2c, 0x5e,
 	0x2c, 0xbe, 0x97, 0xf2, 0xd2, 0x03, 0xb0, 0x20, 0x8b, 0xd2, 0x89, 0x15,
@@ -218,13 +220,13 @@ struct bt_smp_br {
 	ATOMIC_DEFINE(flags, SMP_NUM_FLAGS);
 
 	/* Local key distribution */
-	uint8_t			local_dist;
+	u8_t			local_dist;
 
 	/* Remote key distribution */
-	uint8_t			remote_dist;
+	u8_t			remote_dist;
 
 	/* Encryption Key Size used for connection */
-	uint8_t enc_key_size;
+	u8_t enc_key_size;
 
 	/* Delayed work for timeout handling */
 	struct k_delayed_work work;
@@ -236,9 +238,9 @@ static struct bt_smp_br bt_smp_br_pool[CONFIG_BLUETOOTH_MAX_CONN];
 static struct bt_smp bt_smp_pool[CONFIG_BLUETOOTH_MAX_CONN];
 static bool sc_supported;
 static bool sc_local_pkey_valid;
-static uint8_t sc_public_key[64];
+static u8_t sc_public_key[64];
 
-static uint8_t get_io_capa(void)
+static u8_t get_io_capa(void)
 {
 	if (!bt_auth) {
 		return BT_SMP_IO_NO_INPUT_OUTPUT;
@@ -267,7 +269,7 @@ static uint8_t get_io_capa(void)
 	return BT_SMP_IO_NO_INPUT_OUTPUT;
 }
 
-static uint8_t get_pair_method(struct bt_smp *smp, uint8_t remote_io)
+static u8_t get_pair_method(struct bt_smp *smp, u8_t remote_io)
 {
 	struct bt_smp_pairing *req, *rsp;
 
@@ -285,34 +287,7 @@ static uint8_t get_pair_method(struct bt_smp *smp, uint8_t remote_io)
 	return gen_method_sc[remote_io][get_io_capa()];
 }
 
-static int le_encrypt(const uint8_t key[16], const uint8_t plaintext[16],
-		      uint8_t enc_data[16])
-{
-	struct tc_aes_key_sched_struct s;
-	uint8_t tmp[16];
-
-	BT_DBG("key %s plaintext %s", bt_hex(key, 16), bt_hex(plaintext, 16));
-
-	sys_memcpy_swap(tmp, key, 16);
-
-	if (tc_aes128_set_encrypt_key(&s, tmp) == TC_CRYPTO_FAIL) {
-		return -EINVAL;
-	}
-
-	sys_memcpy_swap(tmp, plaintext, 16);
-
-	if (tc_aes_encrypt(enc_data, tmp, &s) == TC_CRYPTO_FAIL) {
-		return -EINVAL;
-	}
-
-	sys_mem_swap(enc_data, 16);
-
-	BT_DBG("enc_data %s", bt_hex(enc_data, 16));
-
-	return 0;
-}
-
-static struct net_buf *smp_create_pdu(struct bt_conn *conn, uint8_t op,
+static struct net_buf *smp_create_pdu(struct bt_conn *conn, u8_t op,
 				      size_t len)
 {
 	struct bt_smp_hdr *hdr;
@@ -327,33 +302,6 @@ static struct net_buf *smp_create_pdu(struct bt_conn *conn, uint8_t op,
 	return buf;
 }
 
-static int smp_ah(const uint8_t irk[16], const uint8_t r[3], uint8_t out[3])
-{
-	uint8_t res[16];
-	int err;
-
-	BT_DBG("irk %s, r %s", bt_hex(irk, 16), bt_hex(r, 3));
-
-	/* r' = padding || r */
-	memcpy(res, r, 3);
-	memset(res + 3, 0, 13);
-
-	err = le_encrypt(irk, res, res);
-	if (err) {
-		return err;
-	}
-
-	/* The output of the random address function ah is:
-	 *      ah(h, r) = e(k, r') mod 2^24
-	 * The output of the security function e is then truncated to 24 bits
-	 * by taking the least significant 24 bits of the output of e as the
-	 * result of ah.
-	 */
-	memcpy(out, res, 3);
-
-	return 0;
-}
-
 /* Cypher based Message Authentication Code (CMAC) with AES 128 bit
  *
  * Input    : key    ( 128-bit key )
@@ -361,8 +309,8 @@ static int smp_ah(const uint8_t irk[16], const uint8_t r[3], uint8_t out[3])
  *          : len    ( length of the message in octets )
  * Output   : out    ( message authentication code )
  */
-static int bt_smp_aes_cmac(const uint8_t *key, const uint8_t *in, size_t len,
-			   uint8_t *out)
+static int bt_smp_aes_cmac(const u8_t *key, const u8_t *in, size_t len,
+			   u8_t *out)
 {
 	struct tc_aes_key_sched_struct sched;
 	struct tc_cmac_struct state;
@@ -382,11 +330,11 @@ static int bt_smp_aes_cmac(const uint8_t *key, const uint8_t *in, size_t len,
 	return 0;
 }
 
-static int smp_f4(const uint8_t *u, const uint8_t *v, const uint8_t *x,
-		  uint8_t z, uint8_t res[16])
+static int smp_f4(const u8_t *u, const u8_t *v, const u8_t *x,
+		  u8_t z, u8_t res[16])
 {
-	uint8_t xs[16];
-	uint8_t m[65];
+	u8_t xs[16];
+	u8_t m[65];
 	int err;
 
 	BT_DBG("u %s", bt_hex(u, 32));
@@ -420,14 +368,14 @@ static int smp_f4(const uint8_t *u, const uint8_t *v, const uint8_t *x,
 	return err;
 }
 
-static int smp_f5(const uint8_t *w, const uint8_t *n1, const uint8_t *n2,
-		  const bt_addr_le_t *a1, const bt_addr_le_t *a2, uint8_t *mackey,
-		  uint8_t *ltk)
+static int smp_f5(const u8_t *w, const u8_t *n1, const u8_t *n2,
+		  const bt_addr_le_t *a1, const bt_addr_le_t *a2, u8_t *mackey,
+		  u8_t *ltk)
 {
-	static const uint8_t salt[16] = { 0x6c, 0x88, 0x83, 0x91, 0xaa, 0xf5,
+	static const u8_t salt[16] = { 0x6c, 0x88, 0x83, 0x91, 0xaa, 0xf5,
 					  0xa5, 0x38, 0x60, 0x37, 0x0b, 0xdb,
 					  0x5a, 0x60, 0x83, 0xbe };
-	uint8_t m[53] = { 0x00, /* counter */
+	u8_t m[53] = { 0x00, /* counter */
 			  0x62, 0x74, 0x6c, 0x65, /* keyID */
 			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /*n1*/
 			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -436,7 +384,7 @@ static int smp_f5(const uint8_t *w, const uint8_t *n1, const uint8_t *n2,
 			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* a1 */
 			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* a2 */
 			  0x01, 0x00 /* length */ };
-	uint8_t t[16], ws[32];
+	u8_t t[16], ws[32];
 	int err;
 
 	BT_DBG("w %s", bt_hex(w, 32));
@@ -482,12 +430,12 @@ static int smp_f5(const uint8_t *w, const uint8_t *n1, const uint8_t *n2,
 	return 0;
 }
 
-static int smp_f6(const uint8_t *w, const uint8_t *n1, const uint8_t *n2,
-		  const uint8_t *r, const uint8_t *iocap, const bt_addr_le_t *a1,
-		  const bt_addr_le_t *a2, uint8_t *check)
+static int smp_f6(const u8_t *w, const u8_t *n1, const u8_t *n2,
+		  const u8_t *r, const u8_t *iocap, const bt_addr_le_t *a1,
+		  const bt_addr_le_t *a2, u8_t *check)
 {
-	uint8_t ws[16];
-	uint8_t m[65];
+	u8_t ws[16];
+	u8_t m[65];
 	int err;
 
 	BT_DBG("w %s", bt_hex(w, 16));
@@ -522,10 +470,10 @@ static int smp_f6(const uint8_t *w, const uint8_t *n1, const uint8_t *n2,
 	return 0;
 }
 
-static int smp_g2(const uint8_t u[32], const uint8_t v[32],
-		  const uint8_t x[16], const uint8_t y[16], uint32_t *passkey)
+static int smp_g2(const u8_t u[32], const u8_t v[32],
+		  const u8_t x[16], const u8_t y[16], u32_t *passkey)
 {
-	uint8_t m[80], xs[16];
+	u8_t m[80], xs[16];
 	int err;
 
 	BT_DBG("u %s", bt_hex(u, 32));
@@ -553,7 +501,7 @@ static int smp_g2(const uint8_t u[32], const uint8_t v[32],
 	return 0;
 }
 
-static uint8_t get_encryption_key_size(struct bt_smp *smp)
+static u8_t get_encryption_key_size(struct bt_smp *smp)
 {
 	struct bt_smp_pairing *req, *rsp;
 
@@ -568,11 +516,73 @@ static uint8_t get_encryption_key_size(struct bt_smp *smp)
 	return min(req->max_key_size, rsp->max_key_size);
 }
 
+#if defined(CONFIG_BLUETOOTH_PRIVACY) || defined(CONFIG_BLUETOOTH_SIGNING) || \
+	!defined(CONFIG_BLUETOOTH_SMP_SC_ONLY)
+/* For TX callbacks */
+static void smp_pairing_complete(struct bt_smp *smp, u8_t status);
 #if defined(CONFIG_BLUETOOTH_BREDR)
-static int smp_h6(const uint8_t w[16], const uint8_t key_id[4], uint8_t res[16])
+static void smp_pairing_br_complete(struct bt_smp_br *smp, u8_t status);
+#endif
+
+static void smp_check_complete(struct bt_conn *conn, u8_t dist_complete)
 {
-	uint8_t ws[16];
-	uint8_t key_id_s[4];
+	struct bt_l2cap_chan *chan;
+
+	if (conn->type == BT_CONN_TYPE_LE) {
+		struct bt_smp *smp;
+
+		chan = bt_l2cap_le_lookup_tx_cid(conn, BT_L2CAP_CID_SMP);
+		__ASSERT(chan, "No SMP channel found");
+
+		smp = CONTAINER_OF(chan, struct bt_smp, chan);
+		smp->local_dist &= ~dist_complete;
+
+		/* if all keys were distributed, pairing is done */
+		if (!smp->local_dist && !smp->remote_dist) {
+			smp_pairing_complete(smp, 0);
+		}
+
+		return;
+	}
+
+#if defined(CONFIG_BLUETOOTH_BREDR)
+	if (conn->type == BT_CONN_TYPE_BR) {
+		struct bt_smp_br *smp;
+
+		chan = bt_l2cap_le_lookup_tx_cid(conn, BT_L2CAP_CID_BR_SMP);
+		__ASSERT(chan, "No SMP channel found");
+
+		smp = CONTAINER_OF(chan, struct bt_smp_br, chan);
+		smp->local_dist &= ~dist_complete;
+
+		/* if all keys were distributed, pairing is done */
+		if (!smp->local_dist && !smp->remote_dist) {
+			smp_pairing_br_complete(smp, 0);
+		}
+	}
+#endif
+}
+#endif
+
+#if defined(CONFIG_BLUETOOTH_PRIVACY)
+static void id_sent(struct bt_conn *conn)
+{
+	smp_check_complete(conn, BT_SMP_DIST_ID_KEY);
+}
+#endif /* CONFIG_BLUETOOTH_PRIVACY */
+
+#if defined(CONFIG_BLUETOOTH_SIGNING)
+static void sign_info_sent(struct bt_conn *conn)
+{
+	smp_check_complete(conn, BT_SMP_DIST_SIGN);
+}
+#endif /* CONFIG_BLUETOOTH_SIGNING */
+
+#if defined(CONFIG_BLUETOOTH_BREDR)
+static int smp_h6(const u8_t w[16], const u8_t key_id[4], u8_t res[16])
+{
+	u8_t ws[16];
+	u8_t key_id_s[4];
 	int err;
 
 	BT_DBG("w %s", bt_hex(w, 16));
@@ -593,10 +603,10 @@ static int smp_h6(const uint8_t w[16], const uint8_t key_id[4], uint8_t res[16])
 	return 0;
 }
 
-static int smp_h7(const uint8_t salt[16], const uint8_t w[16], uint8_t res[16])
+static int smp_h7(const u8_t salt[16], const u8_t w[16], u8_t res[16])
 {
-	uint8_t ws[16];
-	uint8_t salt_s[16];
+	u8_t ws[16];
+	u8_t salt_s[16];
 	int err;
 
 	BT_DBG("w %s", bt_hex(w, 16));
@@ -620,10 +630,10 @@ static int smp_h7(const uint8_t salt[16], const uint8_t w[16], uint8_t res[16])
 static void sc_derive_link_key(struct bt_smp *smp)
 {
 	/* constants as specified in Core Spec Vol.3 Part H 2.4.2.4 */
-	static const uint8_t lebr[4] = { 0x72, 0x62, 0x65, 0x6c };
+	static const u8_t lebr[4] = { 0x72, 0x62, 0x65, 0x6c };
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_keys_link_key *link_key;
-	uint8_t ilk[16];
+	u8_t ilk[16];
 
 	BT_DBG("");
 
@@ -640,10 +650,10 @@ static void sc_derive_link_key(struct bt_smp *smp)
 
 	if (atomic_test_bit(smp->flags, SMP_FLAG_CT2)) {
 		/* constants as specified in Core Spec Vol.3 Part H 2.4.2.4 */
-		static const uint8_t salt[16] = { 0x31, 0x70, 0x6d, 0x74,
-						  0x00, 0x00, 0x00, 0x00,
-						  0x00, 0x00, 0x00, 0x00,
-						  0x00, 0x00, 0x00, 0x00 };
+		static const u8_t salt[16] = { 0x31, 0x70, 0x6d, 0x74,
+					       0x00, 0x00, 0x00, 0x00,
+					       0x00, 0x00, 0x00, 0x00,
+					       0x00, 0x00, 0x00, 0x00 };
 
 		if (smp_h7(salt, conn->le.keys->ltk.val, ilk)) {
 			bt_keys_link_key_clear(link_key);
@@ -651,7 +661,7 @@ static void sc_derive_link_key(struct bt_smp *smp)
 		}
 	} else {
 		/* constants as specified in Core Spec Vol.3 Part H 2.4.2.4 */
-		static const uint8_t tmp1[4] = { 0x31, 0x70, 0x6d, 0x74 };
+		static const u8_t tmp1[4] = { 0x31, 0x70, 0x6d, 0x74 };
 
 		if (smp_h6(conn->le.keys->ltk.val, tmp1, ilk)) {
 			bt_keys_link_key_clear(link_key);
@@ -682,7 +692,7 @@ static void smp_br_reset(struct bt_smp_br *smp)
 	atomic_set_bit(&smp->allowed_cmds, BT_SMP_CMD_PAIRING_REQ);
 }
 
-static void smp_pairing_br_complete(struct bt_smp_br *smp, uint8_t status)
+static void smp_pairing_br_complete(struct bt_smp_br *smp, u8_t status)
 {
 	BT_DBG("status 0x%x", status);
 
@@ -717,9 +727,10 @@ static void smp_br_timeout(struct k_work *work)
 	atomic_set_bit(smp->flags, SMP_FLAG_TIMEOUT);
 }
 
-static void smp_br_send(struct bt_smp_br *smp, struct net_buf *buf)
+static void smp_br_send(struct bt_smp_br *smp, struct net_buf *buf,
+			bt_conn_tx_cb_t cb)
 {
-	bt_l2cap_send(smp->chan.chan.conn, BT_L2CAP_CID_BR_SMP, buf);
+	bt_l2cap_send_cb(smp->chan.chan.conn, BT_L2CAP_CID_BR_SMP, buf, cb);
 	k_delayed_work_submit(&smp->work, SMP_TIMEOUT);
 }
 
@@ -756,7 +767,7 @@ static void bt_smp_br_disconnected(struct bt_l2cap_chan *chan)
 static void smp_br_init(struct bt_smp_br *smp)
 {
 	/* Initialize SMP context without clearing L2CAP channel context */
-	memset((uint8_t *)smp + sizeof(smp->chan), 0,
+	memset((u8_t *)smp + sizeof(smp->chan), 0,
 	       sizeof(*smp) - (sizeof(smp->chan) + sizeof(smp->work)));
 
 	atomic_set_bit(&smp->allowed_cmds, BT_SMP_CMD_PAIRING_FAIL);
@@ -765,12 +776,12 @@ static void smp_br_init(struct bt_smp_br *smp)
 static void smp_br_derive_ltk(struct bt_smp_br *smp)
 {
 	/* constants as specified in Core Spec Vol.3 Part H 2.4.2.5 */
-	static const uint8_t brle[4] = { 0x65, 0x6c, 0x72, 0x62 };
+	static const u8_t brle[4] = { 0x65, 0x6c, 0x72, 0x62 };
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_keys_link_key *link_key = conn->br.link_key;
 	struct bt_keys *keys;
 	bt_addr_le_t addr;
-	uint8_t ilk[16];
+	u8_t ilk[16];
 
 	BT_DBG("");
 
@@ -798,10 +809,10 @@ static void smp_br_derive_ltk(struct bt_smp_br *smp)
 
 	if (atomic_test_bit(smp->flags, SMP_FLAG_CT2)) {
 		/* constants as specified in Core Spec Vol.3 Part H 2.4.2.5 */
-		static const uint8_t salt[16] = { 0x32, 0x70, 0x6d, 0x74,
-						  0x00, 0x00, 0x00, 0x00,
-						  0x00, 0x00, 0x00, 0x00,
-						  0x00, 0x00, 0x00, 0x00 };
+		static const u8_t salt[16] = { 0x32, 0x70, 0x6d, 0x74,
+					       0x00, 0x00, 0x00, 0x00,
+					       0x00, 0x00, 0x00, 0x00,
+					       0x00, 0x00, 0x00, 0x00 };
 
 		if (smp_h7(salt, link_key->val, ilk)) {
 			bt_keys_link_key_clear(link_key);
@@ -809,7 +820,7 @@ static void smp_br_derive_ltk(struct bt_smp_br *smp)
 		}
 	} else {
 		/* constants as specified in Core Spec Vol.3 Part H 2.4.2.5 */
-		static const uint8_t tmp2[4] = { 0x32, 0x70, 0x6d, 0x74 };
+		static const u8_t tmp2[4] = { 0x32, 0x70, 0x6d, 0x74 };
 
 		if (smp_h6(link_key->val, tmp2, ilk)) {
 			bt_keys_clear(keys);
@@ -872,7 +883,7 @@ static void smp_br_distribute_keys(struct bt_smp_br *smp)
 		id_info = net_buf_add(buf, sizeof(*id_info));
 		memcpy(id_info->irk, bt_dev.irk, 16);
 
-		smp_br_send(smp, buf);
+		smp_br_send(smp, buf, NULL);
 
 		buf = smp_create_pdu(conn, BT_SMP_CMD_IDENT_ADDR_INFO,
 				     sizeof(*id_addr_info));
@@ -884,7 +895,7 @@ static void smp_br_distribute_keys(struct bt_smp_br *smp)
 		id_addr_info = net_buf_add(buf, sizeof(*id_addr_info));
 		bt_addr_le_copy(&id_addr_info->addr, &bt_dev.id_addr);
 
-		smp_br_send(smp, buf);
+		smp_br_send(smp, buf, id_sent);
 	}
 #endif /* CONFIG_BLUETOOTH_PRIVACY */
 
@@ -912,7 +923,7 @@ static void smp_br_distribute_keys(struct bt_smp_br *smp)
 			keys->local_csrk.cnt = 0;
 		}
 
-		smp_br_send(smp, buf);
+		smp_br_send(smp, buf, sign_info_sent);
 	}
 #endif /* CONFIG_BLUETOOTH_SIGNING */
 }
@@ -932,13 +943,13 @@ static bool smp_br_pairing_allowed(struct bt_smp_br *smp)
 	return false;
 }
 
-static uint8_t smp_br_pairing_req(struct bt_smp_br *smp, struct net_buf *buf)
+static u8_t smp_br_pairing_req(struct bt_smp_br *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing *req = (void *)buf->data;
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_pairing *rsp;
 	struct net_buf *rsp_buf;
-	uint8_t max_key_size;
+	u8_t max_key_size;
 
 	BT_DBG("");
 
@@ -988,7 +999,7 @@ static uint8_t smp_br_pairing_req(struct bt_smp_br *smp, struct net_buf *buf)
 	smp->local_dist = rsp->resp_key_dist;
 	smp->remote_dist = rsp->init_key_dist;
 
-	smp_br_send(smp, rsp_buf);
+	smp_br_send(smp, rsp_buf, NULL);
 
 	atomic_set_bit(smp->flags, SMP_FLAG_PAIRING);
 
@@ -1017,11 +1028,11 @@ static uint8_t smp_br_pairing_req(struct bt_smp_br *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_br_pairing_rsp(struct bt_smp_br *smp, struct net_buf *buf)
+static u8_t smp_br_pairing_rsp(struct bt_smp_br *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing *rsp = (void *)buf->data;
 	struct bt_conn *conn = smp->chan.chan.conn;
-	uint8_t max_key_size;
+	u8_t max_key_size;
 
 	BT_DBG("");
 
@@ -1071,7 +1082,7 @@ static uint8_t smp_br_pairing_rsp(struct bt_smp_br *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_br_pairing_failed(struct bt_smp_br *smp, struct net_buf *buf)
+static u8_t smp_br_pairing_failed(struct bt_smp_br *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing_fail *req = (void *)buf->data;
 
@@ -1084,7 +1095,7 @@ static uint8_t smp_br_pairing_failed(struct bt_smp_br *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_br_ident_info(struct bt_smp_br *smp, struct net_buf *buf)
+static u8_t smp_br_ident_info(struct bt_smp_br *smp, struct net_buf *buf)
 {
 	struct bt_smp_ident_info *req = (void *)buf->data;
 	struct bt_conn *conn = smp->chan.chan.conn;
@@ -1115,7 +1126,7 @@ static uint8_t smp_br_ident_info(struct bt_smp_br *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_br_ident_addr_info(struct bt_smp_br *smp,
+static u8_t smp_br_ident_addr_info(struct bt_smp_br *smp,
 				      struct net_buf *buf)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
@@ -1156,7 +1167,7 @@ static uint8_t smp_br_ident_addr_info(struct bt_smp_br *smp,
 }
 
 #if defined(CONFIG_BLUETOOTH_SIGNING)
-static uint8_t smp_br_signing_info(struct bt_smp_br *smp, struct net_buf *buf)
+static u8_t smp_br_signing_info(struct bt_smp_br *smp, struct net_buf *buf)
 {
 	struct bt_smp_signing_info *req = (void *)buf->data;
 	struct bt_conn *conn = smp->chan.chan.conn;
@@ -1194,15 +1205,15 @@ static uint8_t smp_br_signing_info(struct bt_smp_br *smp, struct net_buf *buf)
 	return 0;
 }
 #else
-static uint8_t smp_br_signing_info(struct bt_smp_br *smp, struct net_buf *buf)
+static u8_t smp_br_signing_info(struct bt_smp_br *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
 #endif /* CONFIG_BLUETOOTH_SIGNING */
 
 static const struct {
-	uint8_t  (*func)(struct bt_smp_br *smp, struct net_buf *buf);
-	uint8_t  expect_len;
+	u8_t  (*func)(struct bt_smp_br *smp, struct net_buf *buf);
+	u8_t  expect_len;
 } br_handlers[] = {
 	{ }, /* No op-code defined for 0x00 */
 	{ smp_br_pairing_req,      sizeof(struct bt_smp_pairing) },
@@ -1220,7 +1231,7 @@ static const struct {
 	/* DHKey check not used over BR/EDR */
 };
 
-static int smp_br_error(struct bt_smp_br *smp, uint8_t reason)
+static int smp_br_error(struct bt_smp_br *smp, u8_t reason)
 {
 	struct bt_smp_pairing_fail *rsp;
 	struct net_buf *buf;
@@ -1250,7 +1261,7 @@ static void bt_smp_br_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 {
 	struct bt_smp_br *smp = CONTAINER_OF(chan, struct bt_smp_br, chan);
 	struct bt_smp_hdr *hdr = (void *)buf->data;
-	uint8_t err;
+	u8_t err;
 
 	if (buf->len < sizeof(*hdr)) {
 		BT_ERR("Too small SMP PDU received");
@@ -1347,7 +1358,7 @@ int bt_smp_br_send_pairing_req(struct bt_conn *conn)
 {
 	struct bt_smp_pairing *req;
 	struct net_buf *req_buf;
-	uint8_t max_key_size;
+	u8_t max_key_size;
 	struct bt_smp_br *smp;
 
 	smp = smp_br_chan_get(conn);
@@ -1405,7 +1416,7 @@ int bt_smp_br_send_pairing_req(struct bt_conn *conn)
 	req->init_key_dist = BR_SEND_KEYS_SC;
 	req->resp_key_dist = BR_RECV_KEYS_SC;
 
-	smp_br_send(smp, req_buf);
+	smp_br_send(smp, req_buf, NULL);
 
 	smp->local_dist = BR_SEND_KEYS_SC;
 	smp->remote_dist = BR_RECV_KEYS_SC;
@@ -1455,7 +1466,7 @@ static void smp_reset(struct bt_smp *smp)
 	}
 }
 
-static void smp_pairing_complete(struct bt_smp *smp, uint8_t status)
+static void smp_pairing_complete(struct bt_smp *smp, u8_t status)
 {
 	BT_DBG("status 0x%x", status);
 
@@ -1495,13 +1506,14 @@ static void smp_timeout(struct k_work *work)
 	atomic_set_bit(smp->flags, SMP_FLAG_TIMEOUT);
 }
 
-static void smp_send(struct bt_smp *smp, struct net_buf *buf)
+static void smp_send(struct bt_smp *smp, struct net_buf *buf,
+		     bt_conn_tx_cb_t cb)
 {
-	bt_l2cap_send(smp->chan.chan.conn, BT_L2CAP_CID_SMP, buf);
+	bt_l2cap_send_cb(smp->chan.chan.conn, BT_L2CAP_CID_SMP, buf, cb);
 	k_delayed_work_submit(&smp->work, SMP_TIMEOUT);
 }
 
-static int smp_error(struct bt_smp *smp, uint8_t reason)
+static int smp_error(struct bt_smp *smp, u8_t reason)
 {
 	struct bt_smp_pairing_fail *rsp;
 	struct net_buf *buf;
@@ -1524,7 +1536,7 @@ static int smp_error(struct bt_smp *smp, uint8_t reason)
 	return 0;
 }
 
-static uint8_t smp_send_pairing_random(struct bt_smp *smp)
+static u8_t smp_send_pairing_random(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_pairing_random *req;
@@ -1538,13 +1550,13 @@ static uint8_t smp_send_pairing_random(struct bt_smp *smp)
 	req = net_buf_add(rsp_buf, sizeof(*req));
 	memcpy(req->val, smp->prnd, sizeof(req->val));
 
-	smp_send(smp, rsp_buf);
+	smp_send(smp, rsp_buf, NULL);
 
 	return 0;
 }
 
 #if !defined(CONFIG_BLUETOOTH_SMP_SC_ONLY)
-static void xor_128(const uint8_t p[16], const uint8_t q[16], uint8_t r[16])
+static void xor_128(const u8_t p[16], const u8_t q[16], u8_t r[16])
 {
 	size_t len = 16;
 
@@ -1553,12 +1565,12 @@ static void xor_128(const uint8_t p[16], const uint8_t q[16], uint8_t r[16])
 	}
 }
 
-static int smp_c1(const uint8_t k[16], const uint8_t r[16],
-		  const uint8_t preq[7], const uint8_t pres[7],
+static int smp_c1(const u8_t k[16], const u8_t r[16],
+		  const u8_t preq[7], const u8_t pres[7],
 		  const bt_addr_le_t *ia, const bt_addr_le_t *ra,
-		  uint8_t enc_data[16])
+		  u8_t enc_data[16])
 {
-	uint8_t p1[16], p2[16];
+	u8_t p1[16], p2[16];
 	int err;
 
 	BT_DBG("k %s r %s", bt_hex(k, 16), bt_hex(r, 16));
@@ -1578,7 +1590,7 @@ static int smp_c1(const uint8_t k[16], const uint8_t r[16],
 	/* Using enc_data as temporary output buffer */
 	xor_128(r, p1, enc_data);
 
-	err = le_encrypt(k, enc_data, enc_data);
+	err = bt_encrypt_le(k, enc_data, enc_data);
 	if (err) {
 		return err;
 	}
@@ -1592,16 +1604,16 @@ static int smp_c1(const uint8_t k[16], const uint8_t r[16],
 
 	xor_128(enc_data, p2, enc_data);
 
-	return le_encrypt(k, enc_data, enc_data);
+	return bt_encrypt_le(k, enc_data, enc_data);
 }
 #endif /* !CONFIG_BLUETOOTH_SMP_SC_ONLY */
 
-static uint8_t smp_send_pairing_confirm(struct bt_smp *smp)
+static u8_t smp_send_pairing_confirm(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_pairing_confirm *req;
 	struct net_buf *buf;
-	uint8_t r;
+	u8_t r;
 
 	switch (smp->method) {
 	case PASSKEY_CONFIRM:
@@ -1636,7 +1648,7 @@ static uint8_t smp_send_pairing_confirm(struct bt_smp *smp)
 		return BT_SMP_ERR_UNSPECIFIED;
 	}
 
-	smp_send(smp, buf);
+	smp_send(smp, buf, NULL);
 
 	atomic_clear_bit(smp->flags, SMP_FLAG_CFM_DELAYED);
 
@@ -1644,6 +1656,11 @@ static uint8_t smp_send_pairing_confirm(struct bt_smp *smp)
 }
 
 #if !defined(CONFIG_BLUETOOTH_SMP_SC_ONLY)
+static void ident_sent(struct bt_conn *conn)
+{
+	smp_check_complete(conn, BT_SMP_DIST_ENC_KEY);
+}
+
 static void legacy_distribute_keys(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
@@ -1653,11 +1670,9 @@ static void legacy_distribute_keys(struct bt_smp *smp)
 		struct bt_smp_encrypt_info *info;
 		struct bt_smp_master_ident *ident;
 		struct net_buf *buf;
-		uint8_t key[16];
-		uint64_t rand;
-		uint16_t ediv;
-
-		smp->local_dist &= ~BT_SMP_DIST_ENC_KEY;
+		u8_t key[16];
+		u64_t rand;
+		u16_t ediv;
 
 		bt_rand(key, sizeof(key));
 		bt_rand(&rand, sizeof(rand));
@@ -1679,7 +1694,7 @@ static void legacy_distribute_keys(struct bt_smp *smp)
 			       sizeof(info->ltk) - keys->enc_size);
 		}
 
-		smp_send(smp, buf);
+		smp_send(smp, buf, NULL);
 
 		buf = smp_create_pdu(conn, BT_SMP_CMD_MASTER_IDENT,
 				     sizeof(*ident));
@@ -1692,7 +1707,7 @@ static void legacy_distribute_keys(struct bt_smp *smp)
 		ident->rand = rand;
 		ident->ediv = ediv;
 
-		smp_send(smp, buf);
+		smp_send(smp, buf, ident_sent);
 
 		if (atomic_test_bit(smp->flags, SMP_FLAG_BOND)) {
 			bt_keys_add_type(keys, BT_KEYS_SLAVE_LTK);
@@ -1729,8 +1744,6 @@ static void bt_smp_distribute_keys(struct bt_smp *smp)
 		struct bt_smp_ident_addr_info *id_addr_info;
 		struct net_buf *buf;
 
-		smp->local_dist &= ~BT_SMP_DIST_ID_KEY;
-
 		buf = smp_create_pdu(conn, BT_SMP_CMD_IDENT_INFO,
 				     sizeof(*id_info));
 		if (!buf) {
@@ -1741,7 +1754,7 @@ static void bt_smp_distribute_keys(struct bt_smp *smp)
 		id_info = net_buf_add(buf, sizeof(*id_info));
 		memcpy(id_info->irk, bt_dev.irk, 16);
 
-		smp_send(smp, buf);
+		smp_send(smp, buf, NULL);
 
 		buf = smp_create_pdu(conn, BT_SMP_CMD_IDENT_ADDR_INFO,
 				     sizeof(*id_addr_info));
@@ -1753,7 +1766,7 @@ static void bt_smp_distribute_keys(struct bt_smp *smp)
 		id_addr_info = net_buf_add(buf, sizeof(*id_addr_info));
 		bt_addr_le_copy(&id_addr_info->addr, &bt_dev.id_addr);
 
-		smp_send(smp, buf);
+		smp_send(smp, buf, id_sent);
 	}
 #endif /* CONFIG_BLUETOOTH_PRIVACY */
 
@@ -1761,8 +1774,6 @@ static void bt_smp_distribute_keys(struct bt_smp *smp)
 	if (smp->local_dist & BT_SMP_DIST_SIGN) {
 		struct bt_smp_signing_info *info;
 		struct net_buf *buf;
-
-		smp->local_dist &= ~BT_SMP_DIST_SIGN;
 
 		buf = smp_create_pdu(conn, BT_SMP_CMD_SIGNING_INFO,
 				     sizeof(*info));
@@ -1781,13 +1792,13 @@ static void bt_smp_distribute_keys(struct bt_smp *smp)
 			keys->local_csrk.cnt = 0;
 		}
 
-		smp_send(smp, buf);
+		smp_send(smp, buf, sign_info_sent);
 	}
 #endif /* CONFIG_BLUETOOTH_SIGNING */
 }
 
 #if defined(CONFIG_BLUETOOTH_PERIPHERAL)
-static uint8_t send_pairing_rsp(struct bt_smp *smp)
+static u8_t send_pairing_rsp(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_pairing *rsp;
@@ -1801,15 +1812,15 @@ static uint8_t send_pairing_rsp(struct bt_smp *smp)
 	rsp = net_buf_add(rsp_buf, sizeof(*rsp));
 	memcpy(rsp, smp->prsp + 1, sizeof(*rsp));
 
-	smp_send(smp, rsp_buf);
+	smp_send(smp, rsp_buf, NULL);
 
 	return 0;
 }
 #endif /* CONFIG_BLUETOOTH_PERIPHERAL */
 
 #if !defined(CONFIG_BLUETOOTH_SMP_SC_ONLY)
-static int smp_s1(const uint8_t k[16], const uint8_t r1[16],
-		  const uint8_t r2[16], uint8_t out[16])
+static int smp_s1(const u8_t k[16], const u8_t r1[16],
+		  const u8_t r2[16], u8_t out[16])
 {
 	/* The most significant 64-bits of r1 are discarded to generate
 	 * r1' and the most significant 64-bits of r2 are discarded to
@@ -1823,13 +1834,13 @@ static int smp_s1(const uint8_t k[16], const uint8_t r1[16],
 	memcpy(out + 8, r1, 8);
 
 	/* s1(k, r1 , r2) = e(k, r') */
-	return le_encrypt(k, out, out);
+	return bt_encrypt_le(k, out, out);
 }
 
-static uint8_t legacy_get_pair_method(struct bt_smp *smp, uint8_t remote_io)
+static u8_t legacy_get_pair_method(struct bt_smp *smp, u8_t remote_io)
 {
 	struct bt_smp_pairing *req, *rsp;
-	uint8_t method;
+	u8_t method;
 
 	if (remote_io > BT_SMP_IO_KEYBOARD_DISPLAY)
 		return JUST_WORKS;
@@ -1858,11 +1869,11 @@ static uint8_t legacy_get_pair_method(struct bt_smp *smp, uint8_t remote_io)
 	return method;
 }
 
-static uint8_t legacy_request_tk(struct bt_smp *smp)
+static u8_t legacy_request_tk(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_keys *keys;
-	uint32_t passkey;
+	u32_t passkey;
 
 	/*
 	 * Fail if we have keys that are stronger than keys that will be
@@ -1904,7 +1915,7 @@ static uint8_t legacy_request_tk(struct bt_smp *smp)
 	return 0;
 }
 
-static uint8_t legacy_send_pairing_confirm(struct bt_smp *smp)
+static u8_t legacy_send_pairing_confirm(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_pairing_confirm *req;
@@ -1923,7 +1934,7 @@ static uint8_t legacy_send_pairing_confirm(struct bt_smp *smp)
 		return BT_SMP_ERR_UNSPECIFIED;
 	}
 
-	smp_send(smp, buf);
+	smp_send(smp, buf, NULL);
 
 	atomic_clear_bit(smp->flags, SMP_FLAG_CFM_DELAYED);
 
@@ -1931,9 +1942,9 @@ static uint8_t legacy_send_pairing_confirm(struct bt_smp *smp)
 }
 
 #if defined(CONFIG_BLUETOOTH_PERIPHERAL)
-static uint8_t legacy_pairing_req(struct bt_smp *smp, uint8_t remote_io)
+static u8_t legacy_pairing_req(struct bt_smp *smp, u8_t remote_io)
 {
-	uint8_t ret;
+	u8_t ret;
 
 	BT_DBG("");
 
@@ -1959,10 +1970,10 @@ static uint8_t legacy_pairing_req(struct bt_smp *smp, uint8_t remote_io)
 }
 #endif /* CONFIG_BLUETOOTH_PERIPHERAL */
 
-static uint8_t legacy_pairing_random(struct bt_smp *smp)
+static u8_t legacy_pairing_random(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
-	uint8_t tmp[16];
+	u8_t tmp[16];
 	int err;
 
 	BT_DBG("");
@@ -2017,7 +2028,7 @@ static uint8_t legacy_pairing_random(struct bt_smp *smp)
 	return 0;
 }
 
-static uint8_t legacy_pairing_confirm(struct bt_smp *smp)
+static u8_t legacy_pairing_confirm(struct bt_smp *smp)
 {
 	BT_DBG("");
 
@@ -2066,7 +2077,7 @@ static void legacy_passkey_entry(struct bt_smp *smp, unsigned int passkey)
 	}
 }
 
-static uint8_t smp_encrypt_info(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_encrypt_info(struct bt_smp *smp, struct net_buf *buf)
 {
 	BT_DBG("");
 
@@ -2090,7 +2101,7 @@ static uint8_t smp_encrypt_info(struct bt_smp *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 
@@ -2133,9 +2144,9 @@ static uint8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
 }
 
 #if defined(CONFIG_BLUETOOTH_CENTRAL)
-static uint8_t legacy_pairing_rsp(struct bt_smp *smp, uint8_t remote_io)
+static u8_t legacy_pairing_rsp(struct bt_smp *smp, u8_t remote_io)
 {
-	uint8_t ret;
+	u8_t ret;
 
 	BT_DBG("");
 
@@ -2166,12 +2177,12 @@ static uint8_t legacy_pairing_rsp(struct bt_smp *smp, uint8_t remote_io)
 }
 #endif /* CONFIG_BLUETOOTH_CENTRAL */
 #else
-static uint8_t smp_encrypt_info(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_encrypt_info(struct bt_smp *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
 
-static uint8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
@@ -2180,7 +2191,7 @@ static uint8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
 static int smp_init(struct bt_smp *smp)
 {
 	/* Initialize SMP context without clearing L2CAP channel context */
-	memset((uint8_t *)smp + sizeof(smp->chan), 0,
+	memset((u8_t *)smp + sizeof(smp->chan), 0,
 	       sizeof(*smp) - (sizeof(smp->chan) + sizeof(smp->work)));
 
 	/* Generate local random number */
@@ -2195,7 +2206,7 @@ static int smp_init(struct bt_smp *smp)
 	return 0;
 }
 
-static uint8_t get_auth(uint8_t auth)
+static u8_t get_auth(u8_t auth)
 {
 	if (sc_supported) {
 		auth &= BT_SMP_AUTH_MASK_SC;
@@ -2286,7 +2297,7 @@ int bt_smp_send_security_req(struct bt_conn *conn)
 	return 0;
 }
 
-static uint8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing *req = (void *)buf->data;
 	struct bt_smp_pairing *rsp;
@@ -2375,13 +2386,13 @@ static uint8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
 	return send_pairing_rsp(smp);
 }
 #else
-static uint8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
 #endif /* CONFIG_BLUETOOTH_PERIPHERAL */
 
-static uint8_t sc_send_public_key(struct bt_smp *smp)
+static u8_t sc_send_public_key(struct bt_smp *smp)
 {
 	struct bt_smp_public_key *req;
 	struct net_buf *req_buf;
@@ -2397,7 +2408,7 @@ static uint8_t sc_send_public_key(struct bt_smp *smp)
 	memcpy(req->x, sc_public_key, sizeof(req->x));
 	memcpy(req->y, &sc_public_key[32], sizeof(req->y));
 
-	smp_send(smp, req_buf);
+	smp_send(smp, req_buf, NULL);
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_USE_DEBUG_KEYS)) {
 		atomic_set_bit(smp->flags, SMP_FLAG_SC_DEBUG_KEY);
@@ -2460,7 +2471,7 @@ int bt_smp_send_pairing_req(struct bt_conn *conn)
 	smp->preq[0] = BT_SMP_CMD_PAIRING_REQ;
 	memcpy(smp->preq + 1, req, sizeof(*req));
 
-	smp_send(smp, req_buf);
+	smp_send(smp, req_buf, NULL);
 
 	atomic_set_bit(&smp->allowed_cmds, BT_SMP_CMD_PAIRING_RSP);
 	atomic_set_bit(smp->flags, SMP_FLAG_PAIRING);
@@ -2468,7 +2479,7 @@ int bt_smp_send_pairing_req(struct bt_conn *conn)
 	return 0;
 }
 
-static uint8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing *rsp = (void *)buf->data;
 	struct bt_smp_pairing *req = (struct bt_smp_pairing *)&smp->preq[1];
@@ -2538,13 +2549,13 @@ static uint8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
 	return sc_send_public_key(smp);
 }
 #else
-static uint8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
 #endif /* CONFIG_BLUETOOTH_CENTRAL */
 
-static uint8_t smp_pairing_confirm(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_confirm(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing_confirm *req = (void *)buf->data;
 
@@ -2587,7 +2598,7 @@ static uint8_t smp_pairing_confirm(struct bt_smp *smp, struct net_buf *buf)
 	}
 }
 
-static uint8_t sc_smp_send_dhkey_check(struct bt_smp *smp, const uint8_t *e)
+static u8_t sc_smp_send_dhkey_check(struct bt_smp *smp, const u8_t *e)
 {
 	struct bt_smp_dhkey_check *req;
 	struct net_buf *buf;
@@ -2603,15 +2614,15 @@ static uint8_t sc_smp_send_dhkey_check(struct bt_smp *smp, const uint8_t *e)
 	req = net_buf_add(buf, sizeof(*req));
 	memcpy(req->e, e, sizeof(req->e));
 
-	smp_send(smp, buf);
+	smp_send(smp, buf, NULL);
 
 	return 0;
 }
 
 #if defined(CONFIG_BLUETOOTH_CENTRAL)
-static uint8_t compute_and_send_master_dhcheck(struct bt_smp *smp)
+static u8_t compute_and_send_master_dhcheck(struct bt_smp *smp)
 {
-	uint8_t e[16], r[16];
+	u8_t e[16], r[16];
 
 	memset(r, 0, sizeof(r));
 
@@ -2648,9 +2659,9 @@ static uint8_t compute_and_send_master_dhcheck(struct bt_smp *smp)
 #endif /* CONFIG_BLUETOOTH_CENTRAL */
 
 #if defined(CONFIG_BLUETOOTH_PERIPHERAL)
-static uint8_t compute_and_check_and_send_slave_dhcheck(struct bt_smp *smp)
+static u8_t compute_and_check_and_send_slave_dhcheck(struct bt_smp *smp)
 {
-	uint8_t re[16], e[16], r[16];
+	u8_t re[16], e[16], r[16];
 
 	memset(r, 0, sizeof(r));
 
@@ -2701,7 +2712,7 @@ static uint8_t compute_and_check_and_send_slave_dhcheck(struct bt_smp *smp)
 }
 #endif /* CONFIG_BLUETOOTH_PERIPHERAL */
 
-static void bt_smp_dhkey_ready(const uint8_t *dhkey)
+static void bt_smp_dhkey_ready(const u8_t *dhkey)
 {
 	struct bt_smp *smp = NULL;
 	int i;
@@ -2740,7 +2751,7 @@ static void bt_smp_dhkey_ready(const uint8_t *dhkey)
 	}
 
 	if (atomic_test_bit(smp->flags, SMP_FLAG_DHKEY_SEND)) {
-		uint8_t err;
+		u8_t err;
 
 #if defined(CONFIG_BLUETOOTH_CENTRAL)
 		if (smp->chan.chan.conn->role == BT_HCI_ROLE_MASTER) {
@@ -2762,10 +2773,10 @@ static void bt_smp_dhkey_ready(const uint8_t *dhkey)
 	}
 }
 
-static uint8_t sc_smp_check_confirm(struct bt_smp *smp)
+static u8_t sc_smp_check_confirm(struct bt_smp *smp)
 {
-	uint8_t cfm[16];
-	uint8_t r;
+	u8_t cfm[16];
+	u8_t r;
 
 	switch (smp->method) {
 	case PASSKEY_CONFIRM:
@@ -2801,11 +2812,11 @@ static uint8_t sc_smp_check_confirm(struct bt_smp *smp)
 	return 0;
 }
 
-static uint8_t smp_pairing_random(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_random(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_smp_pairing_random *req = (void *)buf->data;
-	uint32_t passkey;
-	uint8_t err;
+	u32_t passkey;
+	u8_t err;
 
 	BT_DBG("");
 
@@ -2915,7 +2926,7 @@ static uint8_t smp_pairing_random(struct bt_smp *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_pairing_failed(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_pairing_failed(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_pairing_fail *req = (void *)buf->data;
@@ -2953,7 +2964,7 @@ static uint8_t smp_pairing_failed(struct bt_smp *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_ident_info(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_ident_info(struct bt_smp *smp, struct net_buf *buf)
 {
 	BT_DBG("");
 
@@ -2977,7 +2988,7 @@ static uint8_t smp_ident_info(struct bt_smp *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_ident_addr_info(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_ident_addr_info(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_ident_addr_info *req = (void *)buf->data;
@@ -3052,7 +3063,7 @@ static uint8_t smp_ident_addr_info(struct bt_smp *smp, struct net_buf *buf)
 }
 
 #if defined(CONFIG_BLUETOOTH_SIGNING)
-static uint8_t smp_signing_info(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_signing_info(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 
@@ -3088,18 +3099,18 @@ static uint8_t smp_signing_info(struct bt_smp *smp, struct net_buf *buf)
 	return 0;
 }
 #else
-static uint8_t smp_signing_info(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_signing_info(struct bt_smp *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
 #endif /* CONFIG_BLUETOOTH_SIGNING */
 
 #if defined(CONFIG_BLUETOOTH_CENTRAL)
-static uint8_t smp_security_request(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_security_request(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 	struct bt_smp_security_request *req = (void *)buf->data;
-	uint8_t auth;
+	u8_t auth;
 
 	BT_DBG("");
 
@@ -3162,13 +3173,13 @@ pair:
 	return 0;
 }
 #else
-static uint8_t smp_security_request(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_security_request(struct bt_smp *smp, struct net_buf *buf)
 {
 	return BT_SMP_ERR_CMD_NOTSUPP;
 }
 #endif /* CONFIG_BLUETOOTH_CENTRAL */
 
-static uint8_t generate_dhkey(struct bt_smp *smp)
+static u8_t generate_dhkey(struct bt_smp *smp)
 {
 	if (bt_dh_key_gen(smp->pkey, bt_smp_dhkey_ready)) {
 		return BT_SMP_ERR_UNSPECIFIED;
@@ -3178,7 +3189,7 @@ static uint8_t generate_dhkey(struct bt_smp *smp)
 	return 0;
 }
 
-static uint8_t display_passkey(struct bt_smp *smp)
+static u8_t display_passkey(struct bt_smp *smp)
 {
 	if (bt_rand(&smp->passkey, sizeof(smp->passkey))) {
 		return BT_SMP_ERR_UNSPECIFIED;
@@ -3194,9 +3205,9 @@ static uint8_t display_passkey(struct bt_smp *smp)
 }
 
 #if defined(CONFIG_BLUETOOTH_PERIPHERAL)
-static uint8_t smp_public_key_slave(struct bt_smp *smp)
+static u8_t smp_public_key_slave(struct bt_smp *smp)
 {
-	uint8_t err;
+	u8_t err;
 
 	err = sc_send_public_key(smp);
 	if (err) {
@@ -3234,10 +3245,10 @@ static uint8_t smp_public_key_slave(struct bt_smp *smp)
 }
 #endif /* CONFIG_BLUETOOTH_PERIPHERAL */
 
-static uint8_t smp_public_key(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_public_key(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_smp_public_key *req = (void *)buf->data;
-	uint8_t err;
+	u8_t err;
 
 	BT_DBG("");
 
@@ -3298,7 +3309,7 @@ static uint8_t smp_public_key(struct bt_smp *smp, struct net_buf *buf)
 	return 0;
 }
 
-static uint8_t smp_dhkey_check(struct bt_smp *smp, struct net_buf *buf)
+static u8_t smp_dhkey_check(struct bt_smp *smp, struct net_buf *buf)
 {
 	struct bt_smp_dhkey_check *req = (void *)buf->data;
 
@@ -3306,7 +3317,7 @@ static uint8_t smp_dhkey_check(struct bt_smp *smp, struct net_buf *buf)
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_CENTRAL) &&
 	    smp->chan.chan.conn->role == BT_HCI_ROLE_MASTER) {
-		uint8_t e[16], r[16], enc_size;
+		u8_t e[16], r[16], enc_size;
 
 		memset(r, 0, sizeof(r));
 
@@ -3369,8 +3380,8 @@ static uint8_t smp_dhkey_check(struct bt_smp *smp, struct net_buf *buf)
 }
 
 static const struct {
-	uint8_t  (*func)(struct bt_smp *smp, struct net_buf *buf);
-	uint8_t  expect_len;
+	u8_t  (*func)(struct bt_smp *smp, struct net_buf *buf);
+	u8_t  expect_len;
 } handlers[] = {
 	{ }, /* No op-code defined for 0x00 */
 	{ smp_pairing_req,         sizeof(struct bt_smp_pairing) },
@@ -3392,7 +3403,7 @@ static void bt_smp_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 {
 	struct bt_smp *smp = CONTAINER_OF(chan, struct bt_smp, chan);
 	struct bt_smp_hdr *hdr = (void *)buf->data;
-	uint8_t err;
+	u8_t err;
 
 	if (buf->len < sizeof(*hdr)) {
 		BT_ERR("Too small SMP PDU received");
@@ -3438,7 +3449,7 @@ static void bt_smp_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	}
 }
 
-static void bt_smp_pkey_ready(const uint8_t *pkey)
+static void bt_smp_pkey_ready(const u8_t *pkey)
 {
 	int i;
 
@@ -3455,7 +3466,7 @@ static void bt_smp_pkey_ready(const uint8_t *pkey)
 
 	for (i = 0; i < ARRAY_SIZE(bt_smp_pool); i++) {
 		struct bt_smp *smp = &bt_smp_pool[i];
-		uint8_t err;
+		u8_t err;
 
 		if (!atomic_test_bit(smp->flags, SMP_FLAG_PKEY_SEND)) {
 			continue;
@@ -3518,7 +3529,7 @@ static void bt_smp_disconnected(struct bt_l2cap_chan *chan)
 }
 
 static void bt_smp_encrypt_change(struct bt_l2cap_chan *chan,
-				  uint8_t hci_status)
+				  u8_t hci_status)
 {
 	struct bt_smp *smp = CONTAINER_OF(chan, struct bt_smp, chan);
 	struct bt_conn *conn = chan->conn;
@@ -3592,62 +3603,18 @@ static void bt_smp_encrypt_change(struct bt_l2cap_chan *chan,
 	}
 }
 
-bool bt_smp_irk_matches(const uint8_t irk[16], const bt_addr_t *addr)
-{
-	uint8_t hash[3];
-	int err;
-
-	BT_DBG("IRK %s bdaddr %s", bt_hex(irk, 16), bt_addr_str(addr));
-
-	err = smp_ah(irk, addr->val + 3, hash);
-	if (err) {
-		return false;
-	}
-
-	return !memcmp(addr->val, hash, 3);
-}
-
-#if defined(CONFIG_BLUETOOTH_PRIVACY)
-int bt_smp_create_rpa(const uint8_t irk[16], bt_addr_t *rpa)
-{
-	int err;
-
-	err = bt_rand(rpa->val + 3, 3);
-	if (err) {
-		return err;
-	}
-
-	BT_ADDR_SET_RPA(rpa);
-
-	err = smp_ah(irk, rpa->val + 3, rpa->val);
-	if (err) {
-		return err;
-	}
-
-	BT_DBG("Created RPA %s", bt_addr_str((bt_addr_t *)rpa->val));
-
-	return 0;
-}
-#else
-int bt_smp_create_rpa(const uint8_t irk[16], bt_addr_t *rpa)
-{
-	return -ENOTSUP;
-}
-#endif /* CONFIG_BLUETOOTH_PRIVACY */
-
-
 #if defined(CONFIG_BLUETOOTH_SIGNING)
 /* Sign message using msg as a buffer, len is a size of the message,
  * msg buffer contains message itself, 32 bit count and signature,
  * so total buffer size is len + 4 + 8 octets.
  * API is Little Endian to make it suitable for Bluetooth.
  */
-static int smp_sign_buf(const uint8_t *key, uint8_t *msg, uint16_t len)
+static int smp_sign_buf(const u8_t *key, u8_t *msg, u16_t len)
 {
-	uint8_t *m = msg;
-	uint32_t cnt = UNALIGNED_GET((uint32_t *)&msg[len]);
-	uint8_t *sig = msg + len;
-	uint8_t key_s[16], tmp[16];
+	u8_t *m = msg;
+	u32_t cnt = UNALIGNED_GET((u32_t *)&msg[len]);
+	u8_t *sig = msg + len;
+	u8_t key_s[16], tmp[16];
 	int err;
 
 	BT_DBG("Signing msg %s len %u key %s", bt_hex(msg, len), len,
@@ -3678,8 +3645,8 @@ static int smp_sign_buf(const uint8_t *key, uint8_t *msg, uint16_t len)
 int bt_smp_sign_verify(struct bt_conn *conn, struct net_buf *buf)
 {
 	struct bt_keys *keys;
-	uint8_t sig[12];
-	uint32_t cnt;
+	u8_t sig[12];
+	u32_t cnt;
 	int err;
 
 	/* Store signature incl. count */
@@ -3721,7 +3688,7 @@ int bt_smp_sign_verify(struct bt_conn *conn, struct net_buf *buf)
 int bt_smp_sign(struct bt_conn *conn, struct net_buf *buf)
 {
 	struct bt_keys *keys;
-	uint32_t cnt;
+	u32_t cnt;
 	int err;
 
 	keys = bt_keys_find(BT_KEYS_LOCAL_CSRK, &conn->le.dst);
@@ -3746,7 +3713,7 @@ int bt_smp_sign(struct bt_conn *conn, struct net_buf *buf)
 		BT_ERR("Unable to create signature for %s",
 		       bt_addr_le_str(&conn->le.dst));
 		return -EIO;
-	};
+	}
 
 	keys->local_csrk.cnt++;
 
@@ -3769,12 +3736,12 @@ int bt_smp_sign(struct bt_conn *conn, struct net_buf *buf)
  * https://tools.ietf.org/html/rfc4493
  * Same mentioned in the Bluetooth Spec.
  */
-static const uint8_t key[] = {
+static const u8_t key[] = {
 	0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
 	0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
 };
 
-static const uint8_t M[] = {
+static const u8_t M[] = {
 	0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
 	0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
 	0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c,
@@ -3785,10 +3752,10 @@ static const uint8_t M[] = {
 	0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10
 };
 
-static int aes_test(const char *prefix, const uint8_t *key, const uint8_t *m,
-		    uint16_t len, const uint8_t *mac)
+static int aes_test(const char *prefix, const u8_t *key, const u8_t *m,
+		    u16_t len, const u8_t *mac)
 {
-	uint8_t out[16];
+	u8_t out[16];
 
 	BT_DBG("%s: AES CMAC of message with len %u", prefix, len);
 
@@ -3805,19 +3772,19 @@ static int aes_test(const char *prefix, const uint8_t *key, const uint8_t *m,
 
 static int smp_aes_cmac_test(void)
 {
-	uint8_t mac1[] = {
+	u8_t mac1[] = {
 		0xbb, 0x1d, 0x69, 0x29, 0xe9, 0x59, 0x37, 0x28,
 		0x7f, 0xa3, 0x7d, 0x12, 0x9b, 0x75, 0x67, 0x46
 	};
-	uint8_t mac2[] = {
+	u8_t mac2[] = {
 		0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44,
 		0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a, 0x28, 0x7c
 	};
-	uint8_t mac3[] = {
+	u8_t mac3[] = {
 		0xdf, 0xa6, 0x67, 0x47, 0xde, 0x9a, 0xe6, 0x30,
 		0x30, 0xca, 0x32, 0x61, 0x14, 0x97, 0xc8, 0x27
 	};
-	uint8_t mac4[] = {
+	u8_t mac4[] = {
 		0x51, 0xf0, 0xbe, 0xbf, 0x7e, 0x3b, 0x9d, 0x92,
 		0xfc, 0x49, 0x74, 0x17, 0x79, 0x36, 0x3c, 0xfe
 	};
@@ -3846,19 +3813,19 @@ static int smp_aes_cmac_test(void)
 	return 0;
 }
 
-static int sign_test(const char *prefix, const uint8_t *key, const uint8_t *m,
-		     uint16_t len, const uint8_t *sig)
+static int sign_test(const char *prefix, const u8_t *key, const u8_t *m,
+		     u16_t len, const u8_t *sig)
 {
-	uint8_t msg[len + sizeof(uint32_t) + 8];
-	uint8_t orig[len + sizeof(uint32_t) + 8];
-	uint8_t *out = msg + len;
+	u8_t msg[len + sizeof(u32_t) + 8];
+	u8_t orig[len + sizeof(u32_t) + 8];
+	u8_t *out = msg + len;
 	int err;
 
 	BT_DBG("%s: Sign message with len %u", prefix, len);
 
 	memset(msg, 0, sizeof(msg));
 	memcpy(msg, m, len);
-	memset(msg + len, 0, sizeof(uint32_t));
+	memset(msg + len, 0, sizeof(u32_t));
 
 	memcpy(orig, msg, sizeof(msg));
 
@@ -3868,7 +3835,7 @@ static int sign_test(const char *prefix, const uint8_t *key, const uint8_t *m,
 	}
 
 	/* Check original message */
-	if (!memcmp(msg, orig, len + sizeof(uint32_t))) {
+	if (!memcmp(msg, orig, len + sizeof(u32_t))) {
 		BT_DBG("%s: Original message intact", prefix);
 	} else {
 		BT_ERR("%s: Original message modified", prefix);
@@ -3889,23 +3856,23 @@ static int sign_test(const char *prefix, const uint8_t *key, const uint8_t *m,
 
 static int smp_sign_test(void)
 {
-	const uint8_t sig1[] = {
+	const u8_t sig1[] = {
 		0x00, 0x00, 0x00, 0x00, 0xb3, 0xa8, 0x59, 0x41,
 		0x27, 0xeb, 0xc2, 0xc0
 	};
-	const uint8_t sig2[] = {
+	const u8_t sig2[] = {
 		0x00, 0x00, 0x00, 0x00, 0x27, 0x39, 0x74, 0xf4,
 		0x39, 0x2a, 0x23, 0x2a
 	};
-	const uint8_t sig3[] = {
+	const u8_t sig3[] = {
 		0x00, 0x00, 0x00, 0x00, 0xb7, 0xca, 0x94, 0xab,
 		0x87, 0xc7, 0x82, 0x18
 	};
-	const uint8_t sig4[] = {
+	const u8_t sig4[] = {
 		0x00, 0x00, 0x00, 0x00, 0x44, 0xe1, 0xe6, 0xce,
 		0x1d, 0xf5, 0x13, 0x68
 	};
-	uint8_t key_s[16];
+	u8_t key_s[16];
 	int err;
 
 	/* Use the same key as aes-cmac but swap bytes */
@@ -3936,20 +3903,20 @@ static int smp_sign_test(void)
 
 static int smp_f4_test(void)
 {
-	uint8_t u[32] = { 0xe6, 0x9d, 0x35, 0x0e, 0x48, 0x01, 0x03, 0xcc,
+	u8_t u[32] = { 0xe6, 0x9d, 0x35, 0x0e, 0x48, 0x01, 0x03, 0xcc,
 			  0xdb, 0xfd, 0xf4, 0xac, 0x11, 0x91, 0xf4, 0xef,
 			  0xb9, 0xa5, 0xf9, 0xe9, 0xa7, 0x83, 0x2c, 0x5e,
 			  0x2c, 0xbe, 0x97, 0xf2, 0xd2, 0x03, 0xb0, 0x20 };
-	uint8_t v[32] = { 0xfd, 0xc5, 0x7f, 0xf4, 0x49, 0xdd, 0x4f, 0x6b,
+	u8_t v[32] = { 0xfd, 0xc5, 0x7f, 0xf4, 0x49, 0xdd, 0x4f, 0x6b,
 			  0xfb, 0x7c, 0x9d, 0xf1, 0xc2, 0x9a, 0xcb, 0x59,
 			  0x2a, 0xe7, 0xd4, 0xee, 0xfb, 0xfc, 0x0a, 0x90,
 			  0x9a, 0xbb, 0xf6, 0x32, 0x3d, 0x8b, 0x18, 0x55 };
-	uint8_t x[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
+	u8_t x[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
 			  0x3e, 0x73, 0x77, 0xd1, 0x54, 0x84, 0xcb, 0xd5 };
-	uint8_t z = 0x00;
-	uint8_t exp[16] = { 0x2d, 0x87, 0x74, 0xa9, 0xbe, 0xa1, 0xed, 0xf1,
+	u8_t z = 0x00;
+	u8_t exp[16] = { 0x2d, 0x87, 0x74, 0xa9, 0xbe, 0xa1, 0xed, 0xf1,
 			    0x1c, 0xbd, 0xa9, 0x07, 0xf1, 0x16, 0xc9, 0xf2 };
-	uint8_t res[16];
+	u8_t res[16];
 	int err;
 
 	err = smp_f4(u, v, x, z, res);
@@ -3966,25 +3933,25 @@ static int smp_f4_test(void)
 
 static int smp_f5_test(void)
 {
-	uint8_t w[32] = { 0x98, 0xa6, 0xbf, 0x73, 0xf3, 0x34, 0x8d, 0x86,
+	u8_t w[32] = { 0x98, 0xa6, 0xbf, 0x73, 0xf3, 0x34, 0x8d, 0x86,
 			  0xf1, 0x66, 0xf8, 0xb4, 0x13, 0x6b, 0x79, 0x99,
 			  0x9b, 0x7d, 0x39, 0x0a, 0xa6, 0x10, 0x10, 0x34,
 			  0x05, 0xad, 0xc8, 0x57, 0xa3, 0x34, 0x02, 0xec };
-	uint8_t n1[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
+	u8_t n1[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
 			   0x3e, 0x73, 0x77, 0xd1, 0x54, 0x84, 0xcb, 0xd5 };
-	uint8_t n2[16] = { 0xcf, 0xc4, 0x3d, 0xff, 0xf7, 0x83, 0x65, 0x21,
+	u8_t n2[16] = { 0xcf, 0xc4, 0x3d, 0xff, 0xf7, 0x83, 0x65, 0x21,
 			   0x6e, 0x5f, 0xa7, 0x25, 0xcc, 0xe7, 0xe8, 0xa6 };
 	bt_addr_le_t a1 = { .type = 0x00,
 			    .a.val = { 0xce, 0xbf, 0x37, 0x37, 0x12, 0x56 } };
 	bt_addr_le_t a2 = { .type = 0x00,
 			    .a.val = {0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7 } };
-	uint8_t exp_ltk[16] = { 0x38, 0x0a, 0x75, 0x94, 0xb5, 0x22, 0x05,
+	u8_t exp_ltk[16] = { 0x38, 0x0a, 0x75, 0x94, 0xb5, 0x22, 0x05,
 				0x98, 0x23, 0xcd, 0xd7, 0x69, 0x11, 0x79,
 				0x86, 0x69 };
-	uint8_t exp_mackey[16] = { 0x20, 0x6e, 0x63, 0xce, 0x20, 0x6a, 0x3f,
+	u8_t exp_mackey[16] = { 0x20, 0x6e, 0x63, 0xce, 0x20, 0x6a, 0x3f,
 				   0xfd, 0x02, 0x4a, 0x08, 0xa1, 0x76, 0xf1,
 				   0x65, 0x29 };
-	uint8_t mackey[16], ltk[16];
+	u8_t mackey[16], ltk[16];
 	int err;
 
 	err = smp_f5(w, n1, n2, &a1, &a2, mackey, ltk);
@@ -4001,22 +3968,22 @@ static int smp_f5_test(void)
 
 static int smp_f6_test(void)
 {
-	uint8_t w[16] = { 0x20, 0x6e, 0x63, 0xce, 0x20, 0x6a, 0x3f, 0xfd,
+	u8_t w[16] = { 0x20, 0x6e, 0x63, 0xce, 0x20, 0x6a, 0x3f, 0xfd,
 			  0x02, 0x4a, 0x08, 0xa1, 0x76, 0xf1, 0x65, 0x29 };
-	uint8_t n1[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
+	u8_t n1[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
 			   0x3e, 0x73, 0x77, 0xd1, 0x54, 0x84, 0xcb, 0xd5 };
-	uint8_t n2[16] = { 0xcf, 0xc4, 0x3d, 0xff, 0xf7, 0x83, 0x65, 0x21,
+	u8_t n2[16] = { 0xcf, 0xc4, 0x3d, 0xff, 0xf7, 0x83, 0x65, 0x21,
 			   0x6e, 0x5f, 0xa7, 0x25, 0xcc, 0xe7, 0xe8, 0xa6 };
-	uint8_t r[16] = { 0xc8, 0x0f, 0x2d, 0x0c, 0xd2, 0x42, 0xda, 0x08,
+	u8_t r[16] = { 0xc8, 0x0f, 0x2d, 0x0c, 0xd2, 0x42, 0xda, 0x08,
 			  0x54, 0xbb, 0x53, 0xb4, 0x3b, 0x34, 0xa3, 0x12 };
-	uint8_t io_cap[3] = { 0x02, 0x01, 0x01 };
+	u8_t io_cap[3] = { 0x02, 0x01, 0x01 };
 	bt_addr_le_t a1 = { .type = 0x00,
 			    .a.val = { 0xce, 0xbf, 0x37, 0x37, 0x12, 0x56 } };
 	bt_addr_le_t a2 = { .type = 0x00,
 			    .a.val = {0xc1, 0xcf, 0x2d, 0x70, 0x13, 0xa7 } };
-	uint8_t exp[16] = { 0x61, 0x8f, 0x95, 0xda, 0x09, 0x0b, 0x6c, 0xd2,
+	u8_t exp[16] = { 0x61, 0x8f, 0x95, 0xda, 0x09, 0x0b, 0x6c, 0xd2,
 			    0xc5, 0xe8, 0xd0, 0x9c, 0x98, 0x73, 0xc4, 0xe3 };
-	uint8_t res[16];
+	u8_t res[16];
 	int err;
 
 	err = smp_f6(w, n1, n2, r, io_cap, &a1, &a2, res);
@@ -4031,20 +3998,20 @@ static int smp_f6_test(void)
 
 static int smp_g2_test(void)
 {
-	uint8_t u[32] = { 0xe6, 0x9d, 0x35, 0x0e, 0x48, 0x01, 0x03, 0xcc,
+	u8_t u[32] = { 0xe6, 0x9d, 0x35, 0x0e, 0x48, 0x01, 0x03, 0xcc,
 			  0xdb, 0xfd, 0xf4, 0xac, 0x11, 0x91, 0xf4, 0xef,
 			  0xb9, 0xa5, 0xf9, 0xe9, 0xa7, 0x83, 0x2c, 0x5e,
 			  0x2c, 0xbe, 0x97, 0xf2, 0xd2, 0x03, 0xb0, 0x20 };
-	uint8_t v[32] = { 0xfd, 0xc5, 0x7f, 0xf4, 0x49, 0xdd, 0x4f, 0x6b,
+	u8_t v[32] = { 0xfd, 0xc5, 0x7f, 0xf4, 0x49, 0xdd, 0x4f, 0x6b,
 			  0xfb, 0x7c, 0x9d, 0xf1, 0xc2, 0x9a, 0xcb, 0x59,
 			  0x2a, 0xe7, 0xd4, 0xee, 0xfb, 0xfc, 0x0a, 0x90,
 			  0x9a, 0xbb, 0xf6, 0x32, 0x3d, 0x8b, 0x18, 0x55 };
-	uint8_t x[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
+	u8_t x[16] = { 0xab, 0xae, 0x2b, 0x71, 0xec, 0xb2, 0xff, 0xff,
 			  0x3e, 0x73, 0x77, 0xd1, 0x54, 0x84, 0xcb, 0xd5 };
-	uint8_t y[16] = { 0xcf, 0xc4, 0x3d, 0xff, 0xf7, 0x83, 0x65, 0x21,
+	u8_t y[16] = { 0xcf, 0xc4, 0x3d, 0xff, 0xf7, 0x83, 0x65, 0x21,
 			  0x6e, 0x5f, 0xa7, 0x25, 0xcc, 0xe7, 0xe8, 0xa6 };
-	uint32_t exp_val = 0x2f9ed5ba % 1000000;
-	uint32_t val;
+	u32_t exp_val = 0x2f9ed5ba % 1000000;
+	u32_t val;
 	int err;
 
 	err = smp_g2(u, v, x, y, &val);
@@ -4062,12 +4029,12 @@ static int smp_g2_test(void)
 #if defined(CONFIG_BLUETOOTH_BREDR)
 static int smp_h6_test(void)
 {
-	uint8_t w[16] = { 0x9b, 0x7d, 0x39, 0x0a, 0xa6, 0x10, 0x10, 0x34,
+	u8_t w[16] = { 0x9b, 0x7d, 0x39, 0x0a, 0xa6, 0x10, 0x10, 0x34,
 			  0x05, 0xad, 0xc8, 0x57, 0xa3, 0x34, 0x02, 0xec };
-	uint8_t key_id[4] = { 0x72, 0x62, 0x65, 0x6c };
-	uint8_t exp_res[16] = { 0x99, 0x63, 0xb1, 0x80, 0xe2, 0xa9, 0xd3, 0xe8,
+	u8_t key_id[4] = { 0x72, 0x62, 0x65, 0x6c };
+	u8_t exp_res[16] = { 0x99, 0x63, 0xb1, 0x80, 0xe2, 0xa9, 0xd3, 0xe8,
 				0x1c, 0xc9, 0x6d, 0xe7, 0x02, 0xe1, 0x9a, 0x2d};
-	uint8_t res[16];
+	u8_t res[16];
 	int err;
 
 	err = smp_h6(w, key_id, res);
@@ -4084,13 +4051,13 @@ static int smp_h6_test(void)
 
 static int smp_h7_test(void)
 {
-	uint8_t salt[16] = { 0x31, 0x70, 0x6d, 0x74, 0x00, 0x00, 0x00, 0x00,
+	u8_t salt[16] = { 0x31, 0x70, 0x6d, 0x74, 0x00, 0x00, 0x00, 0x00,
 			     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-	uint8_t w[16] = { 0x9b, 0x7d, 0x39, 0x0a, 0xa6, 0x10, 0x10, 0x34,
+	u8_t w[16] = { 0x9b, 0x7d, 0x39, 0x0a, 0xa6, 0x10, 0x10, 0x34,
 			  0x05, 0xad, 0xc8, 0x57, 0xa3, 0x34, 0x02, 0xec };
-	uint8_t exp_res[16] = { 0x11, 0x70, 0xa5, 0x75, 0x2a, 0x8c, 0x99, 0xd2,
+	u8_t exp_res[16] = { 0x11, 0x70, 0xa5, 0x75, 0x2a, 0x8c, 0x99, 0xd2,
 				0xec, 0xc0, 0xa3, 0xc6, 0x97, 0x35, 0x17, 0xfb};
-	uint8_t res[16];
+	u8_t res[16];
 	int err;
 
 	err = smp_h7(salt, w, res);
@@ -4239,7 +4206,7 @@ int bt_smp_auth_passkey_confirm(struct bt_conn *conn)
 	}
 
 	if (atomic_test_bit(smp->flags, SMP_FLAG_DHKEY_SEND)) {
-		uint8_t err;
+		u8_t err;
 
 #if defined(CONFIG_BLUETOOTH_CENTRAL)
 		if (smp->chan.chan.conn->role == BT_HCI_ROLE_MASTER) {
@@ -4410,10 +4377,10 @@ void bt_smp_update_keys(struct bt_conn *conn)
 	}
 }
 
-bool bt_smp_get_tk(struct bt_conn *conn, uint8_t *tk)
+bool bt_smp_get_tk(struct bt_conn *conn, u8_t *tk)
 {
 	struct bt_smp *smp;
-	uint8_t enc_size;
+	u8_t enc_size;
 
 	smp = smp_chan_get(conn);
 	if (!smp) {

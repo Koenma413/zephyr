@@ -29,7 +29,7 @@ extern "C" {
 #define _SCS_ICSR_RETTOBASE (1 << 11)
 
 #else /* !_ASMLANGUAGE */
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <arch/arm/cortex_m/exc.h>
 #include <irq.h>
 
@@ -45,7 +45,7 @@ extern "C" {
  * @return most significant bit set, 0 if @a op is 0
  */
 
-static ALWAYS_INLINE unsigned int find_msb_set(uint32_t op)
+static ALWAYS_INLINE unsigned int find_msb_set(u32_t op)
 {
 	if (!op) {
 		return 0;
@@ -67,7 +67,7 @@ static ALWAYS_INLINE unsigned int find_msb_set(uint32_t op)
  * @return least significant bit set, 0 if @a op is 0
  */
 
-static ALWAYS_INLINE unsigned int find_lsb_set(uint32_t op)
+static ALWAYS_INLINE unsigned int find_lsb_set(u32_t op)
 {
 	return __builtin_ffs(op);
 }

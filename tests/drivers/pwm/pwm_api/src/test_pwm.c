@@ -48,7 +48,7 @@
 #define DEFAULT_PWM_PORT 0
 #endif
 
-static int test_task(uint32_t port, uint32_t period, uint32_t pulse, bool cycle)
+static int test_task(u32_t port, u32_t period, u32_t pulse, bool cycle)
 {
 	TC_PRINT("[PWM]: %" PRIu8 ", [period]: %" PRIu32 ", [pulse]: %" PRIu32 "\n",
 		port, period, pulse);
@@ -62,7 +62,7 @@ static int test_task(uint32_t port, uint32_t period, uint32_t pulse, bool cycle)
 
 #ifdef CONFIG_BOARD_QUARK_D2000_CRB
 	struct device *pinmux = device_get_binding(PINMUX_NAME);
-	uint32_t function;
+	u32_t function;
 
 	if (!pinmux) {
 		TC_PRINT("Cannot get PINMUX\n");
@@ -106,17 +106,17 @@ static int test_task(uint32_t port, uint32_t period, uint32_t pulse, bool cycle)
 void test_pwm_usec(void)
 {
 	/* Period : Pulse (2000 : 1000), unit (usec). Voltage : 1.65V */
-	assert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_USEC,
+	zassert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_USEC,
 				DEFAULT_PULSE_USEC, false) == TC_PASS, NULL);
 	k_sleep(1000);
 
 	/* Period : Pulse (2000 : 2000), unit (usec). Voltage : 3.3V */
-	assert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_USEC,
+	zassert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_USEC,
 				DEFAULT_PERIOD_USEC, false) == TC_PASS, NULL);
 	k_sleep(1000);
 
 	/* Period : Pulse (2000 : 0), unit (usec). Voltage : 0V */
-	assert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_USEC,
+	zassert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_USEC,
 				0, false) == TC_PASS, NULL);
 	k_sleep(1000);
 }
@@ -124,16 +124,16 @@ void test_pwm_usec(void)
 void test_pwm_cycle(void)
 {
 	/* Period : Pulse (64000 : 32000), unit (cycle). Voltage : 1.65V */
-	assert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_CYCLE,
+	zassert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_CYCLE,
 				DEFAULT_PULSE_CYCLE, true) == TC_PASS, NULL);
 	k_sleep(1000);
 
 	/* Period : Pulse (64000 : 64000), unit (cycle). Voltage : 3.3V */
-	assert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_CYCLE,
+	zassert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_CYCLE,
 				DEFAULT_PERIOD_CYCLE, true) == TC_PASS, NULL);
 	k_sleep(1000);
 
 	/* Period : Pulse (64000 : 0), unit (cycle). Voltage : 0V */
-	assert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_CYCLE,
+	zassert_true(test_task(DEFAULT_PWM_PORT, DEFAULT_PERIOD_CYCLE,
 				0, true) == TC_PASS, NULL);
 }

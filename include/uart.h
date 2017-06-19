@@ -90,12 +90,12 @@ typedef void (*uart_irq_config_func_t)(struct device *port);
  */
 struct uart_device_config {
 	union {
-		uint32_t port;
-		uint8_t *base;
-		uint32_t regs;
+		u32_t port;
+		u8_t *base;
+		u32_t regs;
 	};
 
-	uint32_t sys_clk_freq;
+	u32_t sys_clk_freq;
 
 #ifdef CONFIG_PCI
 	struct pci_dev_info  pci_dev;
@@ -118,10 +118,10 @@ struct uart_driver_api {
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 
 	/** Interrupt driven FIFO fill function */
-	int (*fifo_fill)(struct device *dev, const uint8_t *tx_data, int len);
+	int (*fifo_fill)(struct device *dev, const u8_t *tx_data, int len);
 
 	/** Interrupt driven FIFO read function */
-	int (*fifo_read)(struct device *dev, uint8_t *rx_data, const int size);
+	int (*fifo_read)(struct device *dev, u8_t *rx_data, const int size);
 
 	/** Interrupt driven transfer enabling function */
 	void (*irq_tx_enable)(struct device *dev);
@@ -138,8 +138,8 @@ struct uart_driver_api {
 	/** Interrupt driven receiver disabling function */
 	void (*irq_rx_disable)(struct device *dev);
 
-	/** Interrupt driven transfer empty function */
-	int (*irq_tx_empty)(struct device *dev);
+	/** Interrupt driven transfer complete function */
+	int (*irq_tx_complete)(struct device *dev);
 
 	/** Interrupt driven receiver ready function */
 	int (*irq_rx_ready)(struct device *dev);
@@ -162,12 +162,12 @@ struct uart_driver_api {
 #endif
 
 #ifdef CONFIG_UART_LINE_CTRL
-	int (*line_ctrl_set)(struct device *dev, uint32_t ctrl, uint32_t val);
-	int (*line_ctrl_get)(struct device *dev, uint32_t ctrl, uint32_t *val);
+	int (*line_ctrl_set)(struct device *dev, u32_t ctrl, u32_t val);
+	int (*line_ctrl_get)(struct device *dev, u32_t ctrl, u32_t *val);
 #endif
 
 #ifdef CONFIG_UART_DRV_CMD
-	int (*drv_cmd)(struct device *dev, uint32_t cmd, uint32_t p);
+	int (*drv_cmd)(struct device *dev, u32_t cmd, u32_t p);
 #endif
 
 };
@@ -241,13 +241,22 @@ static inline unsigned char uart_poll_out(struct device *dev,
 /**
  * @brief Fill FIFO with data.
  *
+ * @details This function is expected to be called from UART
+ * interrupt handler (ISR), if uart_irq_tx_ready() returns true.
+ * Result of calling this function not from an ISR is undefined
+ * (hardware-dependent). Likewise, *not* calling this function
+ * from an ISR if uart_irq_tx_ready() returns true may lead to
+ * undefined behavior, e.g. infinite interrupt loops. It's
+ * mandatory to test return value of this function, as different
+ * hardware has different FIFO depth (oftentimes just 1).
+ *
  * @param dev UART device structure.
  * @param tx_data Data to transmit.
  * @param size Number of bytes to send.
  *
  * @return Number of bytes sent.
  */
-static inline int uart_fifo_fill(struct device *dev, const uint8_t *tx_data,
+static inline int uart_fifo_fill(struct device *dev, const u8_t *tx_data,
 				 int size)
 {
 	const struct uart_driver_api *api = dev->driver_api;
@@ -262,13 +271,23 @@ static inline int uart_fifo_fill(struct device *dev, const uint8_t *tx_data,
 /**
  * @brief Read data from FIFO.
  *
+ * @details This function is expected to be called from UART
+ * interrupt handler (ISR), if uart_irq_rx_ready() returns true.
+ * Result of calling this function not from an ISR is undefined
+ * (hardware-dependent). It's unspecified whether "RX ready"
+ * condition as returned by uart_irq_rx_ready() is level- or
+ * edge- triggered. That means that once uart_irq_rx_ready() is
+ * detected, uart_fifo_read() must be called until it reads all
+ * available data in the FIFO (i.e. until it returns less data
+ * than was requested).
+ *
  * @param dev UART device structure.
  * @param rx_data Data container.
  * @param size Container size.
  *
  * @return Number of bytes read.
  */
-static inline int uart_fifo_read(struct device *dev, uint8_t *rx_data,
+static inline int uart_fifo_read(struct device *dev, u8_t *rx_data,
 				 const int size)
 {
 	const struct uart_driver_api *api = dev->driver_api;
@@ -312,11 +331,18 @@ static inline void uart_irq_tx_disable(struct device *dev)
 }
 
 /**
- * @brief Check if Tx IRQ has been raised.
+ * @brief Check if UART TX buffer can accept a new char
+ *
+ * @details Check if UART TX buffer can accept at least one character
+ * for transmission (i.e. uart_fifo_fill() will succeed and return
+ * non-zero). This function must be called in a UART interrupt
+ * handler, or its result is undefined. Before calling this function
+ * in the interrupt handler, uart_irq_update() must be called once per
+ * the handler invocation.
  *
  * @param dev UART device structure.
  *
- * @retval 1 If an IRQ is ready.
+ * @retval 1 If at least one char can be written to UART.
  * @retval 0 Otherwise.
  */
 static inline int uart_irq_tx_ready(struct device *dev)
@@ -363,30 +389,57 @@ static inline void uart_irq_rx_disable(struct device *dev)
 }
 
 /**
- * @brief Check if nothing remains to be transmitted
+ * @brief Check if UART TX block finished transmission
+ *
+ * @details Check if any outgoing data buffered in UART TX block was
+ * fully transmitted and TX block is idle. When this condition is
+ * true, UART device (or whole system) can be power off. Note that
+ * this function is *not* useful to check if UART TX can accept more
+ * data, use uart_irq_tx_ready() for that. This function must be called
+ * in a UART interrupt handler, or its result is undefined. Before
+ * calling this function in the interrupt handler, uart_irq_update()
+ * must be called once per the handler invocation.
  *
  * @param dev UART device structure.
  *
  * @retval 1 If nothing remains to be transmitted.
  * @retval 0 Otherwise.
  */
-static inline int uart_irq_tx_empty(struct device *dev)
+static inline int uart_irq_tx_complete(struct device *dev)
 {
 	const struct uart_driver_api *api = dev->driver_api;
 
-	if (api->irq_tx_empty) {
-		return api->irq_tx_empty(dev);
+	if (api->irq_tx_complete) {
+		return api->irq_tx_complete(dev);
 	}
 
 	return 0;
 }
 
 /**
- * @brief Check if Rx IRQ has been raised.
+ * @deprecated This API is deprecated.
+ */
+static inline int __deprecated uart_irq_tx_empty(struct device *dev)
+{
+	return uart_irq_tx_complete(dev);
+}
+
+/**
+ * @brief Check if UART RX buffer has a received char
+ *
+ * @details Check if UART RX buffer has at least one pending character
+ * (i.e. uart_fifo_read() will succeed and return non-zero). This function
+ * must be called in a UART interrupt handler, or its result is undefined.
+ * Before calling this function in the interrupt handler, uart_irq_update()
+ * must be called once per the handler invocation. It's unspecified whether
+ * condition as returned by this function is level- or edge- triggered (i.e.
+ * if this function returns true when RX FIFO is non-empty, or when a new
+ * char was received since last call to it). See description of
+ * uart_fifo_read() for implication of this.
  *
  * @param dev UART device structure.
  *
- * @retval 1 If an IRQ is ready.
+ * @retval 1 If a received char is ready.
  * @retval 0 Otherwise.
  */
 static inline int uart_irq_rx_ready(struct device *dev)
@@ -506,7 +559,7 @@ static inline void uart_irq_callback_set(struct device *dev,
  * @retval failed Otherwise.
  */
 static inline int uart_line_ctrl_set(struct device *dev,
-				     uint32_t ctrl, uint32_t val)
+				     u32_t ctrl, u32_t val)
 {
 	const struct uart_driver_api *api = dev->driver_api;
 
@@ -528,7 +581,7 @@ static inline int uart_line_ctrl_set(struct device *dev,
  * @retval failed Otherwise.
  */
 static inline int uart_line_ctrl_get(struct device *dev,
-				     uint32_t ctrl, uint32_t *val)
+				     u32_t ctrl, u32_t *val)
 {
 	const struct uart_driver_api *api = dev->driver_api;
 
@@ -556,7 +609,7 @@ static inline int uart_line_ctrl_get(struct device *dev,
  * @retval 0 If successful.
  * @retval failed Otherwise.
  */
-static inline int uart_drv_cmd(struct device *dev, uint32_t cmd, uint32_t p)
+static inline int uart_drv_cmd(struct device *dev, u32_t cmd, u32_t p)
 {
 	const struct uart_driver_api *api = dev->driver_api;
 

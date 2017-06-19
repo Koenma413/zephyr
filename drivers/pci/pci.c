@@ -47,24 +47,24 @@
  *
  * INTERNALS
  * The whole logic runs around a structure: struct lookup_data, which exists
- * on one instanciation called 'lookup'.
+ * on one instantiation called 'lookup'.
  * Such structure is used for 2 distinct roles:
  * - to match devices the caller is looking for
  * - to loop on PCI bus, devices, function and BARs
  *
- * The search criterias are the class and/or the vendor_id/device_id of a PCI
+ * The search criteria are the class and/or the vendor_id/device_id of a PCI
  * device. The caller first initializes the lookup structure by calling
- * pci_bus_scan_init(), which will reset the search criterias as well as the
- * loop paramaters to 0. At the very first subsequent call of pci_bus_scan()
- * the lookup structure will store the search criterias. Then the loop starts.
+ * pci_bus_scan_init(), which will reset the search criteria as well as the
+ * loop parameters to 0. At the very first subsequent call of pci_bus_scan()
+ * the lookup structure will store the search criteria. Then the loop starts.
  * For each bus it will run through each device on which it will loop on each
- * function and BARs, as long as the criterias does not match or until it hit
+ * function and BARs, as long as the criteria does not match or until it hit
  * the limit of bus/dev/functions to scan.
  *
  * On a successful match, it will stop the loop, fill in the caller's
  * pci_dev_info structure with the found device information, and return 1.
  * Hopefully, the lookup structure still remembers where it stopped and the
- * original search criterias. Thus, when the caller asks to scan again for
+ * original search criteria. Thus, when the caller asks to scan again for
  * a possible result next, the loop will restart where it stopped.
  * That will work as long as there are relevant results found.
  */
@@ -73,7 +73,7 @@
 #include <arch/cpu.h>
 #include <misc/printk.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 #include <board.h>
 
@@ -105,12 +105,12 @@
 
 struct lookup_data {
 	struct pci_dev_info info;
-	uint32_t bus:9;
-	uint32_t dev:6;
-	uint32_t func:4;
-	uint32_t baridx:3;
-	uint32_t barofs:3;
-	uint32_t unused:7;
+	u32_t bus:9;
+	u32_t dev:6;
+	u32_t func:4;
+	u32_t baridx:3;
+	u32_t barofs:3;
+	u32_t unused:7;
 };
 
 static struct lookup_data __noinit lookup;
@@ -123,9 +123,9 @@ static struct lookup_data __noinit lookup;
  */
 
 static inline int pci_bar_config_get(union pci_addr_reg pci_ctrl_addr,
-							uint32_t *config)
+							u32_t *config)
 {
-	uint32_t old_value;
+	u32_t old_value;
 
 	/* save the current setting */
 	pci_read(DEFAULT_PCI_CONTROLLER,
@@ -136,7 +136,7 @@ static inline int pci_bar_config_get(union pci_addr_reg pci_ctrl_addr,
 	/* write to the BAR to see how large it is */
 	pci_write(DEFAULT_PCI_CONTROLLER,
 			pci_ctrl_addr,
-			sizeof(uint32_t),
+			sizeof(u32_t),
 			0xffffffff);
 
 	pci_read(DEFAULT_PCI_CONTROLLER,
@@ -172,11 +172,11 @@ static inline int pci_bar_params_get(union pci_addr_reg pci_ctrl_addr,
 				     struct pci_dev_info *dev_info,
 				     int max_bars)
 {
-	uint32_t bar_value;
-	uint32_t bar_config;
-	uint32_t bar_hival;
-	uint32_t addr;
-	uint32_t mask;
+	u32_t bar_value;
+	u32_t bar_config;
+	u32_t bar_hival;
+	u32_t addr;
+	u32_t mask;
 
 	pci_ctrl_addr.field.reg = 4 + lookup.barofs;
 
@@ -231,7 +231,7 @@ static inline int pci_dev_scan(union pci_addr_reg pci_ctrl_addr,
 					struct pci_dev_info *dev_info)
 {
 	static union pci_dev pci_dev_header;
-	uint32_t pci_data;
+	u32_t pci_data;
 	int max_bars;
 
 	/* verify first if there is a valid device at this point */
@@ -352,8 +352,8 @@ void pci_bus_scan_init(void)
  *
  * @brief Scans PCI bus for devices
  *
- * The routine scans the PCI bus for the devices on criterias provided in the
- * given dev_info at first call. Which criterias can be class and/or
+ * The routine scans the PCI bus for the devices on criteria provided in the
+ * given dev_info at first call. Which criteria can be class and/or
  * vendor_id/device_id.
  *
  * @return 1 on success, 0 otherwise. On success, dev_info is filled in with
@@ -408,10 +408,10 @@ int pci_bus_scan(struct pci_dev_info *dev_info)
 }
 #endif /* CONFIG_PCI_ENUMERATION */
 
-static void pci_set_command_bits(struct pci_dev_info *dev_info, uint32_t bits)
+static void pci_set_command_bits(struct pci_dev_info *dev_info, u32_t bits)
 {
 	union pci_addr_reg pci_ctrl_addr;
-	uint32_t pci_data;
+	u32_t pci_data;
 
 	pci_ctrl_addr.value = 0;
 	pci_ctrl_addr.field.func = dev_info->function;
@@ -425,14 +425,14 @@ static void pci_set_command_bits(struct pci_dev_info *dev_info, uint32_t bits)
 
 	pci_read(DEFAULT_PCI_CONTROLLER,
 			pci_ctrl_addr,
-			sizeof(uint16_t),
+			sizeof(u16_t),
 			&pci_data);
 
 	pci_data = pci_data | bits;
 
 	pci_write(DEFAULT_PCI_CONTROLLER,
 			pci_ctrl_addr,
-			sizeof(uint16_t),
+			sizeof(u16_t),
 			pci_data);
 }
 
@@ -469,8 +469,8 @@ void pci_show(struct pci_dev_info *dev_info)
 		dev_info->function,
 		dev_info->bar,
 		(dev_info->mem_type == BAR_SPACE_MEM) ? "MEM" : "I/O",
-		(uint32_t)dev_info->addr,
-		(uint32_t)(dev_info->addr + dev_info->size - 1),
+		(u32_t)dev_info->addr,
+		(u32_t)(dev_info->addr + dev_info->size - 1),
 		dev_info->irq);
 }
 #endif /* CONFIG_PCI_DEBUG */

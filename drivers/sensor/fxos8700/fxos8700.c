@@ -12,14 +12,14 @@ static int fxos8700_sample_fetch(struct device *dev, enum sensor_channel chan)
 {
 	const struct fxos8700_config *config = dev->config->config_info;
 	struct fxos8700_data *data = dev->driver_data;
-	uint8_t buffer[FXOS8700_MAX_NUM_BYTES];
-	uint8_t num_bytes;
-	int16_t *raw;
+	u8_t buffer[FXOS8700_MAX_NUM_BYTES];
+	u8_t num_bytes;
+	s16_t *raw;
 	int ret = 0;
 	int i;
 
 	if (chan != SENSOR_CHAN_ALL) {
-		SYS_LOG_DBG("Unsupported sensor channel");
+		SYS_LOG_ERR("Unsupported sensor channel");
 		return -ENOTSUP;
 	}
 
@@ -35,7 +35,7 @@ static int fxos8700_sample_fetch(struct device *dev, enum sensor_channel chan)
 
 	if (i2c_burst_read(data->i2c, config->i2c_address, config->start_addr,
 			   buffer, num_bytes)) {
-		SYS_LOG_DBG("Could not fetch sample");
+		SYS_LOG_ERR("Could not fetch sample");
 		ret = -EIO;
 		goto exit;
 	}
@@ -54,17 +54,26 @@ static int fxos8700_sample_fetch(struct device *dev, enum sensor_channel chan)
 		*raw++ = (buffer[i] << 8) | (buffer[i+1]);
 	}
 
+#ifdef CONFIG_FXOS8700_TEMP
+	if (i2c_reg_read_byte(data->i2c, config->i2c_address, FXOS8700_REG_TEMP,
+			      &data->temp)) {
+		SYS_LOG_ERR("Could not fetch temperature");
+		ret = -EIO;
+		goto exit;
+	}
+#endif
+
 exit:
 	k_sem_give(&data->sem);
 
 	return ret;
 }
 
-static void fxos8700_accel_convert(struct sensor_value *val, int16_t raw,
+static void fxos8700_accel_convert(struct sensor_value *val, s16_t raw,
 				   enum fxos8700_range range)
 {
-	uint8_t frac_bits;
-	int64_t micro_ms2;
+	u8_t frac_bits;
+	s64_t micro_ms2;
 
 	/* The range encoding is convenient to compute the number of fractional
 	 * bits:
@@ -80,16 +89,16 @@ static void fxos8700_accel_convert(struct sensor_value *val, int16_t raw,
 	micro_ms2 = (raw * SENSOR_G) >> frac_bits;
 
 	/* The maximum possible value is 8g, which in units of micro m/s^2
-	 * always fits into 32-bits. Cast down to int32_t so we can use a
+	 * always fits into 32-bits. Cast down to s32_t so we can use a
 	 * faster divide.
 	 */
-	val->val1 = (int32_t) micro_ms2 / 1000000;
-	val->val2 = (int32_t) micro_ms2 % 1000000;
+	val->val1 = (s32_t) micro_ms2 / 1000000;
+	val->val2 = (s32_t) micro_ms2 % 1000000;
 }
 
-static void fxos8700_magn_convert(struct sensor_value *val, int16_t raw)
+static void fxos8700_magn_convert(struct sensor_value *val, s16_t raw)
 {
-	int32_t micro_g;
+	s32_t micro_g;
 
 	/* Convert units to micro Gauss. Raw magnetic data always has a
 	 * resolution of 0.1 uT/LSB, which is equivalent to 0.001 G/LSB.
@@ -100,6 +109,21 @@ static void fxos8700_magn_convert(struct sensor_value *val, int16_t raw)
 	val->val2 = micro_g % 1000000;
 }
 
+#ifdef CONFIG_FXOS8700_TEMP
+static void fxos8700_temp_convert(struct sensor_value *val, s8_t raw)
+{
+	s32_t micro_c;
+
+	/* Convert units to micro Celsius. Raw temperature data always has a
+	 * resolution of 0.96 deg C/LSB.
+	 */
+	micro_c = raw * 960 * 1000;
+
+	val->val1 = micro_c / 1000000;
+	val->val2 = micro_c % 1000000;
+}
+#endif
+
 static int fxos8700_channel_get(struct device *dev, enum sensor_channel chan,
 				struct sensor_value *val)
 {
@@ -107,7 +131,7 @@ static int fxos8700_channel_get(struct device *dev, enum sensor_channel chan,
 	struct fxos8700_data *data = dev->driver_data;
 	int start_channel;
 	int num_channels;
-	int16_t *raw;
+	s16_t *raw;
 	int ret;
 	int i;
 
@@ -191,10 +215,16 @@ static int fxos8700_channel_get(struct device *dev, enum sensor_channel chan,
 		if (num_channels > 0) {
 			ret = 0;
 		}
+#ifdef CONFIG_FXOS8700_TEMP
+		if (chan == SENSOR_CHAN_TEMP) {
+			fxos8700_temp_convert(val, data->temp);
+			ret = 0;
+		}
+#endif
 	}
 
 	if (ret != 0) {
-		SYS_LOG_DBG("Unsupported sensor channel");
+		SYS_LOG_ERR("Unsupported sensor channel");
 	}
 
 	k_sem_give(&data->sem);
@@ -206,12 +236,12 @@ int fxos8700_get_power(struct device *dev, enum fxos8700_power *power)
 {
 	const struct fxos8700_config *config = dev->config->config_info;
 	struct fxos8700_data *data = dev->driver_data;
-	uint8_t val = *power;
+	u8_t val = *power;
 
 	if (i2c_reg_read_byte(data->i2c, config->i2c_address,
 			      FXOS8700_REG_CTRLREG1,
 			      &val)) {
-		SYS_LOG_DBG("Could not get power setting");
+		SYS_LOG_ERR("Could not get power setting");
 		return -EIO;
 	}
 	val &= FXOS8700_M_CTRLREG1_MODE_MASK;
@@ -235,12 +265,12 @@ static int fxos8700_init(struct device *dev)
 {
 	const struct fxos8700_config *config = dev->config->config_info;
 	struct fxos8700_data *data = dev->driver_data;
-	uint8_t whoami;
+	u8_t whoami;
 
 	/* Get the I2C device */
 	data->i2c = device_get_binding(config->i2c_name);
 	if (data->i2c == NULL) {
-		SYS_LOG_DBG("Could not find I2C device");
+		SYS_LOG_ERR("Could not find I2C device");
 		return -EINVAL;
 	}
 
@@ -250,12 +280,12 @@ static int fxos8700_init(struct device *dev)
 	*/
 	if (i2c_reg_read_byte(data->i2c, config->i2c_address,
 			      FXOS8700_REG_WHOAMI, &whoami)) {
-		SYS_LOG_DBG("Could not get WHOAMI value");
+		SYS_LOG_ERR("Could not get WHOAMI value");
 		return -EIO;
 	}
 
 	if (whoami != config->whoami) {
-		SYS_LOG_DBG("WHOAMI value received 0x%x, expected 0x%x",
+		SYS_LOG_ERR("WHOAMI value received 0x%x, expected 0x%x",
 			    whoami, FXOS8700_REG_WHOAMI);
 		return -EIO;
 	}
@@ -278,7 +308,7 @@ static int fxos8700_init(struct device *dev)
 				FXOS8700_REG_M_CTRLREG1,
 				FXOS8700_M_CTRLREG1_MODE_MASK,
 				config->mode)) {
-		SYS_LOG_DBG("Could not set mode");
+		SYS_LOG_ERR("Could not set mode");
 		return -EIO;
 	}
 
@@ -289,7 +319,7 @@ static int fxos8700_init(struct device *dev)
 				FXOS8700_REG_M_CTRLREG2,
 				FXOS8700_M_CTRLREG2_AUTOINC_MASK,
 				FXOS8700_M_CTRLREG2_AUTOINC_MASK)) {
-		SYS_LOG_DBG("Could not set hybrid autoincrement");
+		SYS_LOG_ERR("Could not set hybrid autoincrement");
 		return -EIO;
 	}
 
@@ -298,20 +328,20 @@ static int fxos8700_init(struct device *dev)
 				FXOS8700_REG_XYZ_DATA_CFG,
 				FXOS8700_XYZ_DATA_CFG_FS_MASK,
 				config->range)) {
-		SYS_LOG_DBG("Could not set range");
+		SYS_LOG_ERR("Could not set range");
 		return -EIO;
 	}
 
 #if CONFIG_FXOS8700_TRIGGER
 	if (fxos8700_trigger_init(dev)) {
-		SYS_LOG_DBG("Could not initialize interrupts");
+		SYS_LOG_ERR("Could not initialize interrupts");
 		return -EIO;
 	}
 #endif
 
 	/* Set active */
 	if (fxos8700_set_power(dev, FXOS8700_POWER_ACTIVE)) {
-		SYS_LOG_DBG("Could not set active");
+		SYS_LOG_ERR("Could not set active");
 		return -EIO;
 	}
 

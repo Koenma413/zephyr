@@ -13,16 +13,28 @@
 #define __IEEE802154_H__
 
 #include <net/net_mgmt.h>
+#include <crypto/cipher_structs.h>
 
 #define IEEE802154_MAX_ADDR_LENGTH	8
 
+struct ieee802154_security_ctx {
+	u32_t frame_counter;
+	struct cipher_ctx enc;
+	struct cipher_ctx dec;
+	u8_t key[16];
+	u8_t key_len;
+	u8_t level	: 3;
+	u8_t key_mode	: 2;
+	u8_t _unused	: 3;
+};
+
 /* This not meant to be used by any code but 802.15.4 L2 stack */
 struct ieee802154_context {
-	uint16_t pan_id;
-	uint16_t channel;
+	u16_t pan_id;
+	u16_t channel;
 	struct k_sem ack_lock;
-	uint16_t short_addr;
-	uint8_t ext_addr[IEEE802154_MAX_ADDR_LENGTH];
+	u16_t short_addr;
+	u8_t ext_addr[IEEE802154_MAX_ADDR_LENGTH];
 #ifdef CONFIG_NET_L2_IEEE802154_MGMT
 	struct ieee802154_req_params *scan_ctx;
 	union {
@@ -30,17 +42,21 @@ struct ieee802154_context {
 		struct k_sem req_lock;
 	};
 	union {
-		uint8_t ext_addr[IEEE802154_MAX_ADDR_LENGTH];
-		uint16_t short_addr;
+		u8_t ext_addr[IEEE802154_MAX_ADDR_LENGTH];
+		u16_t short_addr;
 	} coord;
-	uint8_t coord_addr_len;
+	u8_t coord_addr_len;
 #endif
-	uint8_t sequence;
-	uint8_t ack_received	: 1;
-	uint8_t ack_requested	: 1;
-	uint8_t associated	: 1;
-	uint8_t _unused		: 5;
-} __packed;
+#ifdef CONFIG_NET_L2_IEEE802154_SECURITY
+	struct ieee802154_security_ctx sec_ctx;
+#endif
+	s16_t tx_power;
+	u8_t sequence;
+	u8_t ack_received	: 1;
+	u8_t ack_requested	: 1;
+	u8_t associated		: 1;
+	u8_t _unused		: 5;
+};
 
 
 /* Management part definitions */
@@ -60,14 +76,18 @@ enum net_request_ieee802154_cmd {
 	NET_REQUEST_IEEE802154_CMD_CANCEL_SCAN,
 	NET_REQUEST_IEEE802154_CMD_ASSOCIATE,
 	NET_REQUEST_IEEE802154_CMD_DISASSOCIATE,
-	NET_REQUEST_IEEE802154_CMD_SET_CHAN,
-	NET_REQUEST_IEEE802154_CMD_GET_CHAN,
+	NET_REQUEST_IEEE802154_CMD_SET_CHANNEL,
+	NET_REQUEST_IEEE802154_CMD_GET_CHANNEL,
 	NET_REQUEST_IEEE802154_CMD_SET_PAN_ID,
 	NET_REQUEST_IEEE802154_CMD_GET_PAN_ID,
 	NET_REQUEST_IEEE802154_CMD_SET_EXT_ADDR,
 	NET_REQUEST_IEEE802154_CMD_GET_EXT_ADDR,
 	NET_REQUEST_IEEE802154_CMD_SET_SHORT_ADDR,
 	NET_REQUEST_IEEE802154_CMD_GET_SHORT_ADDR,
+	NET_REQUEST_IEEE802154_CMD_GET_TX_POWER,
+	NET_REQUEST_IEEE802154_CMD_SET_TX_POWER,
+	NET_REQUEST_IEEE802154_CMD_SET_SECURITY_SETTINGS,
+	NET_REQUEST_IEEE802154_CMD_GET_SECURITY_SETTINGS,
 };
 
 
@@ -106,15 +126,15 @@ NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_ASSOCIATE);
 
 NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_DISASSOCIATE);
 
-#define NET_REQUEST_IEEE802154_SET_CHAN					\
-	(_NET_IEEE802154_BASE | NET_REQUEST_IEEE802154_CMD_SET_CHAN)
+#define NET_REQUEST_IEEE802154_SET_CHANNEL				\
+	(_NET_IEEE802154_BASE | NET_REQUEST_IEEE802154_CMD_SET_CHANNEL)
 
-NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_SET_CHAN);
+NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_SET_CHANNEL);
 
-#define NET_REQUEST_IEEE802154_GET_CHAN					\
-	(_NET_IEEE802154_BASE | NET_REQUEST_IEEE802154_CMD_GET_CHAN)
+#define NET_REQUEST_IEEE802154_GET_CHANNEL				\
+	(_NET_IEEE802154_BASE | NET_REQUEST_IEEE802154_CMD_GET_CHANNEL)
 
-NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_GET_CHAN);
+NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_GET_CHANNEL);
 
 #define NET_REQUEST_IEEE802154_SET_PAN_ID				\
 	(_NET_IEEE802154_BASE | NET_REQUEST_IEEE802154_CMD_SET_PAN_ID)
@@ -146,6 +166,34 @@ NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_SET_SHORT_ADDR);
 
 NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_GET_SHORT_ADDR);
 
+#define NET_REQUEST_IEEE802154_GET_TX_POWER				\
+	(_NET_IEEE802154_BASE |						\
+	 NET_REQUEST_IEEE802154_CMD_GET_TX_POWER)
+
+NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_GET_TX_POWER);
+
+#define NET_REQUEST_IEEE802154_SET_TX_POWER				\
+	(_NET_IEEE802154_BASE |						\
+	 NET_REQUEST_IEEE802154_CMD_SET_TX_POWER)
+
+NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_SET_TX_POWER);
+
+#ifdef CONFIG_NET_L2_IEEE802154_SECURITY
+
+#define NET_REQUEST_IEEE802154_SET_SECURITY_SETTINGS			\
+	(_NET_IEEE802154_BASE |						\
+	 NET_REQUEST_IEEE802154_CMD_SET_SECURITY_SETTINGS)
+
+NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_SET_SECURITY_SETTINGS);
+
+#define NET_REQUEST_IEEE802154_GET_SECURITY_SETTINGS			\
+	(_NET_IEEE802154_BASE |						\
+	 NET_REQUEST_IEEE802154_CMD_GET_SECURITY_SETTINGS)
+
+NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_IEEE802154_GET_SECURITY_SETTINGS);
+
+#endif /* CONFIG_NET_L2_IEEE802154_SECURITY */
+
 enum net_event_ieee802154_cmd {
 	NET_EVENT_IEEE802154_CMD_SCAN_RESULT = 1,
 };
@@ -171,26 +219,39 @@ enum net_event_ieee802154_cmd {
  */
 struct ieee802154_req_params {
 	/** The set of channels to scan, use above macros to manage it */
-	uint32_t channel_set;
+	u32_t channel_set;
 
 	/** Duration of scan, per-channel, in milliseconds */
-	uint32_t duration;
+	u32_t duration;
 
 	/** Current channel in use as a result */
-	uint16_t channel;
+	u16_t channel;
 	/** Current pan_id in use as a result */
-	uint16_t pan_id;
+	u16_t pan_id;
 
 	/** Result address */
 	union {
-		uint8_t addr[IEEE802154_MAX_ADDR_LENGTH];
-		uint16_t short_addr;
+		u8_t addr[IEEE802154_MAX_ADDR_LENGTH];
+		u16_t short_addr;
 	};
 
 	/** length of address */
-	uint8_t len;
+	u8_t len;
 	/** Link quality information, between 0 and 255 */
-	uint8_t lqi;
-} __packed;
+	u8_t lqi;
+};
+
+/**
+ * @brief Security parameters
+ *
+ * Used to setup the link-layer security settings
+ */
+struct ieee802154_security_params {
+	u8_t key[16];
+	u8_t key_len;
+	u8_t key_mode	: 2;
+	u8_t level	: 3;
+	u8_t _unused	: 3;
+};
 
 #endif /* __IEEE802154_H__ */

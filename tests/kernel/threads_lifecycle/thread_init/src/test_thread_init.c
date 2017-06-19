@@ -54,12 +54,14 @@ K_SEM_DEFINE(start_sema, 0, 1);
 K_SEM_DEFINE(end_sema, 0, 1);
 
 /*local variables*/
-static char __noinit __stack stack_coop[INIT_COOP_STACK_SIZE];
-static char __noinit __stack stack_preempt[INIT_PREEMPT_STACK_SIZE];
-static uint64_t t_create;
+static K_THREAD_STACK_DEFINE(stack_coop, INIT_COOP_STACK_SIZE);
+static K_THREAD_STACK_DEFINE(stack_preempt, INIT_PREEMPT_STACK_SIZE);
+static struct k_thread thread_coop;
+static struct k_thread thread_preempt;
+static u64_t t_create;
 static struct thread_data{
 	int init_prio;
-	int32_t init_delay;
+	s32_t init_delay;
 	void *init_p1;
 	void *init_p2;
 	void *init_p3;
@@ -69,20 +71,20 @@ static struct thread_data{
 static void thread_entry(void *p1, void *p2, void *p3)
 {
 	if (t_create) {
-		uint64_t t_delay = k_uptime_get() - t_create;
+		u64_t t_delay = k_uptime_get() - t_create;
 		/**TESTPOINT: check delay start*/
-		assert_true(t_delay >= expected.init_delay,
-			"k_thread_spawn delay start failed\n");
+		zassert_true(t_delay >= expected.init_delay,
+			"k_thread_create delay start failed\n");
 	}
 
 	k_sem_take(&start_sema, K_FOREVER);
 
 	k_tid_t tid = k_current_get();
 	/**TESTPOINT: check priority and params*/
-	assert_equal(k_thread_priority_get(tid), expected.init_prio, NULL);
-	assert_equal(p1, expected.init_p1, NULL);
-	assert_equal(p2, expected.init_p2, NULL);
-	assert_equal(p3, expected.init_p3, NULL);
+	zassert_equal(k_thread_priority_get(tid), expected.init_prio, NULL);
+	zassert_equal(p1, expected.init_p1, NULL);
+	zassert_equal(p2, expected.init_p2, NULL);
+	zassert_equal(p3, expected.init_p3, NULL);
 	/*option, stack size, not checked, no public API to get these values*/
 
 	k_sem_give(&end_sema);
@@ -135,17 +137,18 @@ void test_kdefine_coop_thread(void)
 
 /**
  * @ingroup t_thread_init
- * @brief test preempt thread initialization via k_thread_spawn
+ * @brief test preempt thread initialization via k_thread_create
  */
 void test_kinit_preempt_thread(void)
 {
 	/*create preempt thread*/
-	k_tid_t pthread = k_thread_spawn(stack_preempt, INIT_PREEMPT_STACK_SIZE,
-		thread_entry, INIT_PREEMPT_P1, INIT_PREEMPT_P2, INIT_PREEMPT_P3,
-		INIT_PREEMPT_PRIO, INIT_PREEMPT_OPTION, INIT_PREEMPT_DELAY);
+	k_tid_t pthread = k_thread_create(&thread_preempt, stack_preempt,
+		INIT_PREEMPT_STACK_SIZE, thread_entry, INIT_PREEMPT_P1,
+		INIT_PREEMPT_P2, INIT_PREEMPT_P3, INIT_PREEMPT_PRIO,
+		INIT_PREEMPT_OPTION, INIT_PREEMPT_DELAY);
 	/*record time stamp of thread creation*/
 	t_create = k_uptime_get();
-	assert_not_null(pthread, "thread spawn failed\n");
+	zassert_not_null(pthread, "thread creation failed\n");
 
 	expected.init_p1 = INIT_PREEMPT_P1;
 	expected.init_p2 = INIT_PREEMPT_P2;
@@ -163,17 +166,18 @@ void test_kinit_preempt_thread(void)
 
 /**
  * @ingroup t_thread_init
- * @brief test coop thread initialization via k_thread_spawn
+ * @brief test coop thread initialization via k_thread_create
  */
 void test_kinit_coop_thread(void)
 {
 	/*create coop thread*/
-	k_tid_t pthread = k_thread_spawn(stack_coop, INIT_COOP_STACK_SIZE,
-		thread_entry, INIT_COOP_P1, INIT_COOP_P2, INIT_COOP_P3,
-		INIT_COOP_PRIO, INIT_COOP_OPTION, INIT_COOP_DELAY);
+	k_tid_t pthread = k_thread_create(&thread_coop, stack_coop,
+		INIT_COOP_STACK_SIZE, thread_entry, INIT_COOP_P1,
+		INIT_COOP_P2, INIT_COOP_P3, INIT_COOP_PRIO,
+		INIT_COOP_OPTION, INIT_COOP_DELAY);
 	/*record time stamp of thread creation*/
 	t_create = k_uptime_get();
-	assert_not_null(pthread, "thread spawn failed\n");
+	zassert_not_null(pthread, "thread spawn failed\n");
 
 	expected.init_p1 = INIT_COOP_P1;
 	expected.init_p2 = INIT_COOP_P2;

@@ -6,23 +6,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-if SOC_STM32L476XX
+if SOC_STM32L476XG
 
 config SOC
 	string
 	default stm32l476xx
 
-if !HAS_DTS
-config SRAM_SIZE
-	default 96
-
-config FLASH_SIZE
-	default 1024
-
 config NUM_IRQS
 	int
 	default 82
-endif # !HAS_DTS
 
-endif # SOC_STM32L476XX
-
+endif # SOC_STM32L476XG

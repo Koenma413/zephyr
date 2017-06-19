@@ -9,7 +9,7 @@
 #ifndef __SENSOR_LSM9DS0_GYRO_H__
 #define __SENSOR_LSM9DS0_GYRO_H__
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <i2c.h>
 #include <misc/util.h>
 
@@ -213,11 +213,11 @@
 
 struct lsm9ds0_gyro_config {
 	char *i2c_master_dev_name;
-	uint16_t i2c_slave_addr;
+	u16_t i2c_slave_addr;
 
 #if CONFIG_LSM9DS0_GYRO_TRIGGER_DRDY
 	char *gpio_drdy_dev_name;
-	uint8_t gpio_drdy_int_pin;
+	u8_t gpio_drdy_int_pin;
 #endif
 };
 
@@ -229,7 +229,9 @@ struct lsm9ds0_gyro_data {
 #endif
 
 #if defined(CONFIG_LSM9DS0_GYRO_TRIGGER_DRDY)
-	char __stack thread_stack[CONFIG_LSM9DS0_GYRO_THREAD_STACK_SIZE];
+	K_THREAD_STACK_MEMBER(thread_stack,
+			      CONFIG_LSM9DS0_GYRO_THREAD_STACK_SIZE);
+	struct k_thread thread;
 	struct device *dev;
 
 	struct device *gpio_drdy;
@@ -240,8 +242,8 @@ struct lsm9ds0_gyro_data {
 
 	int sample_x, sample_y, sample_z;
 #if defined(CONFIG_LSM9DS0_GYRO_FULLSCALE_RUNTIME)
-	uint8_t sample_fs;
-	uint8_t fs;
+	u8_t sample_fs;
+	u8_t fs;
 #endif
 };
 

@@ -27,7 +27,7 @@
 #include <zephyr.h>
 
 /* size of stack area used by each thread */
-#define STACKSIZE 2048
+#define STACKSIZE 1024 + CONFIG_TEST_EXTRA_STACKSIZE
 
 /* Number of memory blocks. The minimum number of blocks needed to run the
  * test is 2
@@ -163,7 +163,6 @@ int testSlabGetAllBlocks(void **p)
 
 	TC_PRINT("Function %s\n", __func__);
 
-	/* Number of blocks in the map is defined in MDEF file */
 	for (int i = 0; i < NUMBLOCKS; i++) {
 		/* Verify number of used blocks in the map */
 		retValue = k_mem_slab_num_used_get(&MAP_LgBlks);
@@ -219,7 +218,7 @@ int testSlabGetAllBlocks(void **p)
 
 /**
  *
- * @brief Free all memeory blocks
+ * @brief Free all memory blocks
  *
  * This routine frees all memory blocks and also verifies that the number of
  * blocks used are correct.
@@ -239,7 +238,6 @@ int testSlabFreeAllBlocks(void **p)
 
 	TC_PRINT("Function %s\n", __func__);
 
-	/* Number of blocks in the map is defined in MDEF file */
 	for (int i = 0; i < NUMBLOCKS; i++) {
 		/* Verify number of used blocks in the map */
 		retValue = k_mem_slab_num_used_get(&MAP_LgBlks);

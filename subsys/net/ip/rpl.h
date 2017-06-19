@@ -130,7 +130,7 @@ extern "C" {
  * RPL modes
  *
  * The RPL module can be in either of three modes: mesh mode
- * (NET_RPL_MODE_MESH), feater mode (NET_RPL_MODE_FEATHER), and leaf mode
+ * (NET_RPL_MODE_MESH), feather mode (NET_RPL_MODE_FEATHER), and leaf mode
  * (NET_RPL_MODE_LEAF). In mesh mode, nodes forward data for other nodes,
  * and are reachable by others. In feather mode, nodes can forward
  * data for other nodes, but are not reachable themselves. In leaf
@@ -153,13 +153,13 @@ enum net_rpl_mode {
 #define NET_RPL_LOLLIPOP_CIRCULAR_REGION  127
 #define NET_RPL_LOLLIPOP_SEQUENCE_WINDOWS 16
 
-static inline uint8_t net_rpl_lollipop_init(void)
+static inline u8_t net_rpl_lollipop_init(void)
 {
 	return NET_RPL_LOLLIPOP_MAX_VALUE -
 		NET_RPL_LOLLIPOP_SEQUENCE_WINDOWS + 1;
 }
 
-static inline void net_rpl_lollipop_increment(uint8_t *counter)
+static inline void net_rpl_lollipop_increment(u8_t *counter)
 {
 	if (*counter > NET_RPL_LOLLIPOP_CIRCULAR_REGION) {
 		*counter = (*counter + 1) & NET_RPL_LOLLIPOP_MAX_VALUE;
@@ -168,7 +168,7 @@ static inline void net_rpl_lollipop_increment(uint8_t *counter)
 	}
 }
 
-static inline bool net_rpl_lollipop_is_init(uint8_t counter)
+static inline bool net_rpl_lollipop_is_init(u8_t counter)
 {
 	return counter > NET_RPL_LOLLIPOP_CIRCULAR_REGION;
 }
@@ -184,13 +184,13 @@ struct net_rpl_prefix {
 	struct in6_addr prefix;
 
 	/** Lifetime of the prefix */
-	uint32_t lifetime;
+	u32_t lifetime;
 
 	/** Length of the prefix */
-	uint8_t length;
+	u8_t length;
 
 	/** Prefix flags */
-	uint8_t flags;
+	u8_t flags;
 };
 
 /**
@@ -198,10 +198,10 @@ struct net_rpl_prefix {
  */
 struct net_rpl_node_energy_object {
 	/** Energy node flags */
-	uint8_t flags;
+	u8_t flags;
 
 	/** Energy estimation */
-	uint8_t estimation;
+	u8_t estimation;
 };
 
 /**
@@ -209,27 +209,27 @@ struct net_rpl_node_energy_object {
  */
 struct net_rpl_metric_container {
 	/** Type of the container */
-	uint8_t type;
+	u8_t type;
 
 	/** Container flags */
-	uint8_t flags;
+	u8_t flags;
 
 	/** Aggregated value (A field) */
-	uint8_t aggregated;
+	u8_t aggregated;
 
 	/**
 	 * Precedence of this Routing Metric/Constraint object relative
 	 * to other objects in the container.
 	 */
-	uint8_t precedence;
+	u8_t precedence;
 
 	/** Length of the object body */
-	uint8_t length;
+	u8_t length;
 
 	/** Metric container information */
 	union metric_object {
 		struct net_rpl_node_energy_object energy;
-		uint16_t etx;
+		u16_t etx;
 	} obj;
 };
 
@@ -244,16 +244,16 @@ struct net_rpl_parent {
 	struct net_rpl_metric_container mc;
 
 	/** When last transmit happened */
-	uint32_t last_tx_time;
+	u32_t last_tx_time;
 
 	/** Rank of the parent */
-	uint16_t rank;
+	u16_t rank;
 
 	/** Destination Advertisement Trigger Sequence Number */
-	uint8_t dtsn;
+	u8_t dtsn;
 
 	/** Parent flags */
-	uint8_t flags;
+	u8_t flags;
 };
 
 /**
@@ -273,27 +273,27 @@ struct net_rpl_dag {
 	struct net_rpl_instance *instance;
 
 	/** Minimum rank */
-	uint16_t min_rank;
+	u16_t min_rank;
 
 	/** DAG rank */
-	uint16_t rank;
+	u16_t rank;
 
 	/** DAG version. */
-	uint8_t version;
+	u8_t version;
 
 	/** DODAG preference. */
-	uint8_t preference : 3;
+	u8_t preference : 3;
 
 	/** Is this DAG used or not. */
-	uint8_t is_used : 1;
+	u8_t is_used : 1;
 
 	/** Is DAG grounded or floating. */
-	uint8_t is_grounded : 1;
+	u8_t is_grounded : 1;
 
 	/** Is DAG joined or not. */
-	uint8_t is_joined : 1;
+	u8_t is_joined : 1;
 
-	uint8_t _unused : 2;
+	u8_t _unused : 2;
 };
 
 /**
@@ -369,8 +369,8 @@ extern struct net_rpl_dag *net_rpl_of_best_dag(struct net_rpl_dag *dagA,
  * added to the base rank. Otherwise, the OF uses information known
  * about parent to select an increment to the base rank.
  */
-extern uint16_t net_rpl_of_calc_rank(struct net_rpl_parent *parent,
-				     uint16_t rank);
+extern u16_t net_rpl_of_calc_rank(struct net_rpl_parent *parent,
+				     u16_t rank);
 
 /**
  * @brief RPL object function (OF) update metric container.
@@ -392,14 +392,14 @@ extern int net_rpl_of_update_mc(struct net_rpl_instance *instance);
  *
  * @return true if OF is supported, false otherwise.
  */
-extern bool net_rpl_of_find(uint16_t ocp);
+extern bool net_rpl_of_find(u16_t ocp);
 
 /**
  * @brief Return RPL object function (OF) objective code point used.
  *
  * @return OCP (Objective Code Point) value used.
  */
-extern uint16_t net_rpl_of_get(void);
+extern u16_t net_rpl_of_get(void);
 
 /**
  * @brief RPL instance structure
@@ -427,6 +427,14 @@ struct net_rpl_instance {
 	/** DAO lifetime timer. */
 	struct k_delayed_work dao_lifetime_timer;
 
+#if defined(CONFIG_NET_RPL_DAO_ACK)
+	/** DAO retransmit timer */
+	struct k_delayed_work dao_retransmit_timer;
+
+	/** DAO number of retransmissions */
+	u8_t dao_transmissions;
+#endif
+
 	/** Network interface to send DAO */
 	struct net_if *iface;
 
@@ -437,34 +445,34 @@ struct net_rpl_instance {
 	struct net_if_router *default_route;
 
 	/** Amount of time for completion of dio interval */
-	uint32_t dio_next_delay;
+	u32_t dio_next_delay;
 
 	/** Objective Code Point (Used objective function) */
-	uint16_t ocp;
+	u16_t ocp;
 
 	/** MaxRankIncrease, RFC 6550, ch 6.7.6 */
-	uint16_t max_rank_inc;
+	u16_t max_rank_inc;
 
 	/** MinHopRankIncrease, RFC 6550, ch 6.7.6 */
-	uint16_t min_hop_rank_inc;
+	u16_t min_hop_rank_inc;
 
 	/**
 	 * Provides the unit in seconds that is used to express route
 	 * lifetimes in RPL.  For very stable networks, it can be hours
 	 * to days. RFC 6550, ch 6.7.6
 	 */
-	uint16_t lifetime_unit;
+	u16_t lifetime_unit;
 
-#if defined(CONFIG_NET_RPL_STATS)
+#if defined(CONFIG_NET_STATISTICS_RPL)
 	/** Number of DIO intervals for this RPL instance. */
-	uint16_t dio_intervals;
+	u16_t dio_intervals;
 
 	/** Number of DIOs sent for this RPL instance. */
-	uint16_t dio_send_pkt;
+	u16_t dio_send_pkt;
 
 	/** Number of DIOs received for this RPL instance. */
-	uint16_t dio_recv_pkt;
-#endif /* CONFIG_NET_RPL_STATS */
+	u16_t dio_recv_pkt;
+#endif /* CONFIG_NET_STATISTICS_RPL */
 
 	/**
 	 * This is the lifetime that is used as default for all RPL routes.
@@ -472,31 +480,31 @@ struct net_rpl_instance {
 	 * lifetime in seconds is (Default Lifetime) * (Lifetime Unit)
 	 * RFC 6550, ch 6.7.6
 	 */
-	uint8_t default_lifetime;
+	u8_t default_lifetime;
 
 	/** Instance ID of this RPL instance */
-	uint8_t instance_id;
+	u8_t instance_id;
 
 	/** Destination Advertisement Trigger Sequence Number */
-	uint8_t dtsn;
+	u8_t dtsn;
 
 	/** Mode of operation */
-	uint8_t mop;
+	u8_t mop;
 
 	/** DIOIntervalDoublings, RFC 6550, ch 6.7.6 */
-	uint8_t dio_interval_doublings;
+	u8_t dio_interval_doublings;
 
 	/** DIOIntervalMin, RFC 6550, ch 6.7.6 */
-	uint8_t dio_interval_min;
+	u8_t dio_interval_min;
 
 	/** Current DIO interval */
-	uint8_t dio_interval_current;
+	u8_t dio_interval_current;
 
 	/** DIORedundancyConstant, ch 6.7.6 */
-	uint8_t dio_redundancy;
+	u8_t dio_redundancy;
 
 	/** Current number of DIOs received (temp var) */
-	uint8_t dio_counter;
+	u8_t dio_counter;
 
 	/** Keep track of whether we can send DIOs or not (true if we can send)
 	 */
@@ -531,22 +539,22 @@ struct net_rpl_dio {
 	struct net_rpl_prefix destination_prefix;
 
 	/** Objective Code Point (OF being used) */
-	uint16_t ocp;
+	u16_t ocp;
 
 	/** Current rank */
-	uint16_t rank;
+	u16_t rank;
 
 	/** MaxRankIncrease, RFC 6550, ch 6.7.6 */
-	uint16_t max_rank_inc;
+	u16_t max_rank_inc;
 
 	/** MinHopRankIncrease, RFC 6550, ch 6.7.6 */
-	uint16_t min_hop_rank_inc;
+	u16_t min_hop_rank_inc;
 	/**
 	 * Provides the unit in seconds that is used to express route
 	 * lifetimes in RPL.  For very stable networks, it can be hours
 	 * to days. RFC 6550, ch 6.7.6
 	 */
-	uint16_t lifetime_unit;
+	u16_t lifetime_unit;
 
 	/**
 	 * This is the lifetime that is used as default for all RPL routes.
@@ -554,37 +562,37 @@ struct net_rpl_dio {
 	 * lifetime in seconds is (Default Lifetime) * (Lifetime Unit)
 	 * RFC 6550, ch 6.7.6
 	 */
-	uint8_t default_lifetime;
+	u8_t default_lifetime;
 
 	/** Instance ID of this RPL instance */
-	uint8_t instance_id;
+	u8_t instance_id;
 
 	/** Destination Advertisement Trigger Sequence Number */
-	uint8_t dtsn;
+	u8_t dtsn;
 
 	/** Mode of operation */
-	uint8_t mop;
+	u8_t mop;
 
 	/** DAG interval doublings */
-	uint8_t dag_interval_doublings;
+	u8_t dag_interval_doublings;
 
 	/** DAG interval min */
-	uint8_t dag_interval_min;
+	u8_t dag_interval_min;
 
 	/** DAG interval */
-	uint8_t dag_interval_current;
+	u8_t dag_interval_current;
 
 	/** DAG redundancy constant */
-	uint8_t dag_redundancy;
+	u8_t dag_redundancy;
 
 	/** Is this DAG grounded or floating */
-	uint8_t grounded;
+	u8_t grounded;
 
 	/** DODAG preference */
-	uint8_t preference;
+	u8_t preference;
 
 	/** DODAG version number */
-	uint8_t version;
+	u8_t version;
 };
 
 /**
@@ -607,7 +615,7 @@ struct net_rpl_route_entry {
 	struct net_rpl_dag *dag;
 
 	/** Lifetime for this route entry (in seconds) */
-	uint32_t lifetime;
+	u32_t lifetime;
 
 	/** Where this route came from */
 	enum net_rpl_route_source route_source;
@@ -631,10 +639,10 @@ struct net_rpl_route_entry {
  */
 static inline bool net_rpl_is_ipv6_addr_mcast(const struct in6_addr *addr)
 {
-	return addr->s6_addr32[0] == htonl(0xff020000) &&
-		addr->s6_addr32[1] == 0x00000000 &&
-		addr->s6_addr32[2] == 0x00000000 &&
-		addr->s6_addr32[3] == htonl(0x0000001a);
+	return UNALIGNED_GET(&addr->s6_addr32[0]) == htonl(0xff020000) &&
+		UNALIGNED_GET(&addr->s6_addr32[1]) == 0x00000000 &&
+		UNALIGNED_GET(&addr->s6_addr32[2]) == 0x00000000 &&
+		UNALIGNED_GET(&addr->s6_addr32[3]) == htonl(0x0000001a);
 }
 
 /**
@@ -649,12 +657,12 @@ struct in6_addr *net_rpl_create_mcast_address(struct in6_addr *addr)
 {
 	addr->s6_addr[0]   = 0xFF;
 	addr->s6_addr[1]   = 0x02;
-	addr->s6_addr16[1] = 0;
-	addr->s6_addr16[2] = 0;
-	addr->s6_addr16[3] = 0;
-	addr->s6_addr16[4] = 0;
-	addr->s6_addr16[5] = 0;
-	addr->s6_addr16[6] = 0;
+	UNALIGNED_PUT(0, &addr->s6_addr16[1]);
+	UNALIGNED_PUT(0, &addr->s6_addr16[2]);
+	UNALIGNED_PUT(0, &addr->s6_addr16[3]);
+	UNALIGNED_PUT(0, &addr->s6_addr16[4]);
+	UNALIGNED_PUT(0, &addr->s6_addr16[5]);
+	UNALIGNED_PUT(0, &addr->s6_addr16[6]);
 	addr->s6_addr[14]  = 0;
 	addr->s6_addr[15]  = 0x1a;
 
@@ -774,7 +782,7 @@ static inline void net_rpl_dag_unjoin(struct net_rpl_dag *dag)
  * @return preference value
  */
 static inline
-uint8_t net_rpl_dag_get_preference(struct net_rpl_dag *dag)
+u8_t net_rpl_dag_get_preference(struct net_rpl_dag *dag)
 {
 	NET_ASSERT(dag);
 
@@ -791,7 +799,7 @@ uint8_t net_rpl_dag_get_preference(struct net_rpl_dag *dag)
  */
 static inline
 void net_rpl_dag_set_preference(struct net_rpl_dag *dag,
-				uint8_t preference)
+				u8_t preference)
 {
 	NET_ASSERT(dag && preference <= 8);
 
@@ -838,7 +846,7 @@ int net_rpl_dis_send(struct in6_addr *dst, struct net_if *iface);
 int net_rpl_dao_send(struct net_if *iface,
 		     struct net_rpl_parent *parent,
 		     struct in6_addr *prefix,
-		     uint8_t lifetime);
+		     u8_t lifetime);
 
 /**
  * @brief Send a DODAG Information Object message.
@@ -866,7 +874,7 @@ int net_rpl_dio_send(struct net_if *iface,
  * @return DAG object or NULL if creation failed.
  */
 struct net_rpl_dag *net_rpl_set_root(struct net_if *iface,
-				     uint8_t instance_id,
+				     u8_t instance_id,
 				     struct in6_addr *dag_id);
 
 /**
@@ -889,7 +897,7 @@ struct net_rpl_dag *net_rpl_get_any_dag(void);
 bool net_rpl_set_prefix(struct net_if *iface,
 			struct net_rpl_dag *dag,
 			struct in6_addr *prefix,
-			uint8_t prefix_len);
+			u8_t prefix_len);
 
 /**
  * @brief Do global repair for this route.
@@ -901,33 +909,48 @@ void net_rpl_global_repair(struct net_route_entry *route);
 /**
  * @brief Update RPL headers in IPv6 packet.
  *
- * @param buf Network buffer.
+ * @param pkt Network packet.
  * @param addr IPv6 address of next hop host.
  *
  * @return 0 if ok, < 0 if error
  */
-int net_rpl_update_header(struct net_buf *buf, struct in6_addr *addr);
+int net_rpl_update_header(struct net_pkt *pkt, struct in6_addr *addr);
 
 /**
  * @brief Verify RPL header in IPv6 packet.
  *
- * @param buf Network buffer.
+ * @param pkt Network packet fragment list.
+ * @param frag Current network buffer fragment.
  * @param offset Where the RPL header starts in the packet
  * @param pos How long the RPL header was, this is returned to the caller.
+ * @param out result True if ok, false if error
  *
- * @return True if ok, false if error
+ * @return frag Returns the fragment where this call finished reading.
  */
-bool net_rpl_verify_header(struct net_buf *buf, uint16_t offset,
-			   uint16_t *pos);
+struct net_buf *net_rpl_verify_header(struct net_pkt *pkt, struct net_buf *frag,
+				      u16_t offset, u16_t *pos,
+				      bool *result);
 
 /**
  * @brief Insert RPL extension header to IPv6 packet.
  *
- * @param buf Network buffer.
+ * @param pkt Network packet.
  *
  * @return 0 if ok, <0 if error.
  */
-int net_rpl_insert_header(struct net_buf *buf);
+int net_rpl_insert_header(struct net_pkt *pkt);
+
+/**
+ * @brief Revert RPL extension header to IPv6 packet.
+ *        Revert flags, instance ID and sender rank in the packet.
+ *
+ * @param pkt Network packet.
+ * @param offset Where the HBH header starts in the packet
+ * @param pos How long the RPL header was, this is returned to the caller.
+ *
+ * @return 0 if ok, <0 if error.
+ */
+int net_rpl_revert_header(struct net_pkt *pkt, u16_t offset, u16_t *pos);
 
 /**
  * @brief Get parent IPv6 address.
@@ -955,6 +978,13 @@ void net_rpl_set_mode(enum net_rpl_mode new_mode);
  * @return Current RPL mode.
  */
 enum net_rpl_mode net_rpl_get_mode(void);
+
+/**
+ * @brief Get the default RPL instance.
+ *
+ * @return Current default RPL instance.
+ */
+struct net_rpl_instance *net_rpl_get_default_instance(void);
 
 void net_rpl_init(void);
 #else

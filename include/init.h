@@ -19,21 +19,12 @@ extern "C" {
  * System initialization levels. The PRE_KERNEL_1 and PRE_KERNEL_2 levels are
  * executed in the kernel's initialization context, which uses the interrupt
  * stack. The remaining levels are executed in the kernel's main task.
- *
- * PRIMARY, SECONDARY, NANOKERNEL, MICROKERNEL levels are currently deprecated
- * and will be removed in the future.
  */
 
 #define _SYS_INIT_LEVEL_PRE_KERNEL_1	0
 #define _SYS_INIT_LEVEL_PRE_KERNEL_2	1
 #define _SYS_INIT_LEVEL_POST_KERNEL	2
 #define _SYS_INIT_LEVEL_APPLICATION	3
-
-/* Deprecated, remove eventually */
-#define _SYS_INIT_LEVEL_PRIMARY		4
-#define _SYS_INIT_LEVEL_SECONDARY	5
-#define _SYS_INIT_LEVEL_NANOKERNEL	6
-#define _SYS_INIT_LEVEL_MICROKERNEL	7
 
 
 /* Counter use to avoid issues if two or more system devices are declared
@@ -57,29 +48,6 @@ extern "C" {
  */
 #define SYS_INIT(init_fn, level, prio) \
 	DEVICE_INIT(_SYS_NAME(init_fn), "", init_fn, NULL, NULL, level, prio)
-
-/**
- * @def SYS_INIT_PM
- *
- * @warning This macro is deprecated and will be removed in
- *        a future version, superseded by SYS_DEVICE_DEFINE.
- *
- * @brief Run an initialization function at boot at specified priority,
- * and define functions to run at suspend/resume.
- *
- * @copydetails SYS_INIT
- * @param device_pm_ops Pointer to power management functions.
- * @param drv_name Name of this system device
- */
-
-#ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-#define SYS_INIT_PM(drv_name, init_fn, device_pm_ops, level, prio) \
-	DEVICE_INIT_PM(_SYS_NAME(init_fn), drv_name, init_fn, device_pm_ops, \
-		NULL, NULL, level, prio)
-#else
-#define SYS_INIT_PM(drv_name, init_fn, device_pm_ops, level, prio) \
-	DEVICE_INIT(_SYS_NAME(init_fn), "", init_fn, NULL, NULL, level, prio)
-#endif
 
 /**
  * @def SYS_DEVICE_DEFINE

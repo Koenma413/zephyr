@@ -1,6 +1,6 @@
 .. _networking_with_qemu:
 
-Networking with Qemu
+Networking with QEMU
 ####################
 
 This page describes how to set up a "virtual" networking between a (Linux) host
@@ -19,7 +19,7 @@ in a separate git repository:
 
 .. code-block:: console
 
-   $ git clone https://gerrit.zephyrproject.org/r/net-tools
+   $ git clone https://github.com/zephyrproject-rtos/net-tools
    $ cd net-tools
    $ make
 
@@ -41,7 +41,7 @@ For the steps below, you will need at least 4 terminal windows:
 Step 1 - Create helper socket
 =============================
 
-Before starting QEMU with network emulation, a unix socket for the emulation
+Before starting QEMU with network emulation, a Unix socket for the emulation
 should be created.
 
 In terminal #2, type:
@@ -114,6 +114,21 @@ echo_server sample, CONFIG_NET_TCP=y):
    You will need to Ctrl+C manually.
 
 You can also use the telnet command to achieve the above.
+
+Step 5 - Stop supporting daemons
+================================
+
+When you are finished with network testing using QEMU, you should stop
+any daemons or helpers started in the initial steps, to avoid possible
+networking or routing problems such as address conflicts in local network
+interfaces. For example, you definitely need to stop them if you switch
+from testing networking with QEMU to using real hardware. For example,
+there was a report of an airport WiFi connection not working during
+travel due to an address conflict.
+
+To stop the daemons, just press Ctrl+C in the corresponding terminal windows
+(you need to stop both ``loop-slip-tap.sh`` and ``loop-socat.sh``).
+
 
 Setting up NAT/masquerading to access Internet
 **********************************************

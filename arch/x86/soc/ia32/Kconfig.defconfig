@@ -19,7 +19,7 @@ config PHYS_RAM_ADDR
 
 config RAM_SIZE
 	default 128 if XIP
-	default 192
+	default 256
 
 config ROM_SIZE
 	default 72 if XIP
@@ -73,13 +73,6 @@ endif # UART_NS16550
 if BLUETOOTH_UART
 
 config BLUETOOTH_UART_ON_DEV_NAME
-	default "UART_1"
-
-endif
-
-if NBLE
-
-config NBLE_UART_ON_DEV_NAME
 	default "UART_1"
 
 endif

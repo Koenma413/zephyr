@@ -117,7 +117,7 @@ with basic priority inheritance.
 Alerts
 ******
 
-Alerts enable an application to perform asynchronous signalling,
+Alerts enable an application to perform asynchronous signaling,
 somewhat akin to Unix-style signals.
 (See :ref:`alerts_v2`.)
 
@@ -238,13 +238,3 @@ of variable-size data items.
    :project: Zephyr
    :content-only:
 
-
-Legacy APIs
-***********
-
-These APIs will be deprecated in an upcoming release so we recommend you avoid
-using them in your applications.
-
-.. doxygengroup:: legacy_apis
-   :project: Zephyr
-   :content-only:

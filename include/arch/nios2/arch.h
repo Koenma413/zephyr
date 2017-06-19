@@ -29,18 +29,20 @@ extern "C" {
 #define _NANO_ERR_STACK_CHK_FAIL (2)    /* Stack corruption detected */
 #define _NANO_ERR_ALLOCATION_FAIL (3)   /* Kernel Allocation Failure */
 #define _NANO_ERR_SPURIOUS_INT (4)	/* Spurious interrupt */
+#define _NANO_ERR_KERNEL_OOPS (5)       /* Kernel oops (fatal to thread) */
+#define _NANO_ERR_KERNEL_PANIC (6)	/* Kernel panic (fatal to system) */
 
-/* APIs need to support non-byte addressible architectures */
+/* APIs need to support non-byte addressable architectures */
 
 #define OCTET_TO_SIZEOFUNIT(X) (X)
 #define SIZEOFUNIT_TO_OCTET(X) (X)
 
 #ifndef _ASMLANGUAGE
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <irq.h>
 #include <sw_isr_table.h>
 
-/* physical/virtual address types required by microkernel */
+/* physical/virtual address types required by the kernel */
 typedef unsigned int paddr_t;
 typedef unsigned int vaddr_t;
 
@@ -131,24 +133,24 @@ void _arch_irq_enable(unsigned int irq);
 void _arch_irq_disable(unsigned int irq);
 
 struct __esf {
-	uint32_t ra; /* return address r31 */
-	uint32_t r1; /* at */
-	uint32_t r2; /* return value */
-	uint32_t r3; /* return value */
-	uint32_t r4; /* register args */
-	uint32_t r5; /* register args */
-	uint32_t r6; /* register args */
-	uint32_t r7; /* register args */
-	uint32_t r8; /* Caller-saved general purpose */
-	uint32_t r9; /* Caller-saved general purpose */
-	uint32_t r10; /* Caller-saved general purpose */
-	uint32_t r11; /* Caller-saved general purpose */
-	uint32_t r12; /* Caller-saved general purpose */
-	uint32_t r13; /* Caller-saved general purpose */
-	uint32_t r14; /* Caller-saved general purpose */
-	uint32_t r15; /* Caller-saved general purpose */
-	uint32_t estatus;
-	uint32_t instr; /* Instruction being executed when exc occurred */
+	u32_t ra; /* return address r31 */
+	u32_t r1; /* at */
+	u32_t r2; /* return value */
+	u32_t r3; /* return value */
+	u32_t r4; /* register args */
+	u32_t r5; /* register args */
+	u32_t r6; /* register args */
+	u32_t r7; /* register args */
+	u32_t r8; /* Caller-saved general purpose */
+	u32_t r9; /* Caller-saved general purpose */
+	u32_t r10; /* Caller-saved general purpose */
+	u32_t r11; /* Caller-saved general purpose */
+	u32_t r12; /* Caller-saved general purpose */
+	u32_t r13; /* Caller-saved general purpose */
+	u32_t r14; /* Caller-saved general purpose */
+	u32_t r15; /* Caller-saved general purpose */
+	u32_t estatus;
+	u32_t instr; /* Instruction being executed when exc occurred */
 };
 
 typedef struct __esf NANO_ESF;
@@ -199,7 +201,7 @@ enum nios2_exception_cause {
 	 BIT(NIOS2_EXCEPTION_ECC_DATA_ERR))
 
 
-extern uint32_t _timer_cycle_get_32(void);
+extern u32_t _timer_cycle_get_32(void);
 #define _arch_k_cycle_get_32()	_timer_cycle_get_32()
 
 #endif /* _ASMLANGUAGE */

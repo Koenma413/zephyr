@@ -48,9 +48,8 @@ void k_work_q_start(struct k_work_q *work_q, char *stack,
 {
 	k_fifo_init(&work_q->fifo);
 
-	k_thread_spawn(stack, stack_size,
-		       work_q_main, work_q, 0, 0,
-		       prio, 0, 0);
+	k_thread_create(&work_q->thread, stack, stack_size, work_q_main,
+			work_q, 0, 0, prio, 0, 0);
 }
 
 #ifdef CONFIG_SYS_CLOCK_EXISTS
@@ -74,7 +73,7 @@ void k_delayed_work_init(struct k_delayed_work *work, k_work_handler_t handler)
 
 int k_delayed_work_submit_to_queue(struct k_work_q *work_q,
 				   struct k_delayed_work *work,
-				   int32_t delay)
+				   s32_t delay)
 {
 	int key = irq_lock();
 	int err;

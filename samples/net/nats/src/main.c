@@ -6,7 +6,6 @@
 
 #include <board.h>
 #include <gpio.h>
-#include <net/nbuf.h>
 #include <net/net_context.h>
 #include <net/net_core.h>
 #include <net/net_if.h>
@@ -33,34 +32,34 @@ static bool fake_led;
 #define NATS_AF_INET		AF_INET6
 #define NATS_SOCKADDR_IN	sockaddr_in6
 
-#if defined(CONFIG_NET_SAMPLES_MY_IPV6_ADDR)
-#define NATS_LOCAL_IP_ADDR	CONFIG_NET_SAMPLES_MY_IPV6_ADDR
+#if defined(CONFIG_NET_APP_MY_IPV6_ADDR)
+#define NATS_LOCAL_IP_ADDR	CONFIG_NET_APP_MY_IPV6_ADDR
 #else
 #define NATS_LOCAL_IP_ADDR	"2001:db8::1"
-#endif /* CONFIG_NET_SAMPLES_MY_IPV6_ADDR */
+#endif /* CONFIG_NET_APP_MY_IPV6_ADDR */
 
-#if defined(CONFIG_NET_SAMPLES_PEER_IPV6_ADDR)
-#define NATS_PEER_IP_ADDR	CONFIG_NET_SAMPLES_PEER_IPV6_ADDR
+#if defined(CONFIG_NET_APP_PEER_IPV6_ADDR)
+#define NATS_PEER_IP_ADDR	CONFIG_NET_APP_PEER_IPV6_ADDR
 #else
 #define NATS_PEER_IP_ADDR	"2001:db8::2"
-#endif /* CONFIG_NET_SAMPLES_PEER_IPV6_ADDR */
+#endif /* CONFIG_NET_APP_PEER_IPV6_ADDR */
 
 #else /* CONFIG_NET_IPV4 */
 
 #define NATS_AF_INET		AF_INET
 #define NATS_SOCKADDR_IN	sockaddr_in
 
-#if defined(CONFIG_NET_SAMPLES_MY_IPV4_ADDR)
-#define NATS_LOCAL_IP_ADDR	CONFIG_NET_SAMPLES_MY_IPV4_ADDR
+#if defined(CONFIG_NET_APP_MY_IPV4_ADDR)
+#define NATS_LOCAL_IP_ADDR	CONFIG_NET_APP_MY_IPV4_ADDR
 #else
 #define NATS_LOCAL_IP_ADDR	"192.168.0.1"
-#endif /* CONFIG_NET_SAMPLES_MY_IPV4_ADDR */
+#endif /* CONFIG_NET_APP_MY_IPV4_ADDR */
 
-#if defined(CONFIG_NET_SAMPLES_PEER_IPV4_ADDR)
-#define NATS_PEER_IP_ADDR	CONFIG_NET_SAMPLES_PEER_IPV4_ADDR
+#if defined(CONFIG_NET_APP_PEER_IPV4_ADDR)
+#define NATS_PEER_IP_ADDR	CONFIG_NET_APP_PEER_IPV4_ADDR
 #else
 #define NATS_PEER_IP_ADDR	"192.168.0.2"
-#endif /* CONFIG_NET_SAMPLES_PEER_IPV4_ADDR */
+#endif /* CONFIG_NET_APP_PEER_IPV4_ADDR */
 
 #endif
 
@@ -71,7 +70,8 @@ static bool fake_led;
 /* Default server */
 #define DEFAULT_PORT		4222
 
-static uint8_t stack[2048];
+static u8_t stack[2048];
+static struct k_thread thread_data;
 
 static void panic(const char *msg)
 {
@@ -173,7 +173,7 @@ static void initialize_network(void)
 
 static bool read_led(void)
 {
-	uint32_t led = 0;
+	u32_t led = 0;
 	int r;
 
 	if (!led0) {
@@ -203,6 +203,8 @@ static void write_led(const struct nats *nats,
 	pubstate = state ? "on" : "off";
 	nats_publish(nats, "led0", 0, msg->reply_to, 0,
 		     pubstate, strlen(pubstate));
+
+	printk("*** Turning LED %s\n", pubstate);
 }
 
 static int on_msg_received(const struct nats *nats,
@@ -240,7 +242,7 @@ static void initialize_hardware(void)
 	}
 }
 
-static int connect(struct nats *nats, uint16_t port)
+static int connect(struct nats *nats, u16_t port)
 {
 #if defined(CONFIG_NET_IPV4) && defined(CONFIG_NET_DHCPV4)
 	struct net_if *iface;
@@ -319,6 +321,7 @@ static void nats_client(void)
 
 void main(void)
 {
-	k_thread_spawn(stack, sizeof(stack), (k_thread_entry_t)nats_client,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
+	k_thread_create(&thread_data, stack, K_THREAD_STACK_SIZEOF(stack),
+			(k_thread_entry_t)nats_client,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }

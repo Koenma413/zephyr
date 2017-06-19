@@ -11,21 +11,21 @@
 
 #include "sht3xd.h"
 
-static uint16_t sht3xd_temp_processed_to_raw(const struct sensor_value *val)
+static u16_t sht3xd_temp_processed_to_raw(const struct sensor_value *val)
 {
-	uint64_t uval;
+	u64_t uval;
 
 	/* ret = (val + 45) * (2^16 - 1) / 175 */
-	uval = (uint64_t)(val->val1 + 45) * 1000000 + val->val2;
+	uval = (u64_t)(val->val1 + 45) * 1000000 + val->val2;
 	return ((uval * 0xFFFF) / 175) / 1000000;
 }
 
 static int sht3xd_rh_processed_to_raw(const struct sensor_value *val)
 {
-	uint64_t uval;
+	u64_t uval;
 
 	/* ret = val * (2^16 -1) / 100000 */
-	uval = (uint64_t)val->val1 * 1000000 + val->val2;
+	uval = (u64_t)val->val1 * 1000000 + val->val2;
 	return ((uval * 0xFFFF) / 100000) / 1000000;
 }
 
@@ -35,7 +35,7 @@ int sht3xd_attr_set(struct device *dev,
 		    const struct sensor_value *val)
 {
 	struct sht3xd_data *drv_data = dev->driver_data;
-	uint16_t set_cmd, clear_cmd, reg_val, temp, rh;
+	u16_t set_cmd, clear_cmd, reg_val, temp, rh;
 
 	if (attr == SENSOR_ATTR_LOWER_THRESH) {
 		if (chan == SENSOR_CHAN_TEMP) {
@@ -79,7 +79,7 @@ int sht3xd_attr_set(struct device *dev,
 }
 
 static void sht3xd_gpio_callback(struct device *dev,
-				 struct gpio_callback *cb, uint32_t pins)
+				 struct gpio_callback *cb, u32_t pins)
 {
 	struct sht3xd_data *drv_data =
 		CONTAINER_OF(cb, struct sht3xd_data, gpio_cb);
@@ -206,9 +206,11 @@ int sht3xd_init_interrupt(struct device *dev)
 #if defined(CONFIG_SHT3XD_TRIGGER_OWN_THREAD)
 	k_sem_init(&drv_data->gpio_sem, 0, UINT_MAX);
 
-	k_thread_spawn(drv_data->thread_stack, CONFIG_SHT3XD_THREAD_STACK_SIZE,
-		    (k_thread_entry_t)sht3xd_thread, POINTER_TO_INT(dev),
-		    0, NULL, K_PRIO_COOP(CONFIG_SHT3XD_THREAD_PRIORITY), 0, 0);
+	k_thread_create(&drv_data->thread, drv_data->thread_stack,
+			CONFIG_SHT3XD_THREAD_STACK_SIZE,
+			(k_thread_entry_t)sht3xd_thread, POINTER_TO_INT(dev),
+			0, NULL, K_PRIO_COOP(CONFIG_SHT3XD_THREAD_PRIORITY),
+			0, 0);
 #elif defined(CONFIG_SHT3XD_TRIGGER_GLOBAL_THREAD)
 	drv_data->work.handler = sht3xd_work_cb;
 	drv_data->dev = dev;

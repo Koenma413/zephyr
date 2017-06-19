@@ -29,7 +29,8 @@ static qdata_t data_p[LIST_LEN];
 static qdata_t data_l[LIST_LEN];
 static qdata_t data_sl[LIST_LEN];
 
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 static struct k_sem end_sema;
 
 static void tqueue_append(struct k_queue *pqueue)
@@ -49,7 +50,7 @@ static void tqueue_append(struct k_queue *pqueue)
 
 	head->snode.next = (sys_snode_t *)tail;
 	tail->snode.next = NULL;
-	k_queue_append_list(pqueue, (uint32_t *)head, (uint32_t *)tail);
+	k_queue_append_list(pqueue, (u32_t *)head, (u32_t *)tail);
 
 	/**TESTPOINT: queue merge slist*/
 	sys_slist_t slist;
@@ -68,23 +69,23 @@ static void tqueue_get(struct k_queue *pqueue)
 	for (int i = 0; i < LIST_LEN; i++) {
 		/**TESTPOINT: queue get*/
 		rx_data = k_queue_get(pqueue, K_NO_WAIT);
-		assert_equal(rx_data, (void *)&data_p[i], NULL);
+		zassert_equal(rx_data, (void *)&data_p[i], NULL);
 	}
 	/*get queue data from "queue_append"*/
 	for (int i = 0; i < LIST_LEN; i++) {
 		/**TESTPOINT: queue get*/
 		rx_data = k_queue_get(pqueue, K_NO_WAIT);
-		assert_equal(rx_data, (void *)&data[i], NULL);
+		zassert_equal(rx_data, (void *)&data[i], NULL);
 	}
 	/*get queue data from "queue_append_list"*/
 	for (int i = 0; i < LIST_LEN; i++) {
 		rx_data = k_queue_get(pqueue, K_NO_WAIT);
-		assert_equal(rx_data, (void *)&data_l[i], NULL);
+		zassert_equal(rx_data, (void *)&data_l[i], NULL);
 	}
 	/*get queue data from "queue_merge_slist"*/
 	for (int i = 0; i < LIST_LEN; i++) {
 		rx_data = k_queue_get(pqueue, K_NO_WAIT);
-		assert_equal(rx_data, (void *)&data_sl[i], NULL);
+		zassert_equal(rx_data, (void *)&data_sl[i], NULL);
 	}
 }
 
@@ -109,7 +110,7 @@ static void tqueue_thread_thread(struct k_queue *pqueue)
 {
 	k_sem_init(&end_sema, 0, 1);
 	/**TESTPOINT: thread-thread data passing via queue*/
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		tThread_entry, pqueue, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 0);
 	tqueue_append(pqueue);

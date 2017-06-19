@@ -13,8 +13,10 @@
 
 #include <string.h>
 
-char __stack thread_stack1[STACK_SIZE];
-char __stack thread_stack2[STACK_SIZE];
+K_THREAD_STACK_DEFINE(thread_stack1, STACK_SIZE);
+K_THREAD_STACK_DEFINE(thread_stack2, STACK_SIZE);
+struct k_thread thread_data1;
+struct k_thread thread_data2;
 
 char Msg[256];
 
@@ -25,7 +27,7 @@ const char sz_partial[] = "PARTIAL";
 const char sz_fail[] = "FAILED";
 
 /* time necessary to read the time */
-uint32_t tm_off;
+u32_t tm_off;
 
 /**
  *
@@ -53,7 +55,7 @@ void begin_test(void)
  * @param i   Number of tests.
  * @param t   Time in ticks for the whole test.
  */
-int check_result(int i, uint32_t t)
+int check_result(int i, u32_t t)
 {
 	/*
 	 * bench_test_end checks tCheck static variable.

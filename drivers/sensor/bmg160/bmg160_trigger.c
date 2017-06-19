@@ -16,7 +16,7 @@
 extern struct bmg160_device_data bmg160_data;
 
 static void bmg160_gpio_callback(struct device *port, struct gpio_callback *cb,
-				 uint32_t pin)
+				 u32_t pin)
 {
 	struct bmg160_device_data *bmg160 =
 		CONTAINER_OF(cb, struct bmg160_device_data, gpio_cb);
@@ -35,7 +35,7 @@ static int bmg160_anymotion_set(struct device *dev,
 				sensor_trigger_handler_t handler)
 {
 	struct bmg160_device_data *bmg160 = dev->driver_data;
-	uint8_t anymotion_en = 0;
+	u8_t anymotion_en = 0;
 
 	if (handler) {
 		anymotion_en = BMG160_ANY_EN_X |
@@ -74,8 +74,8 @@ int bmg160_slope_config(struct device *dev, enum sensor_attribute attr,
 	struct bmg160_device_data *bmg160 = dev->driver_data;
 
 	if (attr == SENSOR_ATTR_SLOPE_TH) {
-		uint16_t any_th_dps, range_dps;
-		uint8_t any_th_reg_val;
+		u16_t any_th_dps, range_dps;
+		u8_t any_th_reg_val;
 
 		any_th_dps = sensor_rad_to_degrees(val);
 		range_dps = BMG160_SCALE_TO_RANGE(bmg160->scale);
@@ -149,7 +149,7 @@ static int bmg160_handle_dataready_int(struct device *dev)
 static void bmg160_handle_int(void *arg)
 {
 	struct device *dev = (struct device *)arg;
-	uint8_t status_int[4];
+	u8_t status_int[4];
 
 	if (bmg160_read(dev, BMG160_REG_INT_STATUS0, status_int, 4) < 0) {
 		return;
@@ -163,7 +163,8 @@ static void bmg160_handle_int(void *arg)
 }
 
 #ifdef CONFIG_BMG160_TRIGGER_OWN_THREAD
-static char __stack bmg160_thread_stack[CONFIG_BMG160_THREAD_STACK_SIZE];
+static K_THREAD_STACK_DEFINE(bmg160_thread_stack, CONFIG_BMG160_THREAD_STACK_SIZE);
+static struct k_thread bmg160_thread;
 
 static void bmg160_thread_main(void *arg1, void *arg2, void *arg3)
 {
@@ -228,8 +229,9 @@ int bmg160_trigger_init(struct device *dev)
 
 #if defined(CONFIG_BMG160_TRIGGER_OWN_THREAD)
 	k_sem_init(&bmg160->trig_sem, 0, UINT_MAX);
-	k_thread_spawn(bmg160_thread_stack, CONFIG_BMG160_THREAD_STACK_SIZE,
-		    bmg160_thread_main, dev, NULL, NULL, K_PRIO_COOP(10), 0, 0);
+	k_thread_create(&bmg160_thread, bmg160_thread_stack,
+			CONFIG_BMG160_THREAD_STACK_SIZE, bmg160_thread_main,
+			dev, NULL, NULL, K_PRIO_COOP(10), 0, 0);
 
 #elif defined(CONFIG_BMG160_TRIGGER_GLOBAL_THREAD)
 	bmg160->work.handler = bmg160_work_cb;

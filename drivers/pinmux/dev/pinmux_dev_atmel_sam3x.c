@@ -13,29 +13,29 @@
 #include <soc.h>
 #include <misc/util.h>
 
-static volatile struct __pio *_get_port(uint32_t pin)
+static Pio *_get_port(u32_t pin)
 {
-	uint32_t port_num = pin / 32;
+	u32_t port_num = pin / 32;
 
 	switch (port_num) {
 	case 0:
-		return __PIOA;
+		return PIOA;
 	case 1:
-		return __PIOB;
+		return PIOB;
 	case 2:
-		return __PIOC;
+		return PIOC;
 	case 3:
-		return __PIOD;
+		return PIOD;
 	default:
 		/* return null if pin is outside range */
 		return NULL;
 	}
 }
 
-static int pinmux_set(struct device *dev, uint32_t pin, uint32_t func)
+static int pinmux_set(struct device *dev, u32_t pin, u32_t func)
 {
-	volatile struct __pio *port = _get_port(pin);
-	uint32_t tmp;
+	Pio *port = _get_port(pin);
+	u32_t tmp;
 
 	ARG_UNUSED(dev);
 
@@ -43,20 +43,20 @@ static int pinmux_set(struct device *dev, uint32_t pin, uint32_t func)
 		return -EINVAL;
 	}
 
-	tmp = port->absr;
+	tmp = port->PIO_ABSR;
 	if (func) {
 		tmp |= (1 << (pin % 32));
 	} else {
 		tmp &= ~(1 << (pin % 32));
 	}
-	port->absr = tmp;
+	port->PIO_ABSR = tmp;
 
 	return 0;
 }
 
-static int pinmux_get(struct device *dev, uint32_t pin, uint32_t *func)
+static int pinmux_get(struct device *dev, u32_t pin, u32_t *func)
 {
-	volatile struct __pio *port = _get_port(pin);
+	Pio *port = _get_port(pin);
 
 	ARG_UNUSED(dev);
 
@@ -64,32 +64,14 @@ static int pinmux_get(struct device *dev, uint32_t pin, uint32_t *func)
 		return -EINVAL;
 	}
 
-	*func = (port->absr & (1 << (pin % 32))) ? 1 : 0;
+	*func = (port->PIO_ABSR & (1 << (pin % 32))) ? 1 : 0;
 
 	return 0;
 }
 
-static int pinmux_pullup(struct device *dev, uint32_t pin, uint8_t func)
+static int pinmux_pullup(struct device *dev, u32_t pin, u8_t func)
 {
-	volatile struct __pio *port = _get_port(pin);
-
-	ARG_UNUSED(dev);
-
-	if (!port) {
-		return -EINVAL;
-	}
-
-	if (func) {
-		port->puer = (1 << (pin % 32));
-	} else {
-		port->pudr = (1 << (pin % 32));
-	}
-
-	return 0;
-}
-static int pinmux_input(struct device *dev, uint32_t pin, uint8_t func)
-{
-	volatile struct __pio *port = _get_port(pin);
+	Pio *port = _get_port(pin);
 
 	ARG_UNUSED(dev);
 
@@ -98,9 +80,27 @@ static int pinmux_input(struct device *dev, uint32_t pin, uint8_t func)
 	}
 
 	if (func) {
-		port->odr = (1 << (pin % 32));
+		port->PIO_PUER = (1 << (pin % 32));
 	} else {
-		port->oer = (1 << (pin % 32));
+		port->PIO_PUDR = (1 << (pin % 32));
+	}
+
+	return 0;
+}
+static int pinmux_input(struct device *dev, u32_t pin, u8_t func)
+{
+	Pio *port = _get_port(pin);
+
+	ARG_UNUSED(dev);
+
+	if (!port) {
+		return -EINVAL;
+	}
+
+	if (func) {
+		port->PIO_ODR = (1 << (pin % 32));
+	} else {
+		port->PIO_OER = (1 << (pin % 32));
 	}
 
 	return 0;

@@ -44,7 +44,7 @@ static void aon_timer_callback(struct device *dev, void *user_data)
 
 static int test_timer(void)
 {
-	uint32_t dummy_data = 30;
+	u32_t dummy_data = 30;
 	int expected_alarm_cnt = 0;
 	struct device *aon_timer = device_get_binding(AON_TIMER);
 
@@ -102,5 +102,5 @@ static int test_timer(void)
 
 void test_aon_periodic_timer(void)
 {
-	assert_true(test_timer() == TC_PASS, NULL);
+	zassert_true(test_timer() == TC_PASS, NULL);
 }

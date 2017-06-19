@@ -8,7 +8,7 @@
  * @addtogroup t_gpio_basic_api
  * @{
  * @defgroup t_gpio_callback_manage test_gpio_callback_manage
- * @brief TestPurpose: verify zephyr gpio callback add/remvoe and enable/disable
+ * @brief TestPurpose: verify zephyr gpio callback add/remove and enable/disable
  * @}
  */
 
@@ -18,14 +18,14 @@ static struct drv_data cb_data[2];
 static int cb_cnt[2];
 
 static void callback_1(struct device *dev,
-		       struct gpio_callback *gpio_cb, uint32_t pins)
+		       struct gpio_callback *gpio_cb, u32_t pins)
 {
 	TC_PRINT("%s triggered: %d\n", __func__, ++cb_cnt[0]);
 
 }
 
 static void callback_2(struct device *dev,
-		       struct gpio_callback *gpio_cb, uint32_t pins)
+		       struct gpio_callback *gpio_cb, u32_t pins)
 {
 	TC_PRINT("%s triggered: %d\n", __func__, ++cb_cnt[1]);
 }
@@ -151,12 +151,12 @@ err_exit:
 
 void test_gpio_callback_add_remove(void)
 {
-	assert_true(
+	zassert_true(
 		test_callback_add_remove() == TC_PASS, NULL);
 }
 
 void test_gpio_callback_enable_disable(void)
 {
-	assert_true(
+	zassert_true(
 		test_callback_enable_disable() == TC_PASS, NULL);
 }

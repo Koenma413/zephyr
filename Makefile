@@ -1,11 +1,11 @@
 VERSION_MAJOR 	   = 1
-VERSION_MINOR 	   = 7
+VERSION_MINOR 	   = 8
 PATCHLEVEL 	   = 99
 VERSION_RESERVED   = 0
 EXTRAVERSION       =
 NAME 		   = Zephyr Kernel
 
-export SOURCE_DIR PROJECT MDEF_FILE
+export SOURCE_DIR PROJECT
 
 ifeq ($(MAKECMDGOALS),)
 $(error Invoking make from top-level kernel directory is not supported)
@@ -24,9 +24,14 @@ endif
 MAKEFLAGS += -rR --include-dir=$(CURDIR)
 
 UNAME := $(shell uname)
-ifeq (MINGW, $(findstring MINGW, $(UNAME)))
+ifeq (MSYS, $(findstring MSYS, $(UNAME)))
+DISABLE_TRYRUN=y
+HOST_OS=MSYS
+NATIVE_PWD_OPT=-W
+else ifeq (MINGW, $(findstring MINGW, $(UNAME)))
 HOST_OS=MINGW
 PWD_OPT=-W
+NATIVE_PWD_OPT=-W
 DISABLE_TRYRUN=y
 CPATH ?= $(MIGW_DIR)/include
 LIBRARY_PATH ?= $(MINGW_DIR)/lib
@@ -36,7 +41,7 @@ HOST_OS=Linux
 else ifeq (Darwin, $(findstring Darwin, $(UNAME)))
 HOST_OS=Darwin
 endif
-export HOST_OS
+export HOST_OS NATIVE_PWD_OPT
 
 # Avoid funny character set dependencies
 unexport LC_ALL
@@ -319,7 +324,11 @@ GENOFFSET_H	= scripts/gen_offset_header/gen_offset_header
 FIXDEP		= scripts/basic/fixdep
 else
 GENOFFSET_H	= $(PREBUILT_HOST_TOOLS)/gen_offset_header
+ifneq ($(filter host-tools, $(MAKECMDGOALS)),)
+FIXDEP		= scripts/basic/fixdep
+else
 FIXDEP		= $(PREBUILT_HOST_TOOLS)/fixdep
+endif
 endif
 PERL		= perl
 PYTHON		= python
@@ -356,6 +365,7 @@ KERNEL_ELF_NAME = $(KERNEL_NAME).elf
 KERNEL_BIN_NAME = $(KERNEL_NAME).bin
 KERNEL_HEX_NAME = $(KERNEL_NAME).hex
 KERNEL_STAT_NAME = $(KERNEL_NAME).stat
+PREBUILT_KERNEL = $(KERNEL_NAME)_prebuilt.elf
 
 export SOC_FAMILY SOC_SERIES SOC_PATH SOC_NAME BOARD_NAME
 export ARCH KERNEL_NAME KERNEL_ELF_NAME KERNEL_BIN_NAME KERNEL_HEX_NAME
@@ -369,7 +379,6 @@ ZEPHYRINCLUDE    = \
 		$(if $(KBUILD_SRC), -I$(srctree)/include) \
 		-I$(srctree)/include \
 		-I$(CURDIR)/include/generated \
-		-I$(CURDIR)/misc/generated/sysgen \
 		$(USERINCLUDE) \
 		$(STDINCLUDE)
 
@@ -447,7 +456,6 @@ PHONY += scripts_basic
 ifeq ($(PREBUILT_HOST_TOOLS),)
 scripts_basic:
 	$(Q)$(MAKE) $(build)=scripts/basic
-	$(Q)$(MAKE) $(build)=scripts/gen_idt
 	$(Q)$(MAKE) $(build)=scripts/gen_offset_header
 else
 scripts_basic:
@@ -476,7 +484,7 @@ endif
 
 version_h := include/generated/version.h
 
-no-dot-config-targets := pristine distclean clean mrproper help kconfig-help \
+no-dot-config-targets := pristine distclean clean mrproper help kconfig-help host-tools \
 			 cscope gtags TAGS tags help% %docs check% \
 			 $(version_h) headers_% kernelversion %src-pkg
 
@@ -571,6 +579,17 @@ ifeq ($(dot-config),1)
 # oldconfig if changes are detected.
 -include include/config/auto.conf.cmd
 
+# Read in DTS derived configuration, if it exists
+#
+# We check to see if the ARCH is correctly sourced before doing the -include
+# The reason for this is due to implicit rules kicking in to create this file.
+# If this occurs before the above auto.conf is sourced correctly, the build
+# will iterate over the dts conf file 2-3 times before settling down to the
+# correct output.
+ifneq ($(ARCH),)
+-include include/generated/generated_dts_board.conf
+endif
+
 # To avoid any implicit rule to kick in, define an empty command
 $(KCONFIG_CONFIG) include/config/auto.conf.cmd: ;
 
@@ -595,9 +614,9 @@ ARCH = $(subst $(DQUOTE),,$(CONFIG_ARCH))
 export ARCH
 
 ifeq ($(CONFIG_DEBUG),y)
-KBUILD_CFLAGS += -Og
+KBUILD_CFLAGS_OPTIMIZE := -Og
 else
-KBUILD_CFLAGS += -Os
+KBUILD_CFLAGS_OPTIMIZE := -Os
 endif
 
 ifdef ZEPHYR_GCC_VARIANT
@@ -608,6 +627,9 @@ $(if $(CROSS_COMPILE),, \
      $(error ZEPHYR_GCC_VARIANT is not set. ))
 endif
 endif
+
+# Let Makefile.toolchain adjust optimization level
+KBUILD_CFLAGS += $(KBUILD_CFLAGS_OPTIMIZE)
 
 -include $(srctree)/ext/Makefile
 -include $(srctree)/lib/Makefile
@@ -843,13 +865,14 @@ $(KERNEL_NAME).lnk: $(zephyr-deps)
 
 linker.cmd: $(zephyr-deps)
 	$(Q)$(CC) -x assembler-with-cpp -nostdinc -undef -E -P \
-	$(LDFLAG_LINKERCMD) $(LD_TOOLCHAIN) -I$(srctree)/include \
-	-I$(SOURCE_DIR) \
-	-I$(objtree)/include/generated $(EXTRA_LINKER_CMD_OPT) $(KBUILD_LDS) -o $@
+		$(LDFLAG_LINKERCMD) $(LD_TOOLCHAIN) \
+		-I$(srctree)/include -I$(SOURCE_DIR) \
+		-I$(objtree)/include/generated \
+		$(EXTRA_LINKER_CMD_OPT) $(KBUILD_LDS) -o $@
 
-PREBUILT_KERNEL = $(KERNEL_NAME)_prebuilt.elf
 
-$(PREBUILT_KERNEL): $(zephyr-deps) libzephyr.a $(KBUILD_ZEPHYR_APP) $(app-y) linker.cmd $(KERNEL_NAME).lnk
+$(PREBUILT_KERNEL): $(zephyr-deps) libzephyr.a $(KBUILD_ZEPHYR_APP) $(app-y) \
+		linker.cmd $(KERNEL_NAME).lnk
 	$(Q)$(CC) -T linker.cmd @$(KERNEL_NAME).lnk -o $@
 
 ASSERT_WARNING_STR := \
@@ -869,15 +892,42 @@ WARN_ABOUT_DEPRECATION := $(if $(CONFIG_BOARD_DEPRECATED),echo -e \
 				-n $(DEPRECATION_WARNING_STR),true)
 
 ifeq ($(ARCH),x86)
-# X86 with its IDT has very special handling for interrupt tables
 include $(srctree)/arch/x86/Makefile.idt
-else ifeq ($(CONFIG_GEN_ISR_TABLES),y)
-# Logic for interrupt tables created by scripts/gen_isr_tables.py
+ifeq ($(CONFIG_X86_MMU),y)
+include $(srctree)/arch/x86/Makefile.mmu
+endif
+endif
+
+ifeq ($(CONFIG_GEN_ISR_TABLES),y)
 include $(srctree)/arch/common/Makefile.gen_isr_tables
-else
+endif
+
+ifneq ($(GENERATED_KERNEL_OBJECT_FILES),)
+
+# Identical rule to linker.cmd, but we also define preprocessor LINKER_PASS2.
+# For arches that place special metadata in $(PREBUILT_KERNEL) not intended
+# for the final binary, it can be #ifndef'd around this.
+linker-pass2.cmd: $(zephyr-deps)
+	$(Q)$(CC) -x assembler-with-cpp -nostdinc -undef -E -P \
+		-DLINKER_PASS2 \
+		$(LDFLAG_LINKERCMD) $(LD_TOOLCHAIN) \
+		-I$(srctree)/include -I$(SOURCE_DIR) \
+		-I$(objtree)/include/generated \
+		$(EXTRA_LINKER_CMD_OPT) $(KBUILD_LDS) -o $@
+
+$(KERNEL_ELF_NAME): $(GENERATED_KERNEL_OBJECT_FILES) linker-pass2.cmd
+	$(Q)$(CC) -T linker-pass2.cmd $(GENERATED_KERNEL_OBJECT_FILES) \
+		@$(KERNEL_NAME).lnk -o $@
+	$(Q)$(srctree)/scripts/check_link_map.py $(KERNEL_NAME).map
+	@$(WARN_ABOUT_ASSERT)
+	@$(WARN_ABOUT_DEPRECATION)
+
+else # GENERATED_KERNEL_OBJECT_FILES
+
 # Otherwise, nothing to do, prebuilt kernel is the real one
 $(KERNEL_ELF_NAME): $(PREBUILT_KERNEL)
-	@cp $(PREBUILT_KERNEL) $(KERNEL_ELF_NAME)
+	$(Q)cp $(PREBUILT_KERNEL) $(KERNEL_ELF_NAME)
+	$(Q)$(srctree)/scripts/check_link_map.py $(KERNEL_NAME).map
 	@$(WARN_ABOUT_ASSERT)
 	@$(WARN_ABOUT_DEPRECATION)
 endif
@@ -912,6 +962,62 @@ rom_report: $(KERNEL_STAT_NAME)
 	@$(srctree)/scripts/size_report -F -o $(O)
 
 zephyr: $(zephyr-deps) $(KERNEL_BIN_NAME)
+
+ifeq ($(CONFIG_HAS_DTS),y)
+define filechk_generated_dts_board.h
+	(echo "/* WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY! */"; \
+		if test -e $(ZEPHYR_BASE)/dts/$(ARCH)/$(BOARD_NAME).fixup; then \
+			$(ZEPHYR_BASE)/scripts/extract_dts_includes.py \
+				-d dts/$(ARCH)/$(BOARD_NAME).dts_compiled \
+				-y $(ZEPHYR_BASE)/dts/$(ARCH)/yaml \
+				-f $(ZEPHYR_BASE)/dts/$(ARCH)/$(BOARD_NAME).fixup; \
+		else \
+			$(ZEPHYR_BASE)/scripts/extract_dts_includes.py \
+				-d dts/$(ARCH)/$(BOARD_NAME).dts_compiled \
+				-y $(ZEPHYR_BASE)/dts/$(ARCH)/yaml; \
+		fi; \
+		)
+endef
+define filechk_generated_dts_board.conf
+	(echo "# WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY!"; \
+		$(ZEPHYR_BASE)/scripts/extract_dts_includes.py \
+		-d dts/$(ARCH)/$(BOARD_NAME).dts_compiled \
+		-y $(ZEPHYR_BASE)/dts/$(ARCH)/yaml -k; \
+		)
+endef
+else
+define filechk_generated_dts_board.h
+	(echo "/* WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY! */";)
+endef
+define filechk_generated_dts_board.conf
+	(echo "# WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY!";)
+endef
+endif
+
+include/generated/generated_dts_board.h: include/config/auto.conf FORCE
+ifeq ($(CONFIG_HAS_DTS),y)
+	$(Q)$(MAKE) $(build)=dts/$(ARCH)
+endif
+	$(call filechk,generated_dts_board.h)
+
+include/generated/generated_dts_board.conf: include/config/auto.conf FORCE
+ifeq ($(CONFIG_HAS_DTS),y)
+	$(Q)$(MAKE) $(build)=dts/$(ARCH)
+endif
+	$(call filechk,generated_dts_board.conf)
+
+dts: include/generated/generated_dts_board.h
+
+define filechk_.config-sanitycheck
+	(cat .config; \
+	 grep -e '^CONFIG' include/generated/generated_dts_board.conf | cat; \
+	)
+endef
+
+.config-sanitycheck: include/generated/generated_dts_board.conf FORCE
+	$(call filechk,.config-sanitycheck)
+
+config-sanitycheck: .config-sanitycheck
 
 # The actual objects are generated when descending,
 # make sure no implicit rule kicks in
@@ -970,7 +1076,7 @@ archprepare = $(strip \
 		)
 
 # All the preparing..
-prepare: $(archprepare)  FORCE
+prepare: $(archprepare) dts FORCE
 	$(Q)$(MAKE) $(build)=.
 
 # Generate some files
@@ -1026,20 +1132,17 @@ depend dep:
 
 # Directories & files removed with 'make clean'
 CLEAN_DIRS  += $(MODVERDIR)
-CLEAN_DIRS  += $(MODVERDIR) dts/
 
-CLEAN_FILES += 	misc/generated/sysgen/kernel_main.c \
-		misc/generated/sysgen/sysgen.h \
-		misc/generated/sysgen/prj.mdef \
-		misc/generated/sysgen/micro_private_types.h \
-		misc/generated/sysgen/kernel_main.h \
+CLEAN_FILES += 	include/generated/generated_dts_board.conf \
 		include/generated/generated_dts_board.h \
+		.config-sanitycheck \
 		.old_version .tmp_System.map .tmp_version \
 		.tmp_* System.map *.lnk *.map *.elf *.lst \
-		*.bin *.hex *.stat *.strip staticIdt.o linker.cmd
+		*.bin *.hex *.stat *.strip staticIdt.o linker.cmd \
+		linker-pass2.cmd
 
 # Directories & files removed with 'make mrproper'
-MRPROPER_DIRS  += include/config usr/include include/generated          \
+MRPROPER_DIRS  += bin include/config usr/include include/generated          \
 		  arch/*/include/generated .tmp_objdiff
 MRPROPER_FILES += .config .config.old .version $(version_h) \
 		  Module.symvers tags TAGS cscope* GPATH GTAGS GRTAGS GSYMS \
@@ -1165,6 +1268,17 @@ $(help-board-dirs): help-%:
 		$(foreach b, $(boards-per-dir), \
 		printf "  %-24s - Build for %s\\n" $*/$(b) $(subst _defconfig,,$(b));) \
 		echo '')
+
+
+
+host-tools:
+	$(Q)$(MAKE) $(build)=scripts/basic
+	$(Q)$(MAKE) $(build)=scripts/kconfig standalone
+	$(Q)$(MAKE) $(build)=scripts/gen_idt
+	$(Q)$(MAKE) $(build)=scripts/gen_offset_header
+	@mkdir -p ${ZEPHYR_BASE}/bin
+	@cp scripts/basic/fixdep scripts/gen_idt/gen_idt scripts/kconfig/conf \
+		scripts/gen_offset_header/gen_offset_header ${ZEPHYR_BASE}/bin
 
 
 # Documentation targets

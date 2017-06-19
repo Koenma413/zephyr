@@ -17,7 +17,7 @@
 #ifndef _DISK_ACCESS_H_
 #define _DISK_ACCESS_H_
 
-#include <stdint.h>
+#include <zephyr/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,7 +43,7 @@ extern "C" {
 #define DISK_STATUS_WR_PROTECT		0x04
 
 /*
- * @brief perform any intialization
+ * @brief perform any initialization
  *
  * This call is made by the consumer before doing any IO calls so that the
  * disk or the backing device can do any initialization.
@@ -72,8 +72,8 @@ int disk_access_status(void);
  *
  * @return 0 on success, negative errno code on fail
  */
-int disk_access_read(uint8_t *data_buf, uint32_t start_sector,
-		     uint32_t num_sector);
+int disk_access_read(u8_t *data_buf, u32_t start_sector,
+		     u32_t num_sector);
 
 /*
  * @brief write data to disk
@@ -86,8 +86,8 @@ int disk_access_read(uint8_t *data_buf, uint32_t start_sector,
  *
  * @return 0 on success, negative errno code on fail
  */
-int disk_access_write(const uint8_t *data_buf, uint32_t start_sector,
-		      uint32_t num_sector);
+int disk_access_write(const u8_t *data_buf, u32_t start_sector,
+		      u32_t num_sector);
 
 /*
  * @brief Get/Configure disk parameters
@@ -98,7 +98,7 @@ int disk_access_write(const uint8_t *data_buf, uint32_t start_sector,
  *
  * @return 0 on success, negative errno code on fail
  */
-int disk_access_ioctl(uint8_t cmd, void *buff);
+int disk_access_ioctl(u8_t cmd, void *buff);
 
 
 #ifdef __cplusplus

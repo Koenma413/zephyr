@@ -9,7 +9,7 @@
 #ifndef __IEEE802154_CC2520_H__
 #define __IEEE802154_CC2520_H__
 
-#include <sections.h>
+#include <linker/sections.h>
 #include <atomic.h>
 #include <spi.h>
 
@@ -20,12 +20,12 @@
  */
 struct cc2520_spi {
 	struct device *dev;
-	uint32_t slave;
+	u32_t slave;
 	/**
 	 * cmd_buf will use at most 9 bytes:
 	 * dummy bytes + 8 ieee address bytes
 	 */
-	uint8_t cmd_buf[12];
+	u8_t cmd_buf[12];
 };
 
 struct cc2520_context {
@@ -35,15 +35,20 @@ struct cc2520_context {
 	struct gpio_callback sfd_cb;
 	struct gpio_callback fifop_cb;
 	struct cc2520_spi spi;
-	uint8_t mac_addr[8];
+	u8_t mac_addr[8];
 	/************TX************/
 	struct k_sem tx_sync;
 	atomic_t tx;
 	/************RX************/
-	char __stack cc2520_rx_stack[CONFIG_IEEE802154_CC2520_RX_STACK_SIZE];
+	K_THREAD_STACK_MEMBER(cc2520_rx_stack,
+			      CONFIG_IEEE802154_CC2520_RX_STACK_SIZE);
+	struct k_thread cc2520_rx_thread;
 	struct k_sem rx_lock;
+#ifdef CONFIG_IEEE802154_CC2520_CRYPTO
+	struct k_sem access_lock;
+#endif
 	bool overflow;
-	uint8_t lqi;
+	u8_t lqi;
 };
 
 #include "ieee802154_cc2520_regs.h"
@@ -53,20 +58,20 @@ struct cc2520_context {
  ***************************
  */
 
-uint8_t _cc2520_read_reg(struct cc2520_spi *spi,
-			 bool freg, uint8_t addr);
+u8_t _cc2520_read_reg(struct cc2520_spi *spi,
+			 bool freg, u8_t addr);
 bool _cc2520_write_reg(struct cc2520_spi *spi, bool freg,
-		       uint8_t addr, uint8_t value);
+		       u8_t addr, u8_t value);
 
 #define DEFINE_REG_READ(__reg_name, __reg_addr, __freg)			\
-	static inline uint8_t read_reg_##__reg_name(struct cc2520_spi *spi) \
+	static inline u8_t read_reg_##__reg_name(struct cc2520_spi *spi) \
 	{								\
 		return _cc2520_read_reg(spi, __freg, __reg_addr);	\
 	}
 
 #define DEFINE_REG_WRITE(__reg_name, __reg_addr, __freg)		\
 	static inline bool write_reg_##__reg_name(struct cc2520_spi *spi, \
-						  uint8_t val)		\
+						  u8_t val)		\
 	{								\
 		return _cc2520_write_reg(spi, __freg, __reg_addr, val);	\
 	}
@@ -95,6 +100,7 @@ DEFINE_FREG_READ(gpiopolarity, CC2520_FREG_GPIOPOLARITY)
 DEFINE_FREG_READ(gpioctrl, CC2520_FREG_GPIOCTRL)
 DEFINE_FREG_READ(txfifocnt, CC2520_FREG_TXFIFOCNT)
 DEFINE_FREG_READ(rxfifocnt, CC2520_FREG_RXFIFOCNT)
+DEFINE_FREG_READ(dpustat, CC2520_FREG_DPUSTAT)
 
 DEFINE_FREG_WRITE(frmctrl0, CC2520_FREG_FRMCTRL0)
 DEFINE_FREG_WRITE(frmctrl1, CC2520_FREG_FRMCTRL1)
@@ -124,12 +130,12 @@ DEFINE_SREG_WRITE(extclock, CC2520_SREG_EXTCLOCK)
  ************************
  */
 
-bool _cc2520_write_ram(struct cc2520_spi *spi, uint16_t addr,
-		       uint8_t *data_buf, uint8_t len);
+bool _cc2520_write_ram(struct cc2520_spi *spi, u16_t addr,
+		       u8_t *data_buf, u8_t len);
 
 #define DEFINE_MEM_WRITE(__mem_name, __addr, __sz)			\
 	static inline bool write_mem_##__mem_name(struct cc2520_spi *spi, \
-						  uint8_t *buf)		\
+						  u8_t *buf)		\
 	{								\
 		return _cc2520_write_ram(spi, __addr, buf, __sz);	\
 	}
@@ -144,7 +150,7 @@ DEFINE_MEM_WRITE(ext_addr, CC2520_MEM_EXT_ADDR, 8)
  */
 
 static inline bool _cc2520_command_strobe(struct cc2520_spi *spi,
-					  uint8_t instruction)
+					  u8_t instruction)
 {
 	spi_slave_select(spi->dev, spi->slave);
 
@@ -152,9 +158,9 @@ static inline bool _cc2520_command_strobe(struct cc2520_spi *spi,
 }
 
 static inline bool _cc2520_command_strobe_snop(struct cc2520_spi *spi,
-					       uint8_t instruction)
+					       u8_t instruction)
 {
-	uint8_t ins[2] = {
+	u8_t ins[2] = {
 		instruction,
 		CC2520_INS_SNOP
 	};

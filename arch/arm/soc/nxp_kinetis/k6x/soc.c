@@ -18,7 +18,7 @@
 #include <init.h>
 #include <soc.h>
 #include <uart.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <fsl_common.h>
 #include <fsl_clock.h>
 #include <arch/cpu.h>
@@ -49,7 +49,7 @@
  * -Reserved, 1 byte, (EEPROM protection byte for FlexNVM)
  *
  */
-uint8_t __kinetis_flash_config_section __kinetis_flash_config[] = {
+u8_t __kinetis_flash_config_section __kinetis_flash_config[] = {
 	/* Backdoor Comparison Key (unused) */
 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 	/* Program flash protection; 1 bit/region - 0=protected, 1=unprotected
@@ -153,7 +153,9 @@ static int fsl_frdm_k64f_init(struct device *arg)
 	ARG_UNUSED(arg);
 
 	int oldLevel; /* old interrupt lock level */
-	uint32_t temp_reg;
+#if !defined(CONFIG_HAS_SYSMPU)
+	u32_t temp_reg;
+#endif /* !CONFIG_HAS_SYSMPU */
 
 	/* disable interrupts */
 	oldLevel = irq_lock();
@@ -161,16 +163,18 @@ static int fsl_frdm_k64f_init(struct device *arg)
 	/* release I/O power hold to allow normal run state */
 	PMC->REGSC |= PMC_REGSC_ACKISO_MASK;
 
+#if !defined(CONFIG_HAS_SYSMPU)
 	/*
 	 * Disable memory protection and clear slave port errors.
 	 * Note that the K64F does not implement the optional ARMv7-M memory
 	 * protection unit (MPU), specified by the architecture (PMSAv7), in the
 	 * Cortex-M4 core.  Instead, the processor includes its own MPU module.
 	 */
-	temp_reg = MPU->CESR;
-	temp_reg &= ~MPU_CESR_VLD_MASK;
-	temp_reg |= MPU_CESR_SPERR_MASK;
-	MPU->CESR = temp_reg;
+	temp_reg = SYSMPU->CESR;
+	temp_reg &= ~SYSMPU_CESR_VLD_MASK;
+	temp_reg |= SYSMPU_CESR_SPERR_MASK;
+	SYSMPU->CESR = temp_reg;
+#endif /* !CONFIG_HAS_SYSMPU */
 
 	_ClearFaults();
 

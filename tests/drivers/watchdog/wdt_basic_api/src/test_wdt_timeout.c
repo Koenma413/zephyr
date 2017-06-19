@@ -38,7 +38,7 @@
 
 static void wdt_int_cb(struct device *wdt_dev)
 {
-	static uint32_t wdt_int_cnt;
+	static u32_t wdt_int_cnt;
 
 	TC_PRINT("%s: Invoked (%u)\n", __func__, ++wdt_int_cnt);
 	QM_SCSS_GP->gps2++;
@@ -52,7 +52,7 @@ static void wdt_int_cb(struct device *wdt_dev)
 #endif
 }
 
-static int test_wdt(uint32_t timeout, enum wdt_mode r_mode)
+static int test_wdt(u32_t timeout, enum wdt_mode r_mode)
 {
 	struct wdt_config config;
 	struct device *wdt = device_get_binding(WDT_DEV_NAME);
@@ -145,14 +145,14 @@ static int test_wdt(uint32_t timeout, enum wdt_mode r_mode)
  */
 void test_wdt_int_reset_26(void)
 {
-	assert_true(test_wdt(WDT_2_26_CYCLES,
+	zassert_true(test_wdt(WDT_2_26_CYCLES,
 			     WDT_MODE_INTERRUPT_RESET) == TC_PASS, NULL);
 	QM_SCSS_GP->gps2 = 0;
 }
 
 void test_wdt_reset_26(void)
 {
-	assert_true(test_wdt(WDT_2_26_CYCLES,
+	zassert_true(test_wdt(WDT_2_26_CYCLES,
 			     WDT_MODE_RESET) == TC_PASS, NULL);
 	QM_SCSS_GP->gps2 = 0;
 }

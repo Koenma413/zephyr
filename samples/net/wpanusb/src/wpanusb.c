@@ -8,7 +8,7 @@
 #define SYS_LOG_DOMAIN "wpanusb"
 #include <logging/sys_log.h>
 
-#include <sections.h>
+#include <linker/sections.h>
 #include <toolchain.h>
 #include <string.h>
 #include <misc/printk.h>
@@ -70,12 +70,13 @@ static struct device *wpanusb_dev;
 static struct ieee802154_radio_api *radio_api;
 static struct device *ieee802154_dev;
 
-static struct nano_fifo tx_queue;
+static struct k_fifo tx_queue;
 
 /**
  * Stack for the tx thread.
  */
-static char __noinit __stack tx_stack[1024];
+static K_THREAD_STACK_DEFINE(tx_stack, 1024);
+static struct k_thread tx_thread_data;
 
 #define DEV_DATA(dev) \
 	((struct wpanusb_dev_data_t * const)(dev)->driver_data)
@@ -84,14 +85,14 @@ static char __noinit __stack tx_stack[1024];
 struct wpanusb_dev_data_t {
 	/* USB device status code */
 	enum usb_dc_status_code usb_status;
-	uint8_t interface_data[WPANUSB_CLASS_MAX_DATA_SIZE];
-	uint8_t notification_sent;
+	u8_t interface_data[WPANUSB_CLASS_MAX_DATA_SIZE];
+	u8_t notification_sent;
 };
 
 /**
  * ieee802.15.4 USB descriptors configuration
  */
-static const uint8_t wpanusb_desc[] = {
+static const u8_t wpanusb_desc[] = {
 	/* Device descriptor */
 	USB_DEVICE_DESC_SIZE,		/* Descriptor size */
 	USB_DEVICE_DESC,		/* Descriptor type */
@@ -176,7 +177,7 @@ static const uint8_t wpanusb_desc[] = {
 
 #ifdef VERBOSE_DEBUG
 /* TODO: move to standard utils */
-static void hexdump(const char *str, const uint8_t *packet, size_t length)
+static void hexdump(const char *str, const u8_t *packet, size_t length)
 {
 	int n = 0;
 
@@ -211,7 +212,7 @@ static void hexdump(const char *str, const uint8_t *packet, size_t length)
 #endif
 
 /* EP Bulk IN handler, used to send data to the Host */
-static void wpanusb_bulk_in(uint8_t ep, enum usb_dc_ep_cb_status_code ep_status)
+static void wpanusb_bulk_in(u8_t ep, enum usb_dc_ep_cb_status_code ep_status)
 {
 }
 
@@ -261,7 +262,7 @@ static void wpanusb_status_cb(enum usb_dc_status_code status)
 }
 
 static int wpanusb_class_handler(struct usb_setup_packet *setup,
-				 int32_t *len, uint8_t **data)
+				 s32_t *len, u8_t **data)
 {
 	SYS_LOG_DBG("len %d", *len);
 
@@ -271,7 +272,7 @@ static int wpanusb_class_handler(struct usb_setup_packet *setup,
 }
 
 static int wpanusb_custom_handler(struct usb_setup_packet *setup,
-				  int32_t *len, uint8_t **data)
+				  s32_t *len, u8_t **data)
 {
 	/**
 	 * FIXME:
@@ -281,7 +282,7 @@ static int wpanusb_custom_handler(struct usb_setup_packet *setup,
 	return -ENOTSUP;
 }
 
-static int try_write(uint8_t ep, uint8_t *data, uint16_t len)
+static int try_write(u8_t ep, u8_t *data, u16_t len)
 {
 	while (1) {
 		int ret = usb_write(ep, data, len, NULL);
@@ -314,7 +315,7 @@ static int set_ieee_addr(void *data, int len)
 	SYS_LOG_DBG("len %u", len);
 
 	return radio_api->set_ieee_addr(ieee802154_dev,
-					(uint8_t *)&req->ieee_addr);
+					(u8_t *)&req->ieee_addr);
 }
 
 static int set_short_addr(void *data, int len)
@@ -349,10 +350,10 @@ static int stop(void)
 	return radio_api->stop(ieee802154_dev);
 }
 
-static int tx(struct net_buf *pkt)
+static int tx(struct net_pkt *pkt)
 {
-	struct net_buf *buf = net_buf_frag_last(pkt);
-	uint8_t seq = net_buf_pull_u8(buf);
+	struct net_buf *buf = net_buf_frag_last(pkt->frags);
+	u8_t seq = net_buf_pull_u8(buf);
 	int retries = 3;
 	int ret;
 
@@ -378,22 +379,23 @@ static int tx(struct net_buf *pkt)
  * later processing
  */
 static int wpanusb_vendor_handler(struct usb_setup_packet *setup,
-				  int32_t *len, uint8_t **data)
+				  s32_t *len, u8_t **data)
 {
-	struct net_buf *pkt, *buf;
+	struct net_pkt *pkt;
+	struct net_buf *buf;
 
-	pkt = net_nbuf_get_reserve_tx(0, K_NO_WAIT);
+	pkt = net_pkt_get_reserve_tx(0, K_NO_WAIT);
 	if (!pkt) {
 		return -ENOMEM;
 	}
 
-	buf = net_nbuf_get_frag(buf, K_NO_WAIT);
+	buf = net_pkt_get_frag(pkt, K_NO_WAIT);
 	if (!buf) {
-		net_nbuf_unref(pkt);
+		net_pkt_unref(pkt);
 		return -ENOMEM;
 	}
 
-	net_buf_frag_insert(pkt, buf);
+	net_pkt_frag_insert(pkt, buf);
 
 	net_buf_add_u8(buf, setup->bRequest);
 
@@ -406,7 +408,7 @@ static int wpanusb_vendor_handler(struct usb_setup_packet *setup,
 
 	SYS_LOG_DBG("len %u seq %u", *len, setup->wIndex);
 
-	net_buf_put(&tx_queue, pkt);
+	k_fifo_put(&tx_queue, pkt);
 
 	return 0;
 }
@@ -416,11 +418,12 @@ static void tx_thread(void)
 	SYS_LOG_DBG("Tx thread started");
 
 	while (1) {
-		uint8_t cmd;
-		struct net_buf *pkt, *buf;
+		u8_t cmd;
+		struct net_pkt *pkt;
+		struct net_buf *buf;
 
-		pkt = net_buf_get(&tx_queue, K_FOREVER);
-		buf = net_buf_frag_last(pkt);
+		pkt = k_fifo_get(&tx_queue, K_FOREVER);
+		buf = net_buf_frag_last(pkt->frags);
 		cmd = net_buf_pull_u8(buf);
 
 		hexdump(">", buf->data, buf->len);
@@ -455,14 +458,14 @@ static void tx_thread(void)
 			break;
 		}
 
-		net_nbuf_unref(pkt);
+		net_pkt_unref(pkt);
 
 		k_yield();
 	}
 }
 
 /* TODO: FIXME: correct buffer size */
-static uint8_t buffer[300];
+static u8_t buffer[300];
 
 static struct usb_cfg_data wpanusb_config = {
 	.usb_device_description = wpanusb_desc,
@@ -528,18 +531,20 @@ static void init_tx_queue(void)
 	/* Transmit queue init */
 	k_fifo_init(&tx_queue);
 
-	k_thread_spawn(tx_stack, sizeof(tx_stack), (k_thread_entry_t)tx_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);
+	k_thread_create(&tx_thread_data, tx_stack,
+			K_THREAD_STACK_SIZEOF(tx_stack),
+			(k_thread_entry_t)tx_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);
 }
 
 extern enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
-						    struct net_buf *buf)
+						    struct net_pkt *pkt)
 {
 	/* parse on higher layer */
 	return NET_CONTINUE;
 }
 
-int ieee802154_radio_send(struct net_if *iface, struct net_buf *buf)
+int ieee802154_radio_send(struct net_if *iface, struct net_pkt *pkt)
 {
 	SYS_LOG_DBG("");
 
@@ -551,25 +556,25 @@ void ieee802154_init(struct net_if *iface)
 	SYS_LOG_DBG("");
 }
 
-int net_recv_data(struct net_if *iface, struct net_buf *buf)
+int net_recv_data(struct net_if *iface, struct net_pkt *pkt)
 {
 	struct net_buf *frag;
 
-	SYS_LOG_DBG("Got data, buf %p, len %d frags->len %d",
-		    buf, buf->len, net_buf_frags_len(buf));
+	SYS_LOG_DBG("Got data, pkt %p, frags->len %d",
+		    pkt, net_pkt_get_len(pkt));
 
-	frag = net_buf_frag_last(buf);
+	frag = net_buf_frag_last(pkt->frags);
 
 	/**
 	 * Add length 1 byte, do not forget to reserve it
 	 */
-	net_buf_push_u8(frag, net_buf_frags_len(buf) - 1);
+	net_buf_push_u8(frag, net_pkt_get_len(pkt) - 1);
 
-	hexdump("<", frag->data, net_buf_frags_len(buf));
+	hexdump("<", frag->data, net_pkt_get_len(pkt));
 
-	try_write(WPANUSB_ENDP_BULK_IN, frag->data, net_buf_frags_len(buf));
+	try_write(WPANUSB_ENDP_BULK_IN, frag->data, net_pkt_get_len(pkt));
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return 0;
 }
@@ -603,8 +608,8 @@ void main(void)
 	}
 #endif
 
-	/* Initialize nbufs */
-	net_nbuf_init();
+	/* Initialize net_pkt */
+	net_pkt_init();
 
 	/* Initialize transmit queue */
 	init_tx_queue();

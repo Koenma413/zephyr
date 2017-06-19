@@ -11,7 +11,17 @@
 #include <misc/__assert.h>
 #include "soc_gpio.h"
 
-static void configure_common_attr(Pio *pio, uint32_t mask, uint32_t flags)
+/*
+ * There exist minor differences between SAM MCU family members in naming
+ * of some of the registers. Check that our expectations are met.
+ */
+#if (!defined(PIO_IFSCER_P0) && !defined(PIO_DIFSR_P0)) \
+	|| (!defined(PIO_IFSCDR_P0) && !defined(PIO_SCIFSR_P0)) \
+	|| (!defined(PIO_ABCDSR_P0) && !defined(PIO_ABSR_P0))
+#error "Unsupported Atmel SAM MCU series"
+#endif
+
+static void configure_common_attr(Pio *pio, u32_t mask, u32_t flags)
 {
 	/* Disable interrupts on the pin(s) */
 	pio->PIO_IDR = mask;
@@ -23,12 +33,15 @@ static void configure_common_attr(Pio *pio, uint32_t mask, uint32_t flags)
 		pio->PIO_PUDR = mask;
 	}
 
+/* Configure pull-down only for MCU series that support it */
+#if defined PIO_PPDER_P0
 	/* Configure pull-down(s) */
 	if (flags & SOC_GPIO_PULLDOWN) {
 		pio->PIO_PPDER = mask;
 	} else {
 		pio->PIO_PPDDR = mask;
 	}
+#endif
 
 	/* Configure open drain (multi-drive) */
 	if (flags & SOC_GPIO_OPENDRAIN) {
@@ -38,16 +51,24 @@ static void configure_common_attr(Pio *pio, uint32_t mask, uint32_t flags)
 	}
 }
 
-static void configure_input_attr(Pio *pio, uint32_t mask, uint32_t flags)
+static void configure_input_attr(Pio *pio, u32_t mask, u32_t flags)
 {
 	/* Configure input filter */
 	if ((flags & SOC_GPIO_IN_FILTER_MASK) != 0) {
 		if ((flags & SOC_GPIO_IN_FILTER_MASK) == SOC_GPIO_IN_FILTER_DEBOUNCE) {
 			/* Enable de-bounce, disable de-glitch */
+#if defined PIO_IFSCER_P0
 			pio->PIO_IFSCER = mask;
+#elif defined PIO_DIFSR_P0
+			pio->PIO_DIFSR = mask;
+#endif
 		} else {
 			/* Disable de-bounce, enable de-glitch */
+#if defined PIO_IFSCDR_P0
 			pio->PIO_IFSCDR = mask;
+#elif defined PIO_SCIFSR_P0
+			pio->PIO_SCIFSR = mask;
+#endif
 		}
 		pio->PIO_IFER = mask;
 	} else {
@@ -86,7 +107,7 @@ static void configure_input_attr(Pio *pio, uint32_t mask, uint32_t flags)
 	}
 }
 
-static void configure_output_attr(Pio *pio, uint32_t mask, uint32_t flags)
+static void configure_output_attr(Pio *pio, u32_t mask, u32_t flags)
 {
 	/* Enable control of the I/O line by the PIO_ODSR register */
 	pio->PIO_OWER = mask;
@@ -94,30 +115,39 @@ static void configure_output_attr(Pio *pio, uint32_t mask, uint32_t flags)
 
 void soc_gpio_configure(const struct soc_gpio_pin *pin)
 {
-	uint32_t mask = pin->mask;
+	u32_t mask = pin->mask;
 	Pio *pio = pin->regs;
-	uint8_t periph_id = pin->periph_id;
-	uint32_t flags = pin->flags;
-	uint32_t type = pin->flags & SOC_GPIO_FUNC_MASK;
+	u8_t periph_id = pin->periph_id;
+	u32_t flags = pin->flags;
+	u32_t type = pin->flags & SOC_GPIO_FUNC_MASK;
 
 	/* Configure pin attributes common to all functions */
 	configure_common_attr(pio, mask, flags);
 
 	switch (type) {
 	case SOC_GPIO_FUNC_A:
+#if defined PIO_ABCDSR_P0
 		pio->PIO_ABCDSR[0] &= ~mask;
 		pio->PIO_ABCDSR[1] &= ~mask;
+#elif defined PIO_ABSR_P0
+		pio->PIO_ABSR &= ~mask;
+#endif
 		/* Connect pin to the peripheral (disconnect PIO block) */
 		pio->PIO_PDR = mask;
 		break;
 
 	case SOC_GPIO_FUNC_B:
+#if defined PIO_ABCDSR_P0
 		pio->PIO_ABCDSR[0] |= mask;
 		pio->PIO_ABCDSR[1] &= ~mask;
+#elif defined PIO_ABSR_P0
+		pio->PIO_ABSR |= mask;
+#endif
 		/* Connect pin to the peripheral (disconnect PIO block) */
 		pio->PIO_PDR = mask;
 		break;
 
+#if defined PIO_ABCDSR_P0
 	case SOC_GPIO_FUNC_C:
 		pio->PIO_ABCDSR[0] &= ~mask;
 		pio->PIO_ABCDSR[1] |= mask;
@@ -131,6 +161,7 @@ void soc_gpio_configure(const struct soc_gpio_pin *pin)
 		/* Connect pin to the peripheral (disconnect PIO block) */
 		pio->PIO_PDR = mask;
 		break;
+#endif
 
 	case SOC_GPIO_FUNC_IN:
 		/* Enable module's clock */

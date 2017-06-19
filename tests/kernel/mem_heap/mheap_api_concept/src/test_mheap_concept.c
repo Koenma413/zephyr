@@ -35,8 +35,8 @@ void test_mheap_malloc_align4(void)
 	 */
 	for (int i = 0; i < BLK_NUM_MAX; i++) {
 		block[i] = k_malloc(i);
-		assert_not_null(block[i], NULL);
-		assert_false((int)block[i]%4, NULL);
+		zassert_not_null(block[i], NULL);
+		zassert_false((int)block[i]%4, NULL);
 	}
 
 	/* test case tear down*/
@@ -61,11 +61,11 @@ void test_mheap_min_block_size(void)
 	 */
 	for (int i = 0; i < BLK_NUM_MAX; i++) {
 		block[i] = k_malloc(TEST_SIZE_0);
-		assert_not_null(block[i], NULL);
+		zassert_not_null(block[i], NULL);
 	}
 	/* verify no more free blocks available*/
 	block_fail = k_malloc(BLK_SIZE_MIN);
-	assert_is_null(block_fail, NULL);
+	zassert_is_null(block_fail, NULL);
 
 	/* test case tear down*/
 	for (int i = 0; i < BLK_NUM_MAX; i++) {
@@ -81,7 +81,7 @@ void test_mheap_block_desc(void)
 	 * TESTPOINT: The kernel uses the first 16 bytes of any memory block
 	 * allocated from the heap memory pool to save the block descriptor
 	 * information it needs to later free the block. Consequently, an
-	 * application’s request for an N byte chunk of heap memory requires a
+	 * application's request for an N byte chunk of heap memory requires a
 	 * block that is at least (N+16) bytes long.
 	 * Test steps:
 	 * initial memory heap status (F for free, U for used):
@@ -91,11 +91,11 @@ void test_mheap_block_desc(void)
 	 */
 	for (int i = 0; i < BLK_NUM_MAX; i++) {
 		block[i] = k_malloc(BLK_SIZE_EXCLUDE_DESC);
-		assert_not_null(block[i], NULL);
+		zassert_not_null(block[i], NULL);
 	}
 	/* verify no more free blocks available*/
 	block_fail = k_malloc(BLK_SIZE_MIN);
-	assert_is_null(block_fail, NULL);
+	zassert_is_null(block_fail, NULL);
 
 	/* test case tear down*/
 	for (int i = 0; i < BLK_NUM_MAX; i++) {

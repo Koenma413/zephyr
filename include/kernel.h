@@ -15,10 +15,10 @@
 
 #if !defined(_ASMLANGUAGE)
 #include <stddef.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <limits.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <atomic.h>
 #include <errno.h>
 #include <misc/__assert.h>
@@ -27,6 +27,7 @@
 #include <misc/util.h>
 #include <kernel_version.h>
 #include <drivers/rand32.h>
+#include <kernel_arch_thread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -105,7 +106,6 @@ typedef sys_dlist_t _wait_q_t;
 #define _POLL_EVENT
 #endif
 
-#define tcs k_thread
 struct k_thread;
 struct k_mutex;
 struct k_sem;
@@ -123,7 +123,140 @@ struct k_timer;
 struct k_poll_event;
 struct k_poll_signal;
 
+/* timeouts */
+
+struct _timeout;
+typedef void (*_timeout_func_t)(struct _timeout *t);
+
+struct _timeout {
+	sys_dnode_t node;
+	struct k_thread *thread;
+	sys_dlist_t *wait_q;
+	s32_t delta_ticks_from_prev;
+	_timeout_func_t func;
+};
+
+extern s32_t _timeout_remaining_get(struct _timeout *timeout);
+
+/* Threads */
+typedef void (*_thread_entry_t)(void *, void *, void *);
+
+#ifdef CONFIG_THREAD_MONITOR
+struct __thread_entry {
+	_thread_entry_t pEntry;
+	void *parameter1;
+	void *parameter2;
+	void *parameter3;
+};
+#endif
+
+/* can be used for creating 'dummy' threads, e.g. for pending on objects */
+struct _thread_base {
+
+	/* this thread's entry in a ready/wait queue */
+	sys_dnode_t k_q_node;
+
+	/* user facing 'thread options'; values defined in include/kernel.h */
+	u8_t user_options;
+
+	/* thread state */
+	u8_t thread_state;
+
+	/*
+	 * scheduler lock count and thread priority
+	 *
+	 * These two fields control the preemptibility of a thread.
+	 *
+	 * When the scheduler is locked, sched_locked is decremented, which
+	 * means that the scheduler is locked for values from 0xff to 0x01. A
+	 * thread is coop if its prio is negative, thus 0x80 to 0xff when
+	 * looked at the value as unsigned.
+	 *
+	 * By putting them end-to-end, this means that a thread is
+	 * non-preemptible if the bundled value is greater than or equal to
+	 * 0x0080.
+	 */
+	union {
+		struct {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+			u8_t sched_locked;
+			s8_t prio;
+#else /* LITTLE and PDP */
+			s8_t prio;
+			u8_t sched_locked;
+#endif
+		};
+		u16_t preempt;
+	};
+
+	/* data returned by APIs */
+	void *swap_data;
+
+#ifdef CONFIG_SYS_CLOCK_EXISTS
+	/* this thread's entry in a timeout queue */
+	struct _timeout timeout;
+#endif
+
+};
+
+typedef struct _thread_base _thread_base_t;
+
+#if defined(CONFIG_THREAD_STACK_INFO)
+/* Contains the stack information of a thread */
+struct _thread_stack_info {
+	/* Stack Start */
+	u32_t start;
+	/* Stack Size */
+	u32_t size;
+};
+
+typedef struct _thread_stack_info _thread_stack_info_t;
+#endif /* CONFIG_THREAD_STACK_INFO */
+
+struct k_thread {
+
+	struct _thread_base base;
+
+	/* defined by the architecture, but all archs need these */
+	struct _caller_saved caller_saved;
+	struct _callee_saved callee_saved;
+
+	/* static thread init data */
+	void *init_data;
+
+	/* abort function */
+	void (*fn_abort)(void);
+
+#if defined(CONFIG_THREAD_MONITOR)
+	/* thread entry and parameters description */
+	struct __thread_entry *entry;
+
+	/* next item in list of all threads */
+	struct k_thread *next_thread;
+#endif
+
+#ifdef CONFIG_THREAD_CUSTOM_DATA
+	/* crude thread-local storage */
+	void *custom_data;
+#endif
+
+#ifdef CONFIG_ERRNO
+	/* per-thread errno variable */
+	int errno_var;
+#endif
+
+#if defined(CONFIG_THREAD_STACK_INFO)
+	/* Stack Info */
+	struct _thread_stack_info stack_info;
+#endif /* CONFIG_THREAD_STACK_INFO */
+
+	/* arch-specifics: must always be at the end */
+	struct _thread_arch arch;
+};
+
+typedef struct k_thread _thread_t;
 typedef struct k_thread *k_tid_t;
+#define tcs k_thread
 
 enum execution_context_types {
 	K_ISR = 0,
@@ -140,7 +273,7 @@ enum execution_context_types {
 /**
  * @brief Analyze the main, idle, interrupt and system workqueue call stacks
  *
- * This routine calls @ref stack_analyze on the 4 call stacks declared and
+ * This routine calls @ref STACK_ANALYZE on the 4 call stacks declared and
  * maintained by the kernel. The sizes of those 4 call stacks are defined by:
  *
  * CONFIG_MAIN_STACK_SIZE
@@ -224,9 +357,20 @@ typedef void (*k_thread_entry_t)(void *p1, void *p2, void *p3);
  * scheduler may preempt the current thread to allow the new thread to
  * execute.
  *
+ * Kernel data structures for bookkeeping and context storage for this thread
+ * will be placed at the beginning of the thread's stack memory region and may
+ * become corrupted if too much of the stack is used. This function has been
+ * deprecated in favor of k_thread_create() to give the user more control on
+ * where these data structures reside.
+ *
  * Thread options are architecture-specific, and can include K_ESSENTIAL,
  * K_FP_REGS, and K_SSE_REGS. Multiple options may be specified by separating
  * them using "|" (the logical OR operator).
+ *
+ * The stack itself should be declared with K_THREAD_STACK_DEFINE or variant
+ * macros. The stack size parameter should either be a defined constant
+ * also passed to K_THREAD_STACK_DEFINE, or the value of K_THREAD_STACK_SIZEOF.
+ * Do not use regular C sizeof().
  *
  * @param stack Pointer to the stack space.
  * @param stack_size Stack size in bytes.
@@ -240,10 +384,48 @@ typedef void (*k_thread_entry_t)(void *p1, void *p2, void *p3);
  *
  * @return ID of new thread.
  */
-extern k_tid_t k_thread_spawn(char *stack, size_t stack_size,
+extern __deprecated k_tid_t k_thread_spawn(char *stack, size_t stack_size,
 			      k_thread_entry_t entry,
 			      void *p1, void *p2, void *p3,
-			      int prio, uint32_t options, int32_t delay);
+			      int prio, u32_t options, s32_t delay);
+
+/**
+ * @brief Create a thread.
+ *
+ * This routine initializes a thread, then schedules it for execution.
+ *
+ * The new thread may be scheduled for immediate execution or a delayed start.
+ * If the newly spawned thread does not have a delayed start the kernel
+ * scheduler may preempt the current thread to allow the new thread to
+ * execute.
+ *
+ * Thread options are architecture-specific, and can include K_ESSENTIAL,
+ * K_FP_REGS, and K_SSE_REGS. Multiple options may be specified by separating
+ * them using "|" (the logical OR operator).
+ *
+ * Historically, users often would use the beginning of the stack memory region
+ * to store the struct k_thread data, although corruption will occur if the
+ * stack overflows this region and stack protection features may not detect this
+ * situation.
+ *
+ * @param new_thread Pointer to uninitialized struct k_thread
+ * @param stack Pointer to the stack space.
+ * @param stack_size Stack size in bytes.
+ * @param entry Thread entry function.
+ * @param p1 1st entry point parameter.
+ * @param p2 2nd entry point parameter.
+ * @param p3 3rd entry point parameter.
+ * @param prio Thread priority.
+ * @param options Thread options.
+ * @param delay Scheduling delay (in milliseconds), or K_NO_WAIT (for no delay).
+ *
+ * @return ID of new thread.
+ */
+extern k_tid_t k_thread_create(struct k_thread *new_thread, char *stack,
+			       size_t stack_size,
+			       void (*entry)(void *, void *, void*),
+			       void *p1, void *p2, void *p3,
+			       int prio, u32_t options, s32_t delay);
 
 /**
  * @brief Put the current thread to sleep.
@@ -255,7 +437,7 @@ extern k_tid_t k_thread_spawn(char *stack, size_t stack_size,
  *
  * @return N/A
  */
-extern void k_sleep(int32_t duration);
+extern void k_sleep(s32_t duration);
 
 /**
  * @brief Cause the current thread to busy wait.
@@ -265,7 +447,7 @@ extern void k_sleep(int32_t duration);
  *
  * @return N/A
  */
-extern void k_busy_wait(uint32_t usec_to_wait);
+extern void k_busy_wait(u32_t usec_to_wait);
 
 /**
  * @brief Yield the current thread.
@@ -306,7 +488,7 @@ extern k_tid_t k_current_get(void);
  *
  * @param thread ID of thread to cancel.
  *
- * @retval 0 Thread spawning cancelled.
+ * @retval 0 Thread spawning canceled.
  * @retval -EINVAL Thread has already started executing.
  */
 extern int k_thread_cancel(k_tid_t thread);
@@ -337,46 +519,27 @@ extern void k_thread_abort(k_tid_t thread);
 /* timeout is not in use */
 #define _INACTIVE (-1)
 
-#ifdef CONFIG_SYS_CLOCK_EXISTS
-#define _THREAD_TIMEOUT_INIT(obj) \
-	(obj).nano_timeout = { \
-	.node = { {0}, {0} }, \
-	.thread = NULL, \
-	.wait_q = NULL, \
-	.delta_ticks_from_prev = _INACTIVE, \
-	},
-#else
-#define _THREAD_TIMEOUT_INIT(obj)
-#endif
-
-#ifdef CONFIG_ERRNO
-#define _THREAD_ERRNO_INIT(obj) (obj).errno_var = 0,
-#else
-#define _THREAD_ERRNO_INIT(obj)
-#endif
-
 struct _static_thread_data {
-	union {
-		char *init_stack;
-		struct k_thread *thread;
-	};
+	struct k_thread *init_thread;
+	char *init_stack;
 	unsigned int init_stack_size;
 	void (*init_entry)(void *, void *, void *);
 	void *init_p1;
 	void *init_p2;
 	void *init_p3;
 	int init_prio;
-	uint32_t init_options;
-	int32_t init_delay;
+	u32_t init_options;
+	s32_t init_delay;
 	void (*init_abort)(void);
-	uint32_t init_groups;
+	u32_t init_groups;
 };
 
-#define _THREAD_INITIALIZER(stack, stack_size,                   \
+#define _THREAD_INITIALIZER(thread, stack, stack_size,           \
 			    entry, p1, p2, p3,                   \
 			    prio, options, delay, abort, groups) \
 	{                                                        \
-	{.init_stack = (stack)},                                 \
+	.init_thread = (thread),				 \
+	.init_stack = (stack),					 \
 	.init_stack_size = (stack_size),                         \
 	.init_entry = (void (*)(void *, void *, void *))entry,   \
 	.init_p1 = (void *)p1,                                   \
@@ -423,13 +586,15 @@ struct _static_thread_data {
 #define K_THREAD_DEFINE(name, stack_size,                                \
 			entry, p1, p2, p3,                               \
 			prio, options, delay)                            \
-	char __noinit __stack _k_thread_obj_##name[stack_size];          \
+	K_THREAD_STACK_DEFINE(_k_thread_stack_##name, stack_size);	 \
+	struct k_thread _k_thread_obj_##name;				 \
 	struct _static_thread_data _k_thread_data_##name __aligned(4)    \
 		__in_section(_static_thread_data, static, name) =        \
-		_THREAD_INITIALIZER(_k_thread_obj_##name, stack_size,    \
+		_THREAD_INITIALIZER(&_k_thread_obj_##name,		 \
+				    _k_thread_stack_##name, stack_size,  \
 				entry, p1, p2, p3, prio, options, delay, \
-				NULL, 0); \
-	const k_tid_t name = (k_tid_t)_k_thread_obj_##name
+				NULL, 0);				 \
+	const k_tid_t name = (k_tid_t)&_k_thread_obj_##name
 
 /**
  * @brief Get a thread's priority.
@@ -511,7 +676,7 @@ extern void k_thread_resume(k_tid_t thread);
  * ensures that no thread runs for more than the specified time limit
  * before other threads of that priority are given a chance to execute.
  * Any thread whose priority is higher than @a prio is exempted, and may
- * execute as long as desired without being pre-empted due to time slicing.
+ * execute as long as desired without being preempted due to time slicing.
  *
  * Time slicing only limits the maximum amount of time a thread may continuously
  * execute. Once the scheduler selects a thread for execution, there is no
@@ -529,7 +694,7 @@ extern void k_thread_resume(k_tid_t thread);
  *
  * @return N/A
  */
-extern void k_sched_time_slice_set(int32_t slice, int prio);
+extern void k_sched_time_slice_set(s32_t slice, int prio);
 
 /**
  * @} end defgroup thread_apis
@@ -742,25 +907,29 @@ extern void *k_thread_custom_data_get(void);
 #endif
 
 #ifdef _NON_OPTIMIZED_TICKS_PER_SEC
-extern int32_t _ms_to_ticks(int32_t ms);
+extern s32_t _ms_to_ticks(s32_t ms);
 #else
-static ALWAYS_INLINE int32_t _ms_to_ticks(int32_t ms)
+static ALWAYS_INLINE s32_t _ms_to_ticks(s32_t ms)
 {
-	return (int32_t)ceiling_fraction((uint32_t)ms, _ms_per_tick);
+	return (s32_t)ceiling_fraction((u32_t)ms, _ms_per_tick);
 }
 #endif
 
 /* added tick needed to account for tick in progress */
+#ifdef CONFIG_TICKLESS_KERNEL
+#define _TICK_ALIGN 0
+#else
 #define _TICK_ALIGN 1
+#endif
 
-static inline int64_t __ticks_to_ms(int64_t ticks)
+static inline s64_t __ticks_to_ms(s64_t ticks)
 {
 #ifdef CONFIG_SYS_CLOCK_EXISTS
 
 #ifdef _NON_OPTIMIZED_TICKS_PER_SEC
-	return (MSEC_PER_SEC * (uint64_t)ticks) / sys_clock_ticks_per_sec;
+	return (MSEC_PER_SEC * (u64_t)ticks) / sys_clock_ticks_per_sec;
 #else
-	return (uint64_t)ticks * _ms_per_tick;
+	return (u64_t)ticks * _ms_per_tick;
 #endif
 
 #else
@@ -768,29 +937,6 @@ static inline int64_t __ticks_to_ms(int64_t ticks)
 	return 0;
 #endif
 }
-
-/* timeouts */
-
-struct _timeout;
-typedef void (*_timeout_func_t)(struct _timeout *t);
-
-struct _timeout {
-	sys_dnode_t node;
-	struct k_thread *thread;
-	sys_dlist_t *wait_q;
-	int32_t delta_ticks_from_prev;
-	_timeout_func_t func;
-};
-
-extern int32_t _timeout_remaining_get(struct _timeout *timeout);
-
-/**
- * INTERNAL_HIDDEN @endcond
- */
-
-/**
- * @cond INTERNAL_HIDDEN
- */
 
 struct k_timer {
 	/*
@@ -810,10 +956,10 @@ struct k_timer {
 	void (*stop_fn)(struct k_timer *);
 
 	/* timer period */
-	int32_t period;
+	s32_t period;
 
 	/* timer status */
-	uint32_t status;
+	u32_t status;
 
 	/* user-specific data, also used to support legacy features */
 	void *user_data;
@@ -922,7 +1068,7 @@ extern void k_timer_init(struct k_timer *timer,
  * @return N/A
  */
 extern void k_timer_start(struct k_timer *timer,
-			  int32_t duration, int32_t period);
+			  s32_t duration, s32_t period);
 
 /**
  * @brief Stop a timer.
@@ -954,7 +1100,7 @@ extern void k_timer_stop(struct k_timer *timer);
  *
  * @return Timer status.
  */
-extern uint32_t k_timer_status_get(struct k_timer *timer);
+extern u32_t k_timer_status_get(struct k_timer *timer);
 
 /**
  * @brief Synchronize thread to timer expiration.
@@ -973,7 +1119,7 @@ extern uint32_t k_timer_status_get(struct k_timer *timer);
  *
  * @return Timer status.
  */
-extern uint32_t k_timer_status_sync(struct k_timer *timer);
+extern u32_t k_timer_status_sync(struct k_timer *timer);
 
 /**
  * @brief Get time remaining before a timer next expires.
@@ -985,7 +1131,7 @@ extern uint32_t k_timer_status_sync(struct k_timer *timer);
  *
  * @return Remaining time (in milliseconds).
  */
-static inline int32_t k_timer_remaining_get(struct k_timer *timer)
+static inline s32_t k_timer_remaining_get(struct k_timer *timer)
 {
 	return _timeout_remaining_get(&timer->timeout);
 }
@@ -1039,7 +1185,45 @@ static inline void *k_timer_user_data_get(struct k_timer *timer)
  *
  * @return Current uptime.
  */
-extern int64_t k_uptime_get(void);
+extern s64_t k_uptime_get(void);
+
+#ifdef CONFIG_TICKLESS_KERNEL
+/**
+ * @brief Enable clock always on in tickless kernel
+ *
+ * This routine enables keeping the clock running when
+ * there are no timer events programmed in tickless kernel
+ * scheduling. This is necessary if the clock is used to track
+ * passage of time.
+ *
+ * @retval prev_status Previous status of always on flag
+ */
+static inline int k_enable_sys_clock_always_on(void)
+{
+	int prev_status = _sys_clock_always_on;
+
+	_sys_clock_always_on = 1;
+	_enable_sys_clock();
+
+	return prev_status;
+}
+
+/**
+ * @brief Disable clock always on in tickless kernel
+ *
+ * This routine disables keeping the clock running when
+ * there are no timer events programmed in tickless kernel
+ * scheduling. To save power, this routine should be called
+ * immediately when clock is not used to track time.
+ */
+static inline void k_disable_sys_clock_always_on(void)
+{
+	_sys_clock_always_on = 0;
+}
+#else
+#define k_enable_sys_clock_always_on() do { } while ((0))
+#define k_disable_sys_clock_always_on() do { } while ((0))
+#endif
 
 /**
  * @brief Get system uptime (32-bit version).
@@ -1054,7 +1238,7 @@ extern int64_t k_uptime_get(void);
  *
  * @return Current uptime.
  */
-extern uint32_t k_uptime_get_32(void);
+extern u32_t k_uptime_get_32(void);
 
 /**
  * @brief Get elapsed time.
@@ -1067,7 +1251,7 @@ extern uint32_t k_uptime_get_32(void);
  *
  * @return Elapsed time.
  */
-extern int64_t k_uptime_delta(int64_t *reftime);
+extern s64_t k_uptime_delta(s64_t *reftime);
 
 /**
  * @brief Get elapsed time (32-bit version).
@@ -1085,7 +1269,7 @@ extern int64_t k_uptime_delta(int64_t *reftime);
  *
  * @return Elapsed time.
  */
-extern uint32_t k_uptime_delta_32(int64_t *reftime);
+extern u32_t k_uptime_delta_32(s64_t *reftime);
 
 /**
  * @brief Read the hardware clock.
@@ -1141,6 +1325,20 @@ struct k_queue {
  * @return N/A
  */
 extern void k_queue_init(struct k_queue *queue);
+
+/**
+ * @brief Cancel waiting on a queue.
+ *
+ * This routine causes first thread pending on @a queue, if any, to
+ * return from k_queue_get() call with NULL value (as if timeout expired).
+ *
+ * @note Can be called by ISRs.
+ *
+ * @param queue Address of the queue.
+ *
+ * @return N/A
+ */
+extern void k_queue_cancel_wait(struct k_queue *queue);
 
 /**
  * @brief Append an element to the end of a queue.
@@ -1240,7 +1438,7 @@ extern void k_queue_merge_slist(struct k_queue *queue, sys_slist_t *list);
  * @return Address of the data item if successful; NULL if returned
  * without waiting, or waiting period timed out.
  */
-extern void *k_queue_get(struct k_queue *queue, int32_t timeout);
+extern void *k_queue_get(struct k_queue *queue, s32_t timeout);
 
 /**
  * @brief Query a queue to see if it has data available.
@@ -1312,6 +1510,22 @@ struct k_fifo {
  */
 #define k_fifo_init(fifo) \
 	k_queue_init((struct k_queue *) fifo)
+
+/**
+ * @brief Cancel waiting on a fifo.
+ *
+ * This routine causes first thread pending on @a fifo, if any, to
+ * return from k_fifo_get() call with NULL value (as if timeout
+ * expired).
+ *
+ * @note Can be called by ISRs.
+ *
+ * @param fifo Address of the fifo.
+ *
+ * @return N/A
+ */
+#define k_fifo_cancel_wait(fifo) \
+	k_queue_cancel_wait((struct k_queue *) fifo)
 
 /**
  * @brief Add an element to a fifo.
@@ -1513,7 +1727,7 @@ struct k_lifo {
 
 struct k_stack {
 	_wait_q_t wait_q;
-	uint32_t *base, *next, *top;
+	u32_t *base, *next, *top;
 
 	_OBJECT_TRACING_NEXT_PTR(k_stack);
 };
@@ -1549,7 +1763,7 @@ struct k_stack {
  * @return N/A
  */
 extern void k_stack_init(struct k_stack *stack,
-			 uint32_t *buffer, int num_entries);
+			 u32_t *buffer, int num_entries);
 
 /**
  * @brief Push an element onto a stack.
@@ -1563,7 +1777,7 @@ extern void k_stack_init(struct k_stack *stack,
  *
  * @return N/A
  */
-extern void k_stack_push(struct k_stack *stack, uint32_t data);
+extern void k_stack_push(struct k_stack *stack, u32_t data);
 
 /**
  * @brief Pop an element from a stack.
@@ -1582,7 +1796,7 @@ extern void k_stack_push(struct k_stack *stack, uint32_t data);
  * @retval -EBUSY Returned without waiting.
  * @retval -EAGAIN Waiting period timed out.
  */
-extern int k_stack_pop(struct k_stack *stack, uint32_t *data, int32_t timeout);
+extern int k_stack_pop(struct k_stack *stack, u32_t *data, s32_t timeout);
 
 /**
  * @brief Statically define and initialize a stack
@@ -1595,7 +1809,7 @@ extern int k_stack_pop(struct k_stack *stack, uint32_t *data, int32_t timeout);
  * @param stack_num_entries Maximum number of values that can be stacked.
  */
 #define K_STACK_DEFINE(name, stack_num_entries)                \
-	uint32_t __noinit                                      \
+	u32_t __noinit                                      \
 		_k_stack_buf_##name[stack_num_entries];        \
 	struct k_stack name                                    \
 		__in_section(_k_stack, static, name) =    \
@@ -1633,6 +1847,7 @@ typedef void (*k_work_handler_t)(struct k_work *work);
 
 struct k_work_q {
 	struct k_fifo fifo;
+	struct k_thread thread;
 };
 
 enum {
@@ -1743,8 +1958,11 @@ static inline int k_work_pending(struct k_work *work)
  * processing thread, which runs forever.
  *
  * @param work_q Address of workqueue.
- * @param stack Pointer to work queue thread's stack space.
- * @param stack_size Size of the work queue thread's stack (in bytes).
+ * @param stack Pointer to work queue thread's stack space, as defined by
+ *		K_THREAD_STACK_DEFINE()
+ * @param stack_size Size of the work queue thread's stack (in bytes), which
+ *		should either be the same constant passed to
+ *		K_THREAD_STACK_DEFINE() or the value of K_THREAD_STACK_SIZEOF().
  * @param prio Priority of the work queue's thread.
  *
  * @return N/A
@@ -1771,7 +1989,7 @@ extern void k_delayed_work_init(struct k_delayed_work *work,
  *
  * This routine schedules work item @a work to be processed by workqueue
  * @a work_q after a delay of @a delay milliseconds. The routine initiates
- * an asychronous countdown for the work item and then returns to the caller.
+ * an asynchronous countdown for the work item and then returns to the caller.
  * Only when the countdown completes is the work item actually submitted to
  * the workqueue and becomes pending.
  *
@@ -1800,20 +2018,20 @@ extern void k_delayed_work_init(struct k_delayed_work *work,
  */
 extern int k_delayed_work_submit_to_queue(struct k_work_q *work_q,
 					  struct k_delayed_work *work,
-					  int32_t delay);
+					  s32_t delay);
 
 /**
  * @brief Cancel a delayed work item.
  *
  * This routine cancels the submission of delayed work item @a work.
- * A delayed work item can only be cancelled while its countdown is still
+ * A delayed work item can only be canceled while its countdown is still
  * underway.
  *
  * @note Can be called by ISRs.
  *
  * @param work Address of delayed work item.
  *
- * @retval 0 Work item countdown cancelled.
+ * @retval 0 Work item countdown canceled.
  * @retval -EINPROGRESS Work item is already pending.
  * @retval -EINVAL Work item is being processed or has completed its work.
  */
@@ -1850,7 +2068,7 @@ static inline void k_work_submit(struct k_work *work)
  *
  * This routine schedules work item @a work to be processed by the system
  * workqueue after a delay of @a delay milliseconds. The routine initiates
- * an asychronous countdown for the work item and then returns to the caller.
+ * an asynchronous countdown for the work item and then returns to the caller.
  * Only when the countdown completes is the work item actually submitted to
  * the workqueue and becomes pending.
  *
@@ -1878,7 +2096,7 @@ static inline void k_work_submit(struct k_work *work)
  * @retval -EADDRINUSE Work item is pending on a different workqueue.
  */
 static inline int k_delayed_work_submit(struct k_delayed_work *work,
-					int32_t delay)
+					s32_t delay)
 {
 	return k_delayed_work_submit_to_queue(&k_sys_work_q, work, delay);
 }
@@ -1894,7 +2112,7 @@ static inline int k_delayed_work_submit(struct k_delayed_work *work,
  *
  * @return Remaining time (in milliseconds).
  */
-static inline int32_t k_delayed_work_remaining_get(struct k_delayed_work *work)
+static inline s32_t k_delayed_work_remaining_get(struct k_delayed_work *work)
 {
 	return _timeout_remaining_get(&work->timeout);
 }
@@ -1910,22 +2128,11 @@ static inline int32_t k_delayed_work_remaining_get(struct k_delayed_work *work)
 struct k_mutex {
 	_wait_q_t wait_q;
 	struct k_thread *owner;
-	uint32_t lock_count;
+	u32_t lock_count;
 	int owner_orig_prio;
-#ifdef CONFIG_OBJECT_MONITOR
-	int num_lock_state_changes;
-	int num_conflicts;
-#endif
 
 	_OBJECT_TRACING_NEXT_PTR(k_mutex);
 };
-
-#ifdef CONFIG_OBJECT_MONITOR
-#define _MUTEX_INIT_OBJECT_MONITOR \
-	.num_lock_state_changes = 0, .num_conflicts = 0,
-#else
-#define _MUTEX_INIT_OBJECT_MONITOR
-#endif
 
 #define K_MUTEX_INITIALIZER(obj) \
 	{ \
@@ -1933,7 +2140,6 @@ struct k_mutex {
 	.owner = NULL, \
 	.lock_count = 0, \
 	.owner_orig_prio = K_LOWEST_THREAD_PRIO, \
-	_MUTEX_INIT_OBJECT_MONITOR \
 	_OBJECT_TRACING_INIT \
 	}
 
@@ -1992,7 +2198,7 @@ extern void k_mutex_init(struct k_mutex *mutex);
  * @retval -EBUSY Returned without waiting.
  * @retval -EAGAIN Waiting period timed out.
  */
-extern int k_mutex_lock(struct k_mutex *mutex, int32_t timeout);
+extern int k_mutex_lock(struct k_mutex *mutex, s32_t timeout);
 
 /**
  * @brief Unlock a mutex.
@@ -2081,7 +2287,7 @@ extern void k_sem_init(struct k_sem *sem, unsigned int initial_count,
  * @retval -EBUSY Returned without waiting.
  * @retval -EAGAIN Waiting period timed out.
  */
-extern int k_sem_take(struct k_sem *sem, int32_t timeout);
+extern int k_sem_take(struct k_sem *sem, s32_t timeout);
 
 /**
  * @brief Give a semaphore.
@@ -2156,7 +2362,7 @@ static inline unsigned int k_sem_count_get(struct k_sem *sem)
  * @brief Alert handler function type.
  *
  * An alert's alert handler function is invoked by the system workqueue
- * when the alert is signalled. The alert handler function is optional,
+ * when the alert is signaled. The alert handler function is optional,
  * and is only invoked if the alert has been initialized with one.
  *
  * @param alert Address of the alert.
@@ -2257,7 +2463,7 @@ extern void k_alert_init(struct k_alert *alert, k_alert_handler_t handler,
  * @retval -EBUSY Returned without waiting.
  * @retval -EAGAIN Waiting period timed out.
  */
-extern int k_alert_recv(struct k_alert *alert, int32_t timeout);
+extern int k_alert_recv(struct k_alert *alert, s32_t timeout);
 
 /**
  * @brief Signal an alert.
@@ -2286,12 +2492,12 @@ extern void k_alert_send(struct k_alert *alert);
 struct k_msgq {
 	_wait_q_t wait_q;
 	size_t msg_size;
-	uint32_t max_msgs;
+	u32_t max_msgs;
 	char *buffer_start;
 	char *buffer_end;
 	char *read_ptr;
 	char *write_ptr;
-	uint32_t used_msgs;
+	u32_t used_msgs;
 
 	_OBJECT_TRACING_NEXT_PTR(k_msgq);
 };
@@ -2365,7 +2571,7 @@ struct k_msgq {
  * @return N/A
  */
 extern void k_msgq_init(struct k_msgq *q, char *buffer,
-			size_t msg_size, uint32_t max_msgs);
+			size_t msg_size, u32_t max_msgs);
 
 /**
  * @brief Send a message to a message queue.
@@ -2383,7 +2589,7 @@ extern void k_msgq_init(struct k_msgq *q, char *buffer,
  * @retval -ENOMSG Returned without waiting or queue purged.
  * @retval -EAGAIN Waiting period timed out.
  */
-extern int k_msgq_put(struct k_msgq *q, void *data, int32_t timeout);
+extern int k_msgq_put(struct k_msgq *q, void *data, s32_t timeout);
 
 /**
  * @brief Receive a message from a message queue.
@@ -2402,7 +2608,7 @@ extern int k_msgq_put(struct k_msgq *q, void *data, int32_t timeout);
  * @retval -ENOMSG Returned without waiting.
  * @retval -EAGAIN Waiting period timed out.
  */
-extern int k_msgq_get(struct k_msgq *q, void *data, int32_t timeout);
+extern int k_msgq_get(struct k_msgq *q, void *data, s32_t timeout);
 
 /**
  * @brief Purge a message queue.
@@ -2427,7 +2633,7 @@ extern void k_msgq_purge(struct k_msgq *q);
  *
  * @return Number of unused ring buffer entries.
  */
-static inline uint32_t k_msgq_num_free_get(struct k_msgq *q)
+static inline u32_t k_msgq_num_free_get(struct k_msgq *q)
 {
 	return q->max_msgs - q->used_msgs;
 }
@@ -2441,7 +2647,7 @@ static inline uint32_t k_msgq_num_free_get(struct k_msgq *q)
  *
  * @return Number of messages.
  */
-static inline uint32_t k_msgq_num_used_get(struct k_msgq *q)
+static inline u32_t k_msgq_num_used_get(struct k_msgq *q)
 {
 	return q->used_msgs;
 }
@@ -2456,11 +2662,20 @@ static inline uint32_t k_msgq_num_used_get(struct k_msgq *q)
  * @{
  */
 
+/* Note on sizing: the use of a 20 bit field for block means that,
+ * assuming a reasonable minimum block size of 16 bytes, we're limited
+ * to 16M of memory managed by a single pool.  Long term it would be
+ * good to move to a variable bit size based on configuration.
+ */
+struct k_mem_block_id {
+	u32_t pool : 8;
+	u32_t level : 4;
+	u32_t block : 20;
+};
+
 struct k_mem_block {
-	struct k_mem_pool *pool_id;
-	void *addr_in_pool;
 	void *data;
-	size_t req_size;
+	struct k_mem_block_id id;
 };
 
 /**
@@ -2475,11 +2690,11 @@ struct k_mem_block {
 
 struct k_mbox_msg {
 	/** internal use only - needed for legacy API support */
-	uint32_t _mailbox;
+	u32_t _mailbox;
 	/** size of message (in bytes) */
 	size_t size;
 	/** application-defined information value */
-	uint32_t info;
+	u32_t info;
 	/** sender's message data buffer */
 	void *tx_data;
 	/** internal use only - needed for legacy API support */
@@ -2565,7 +2780,7 @@ extern void k_mbox_init(struct k_mbox *mbox);
  * @retval -EAGAIN Waiting period timed out.
  */
 extern int k_mbox_put(struct k_mbox *mbox, struct k_mbox_msg *tx_msg,
-		      int32_t timeout);
+		      s32_t timeout);
 
 /**
  * @brief Send a mailbox message in an asynchronous manner.
@@ -2604,7 +2819,7 @@ extern void k_mbox_async_put(struct k_mbox *mbox, struct k_mbox_msg *tx_msg,
  * @retval -EAGAIN Waiting period timed out.
  */
 extern int k_mbox_get(struct k_mbox *mbox, struct k_mbox_msg *rx_msg,
-		      void *buffer, int32_t timeout);
+		      void *buffer, s32_t timeout);
 
 /**
  * @brief Retrieve mailbox message data into a buffer.
@@ -2655,7 +2870,7 @@ extern void k_mbox_data_get(struct k_mbox_msg *rx_msg, void *buffer);
  */
 extern int k_mbox_data_block_get(struct k_mbox_msg *rx_msg,
 				 struct k_mem_pool *pool,
-				 struct k_mem_block *block, int32_t timeout);
+				 struct k_mem_block *block, s32_t timeout);
 
 /**
  * @} end defgroup mailbox_apis
@@ -2758,7 +2973,7 @@ extern void k_pipe_init(struct k_pipe *pipe, unsigned char *buffer,
  */
 extern int k_pipe_put(struct k_pipe *pipe, void *data,
 		      size_t bytes_to_write, size_t *bytes_written,
-		      size_t min_xfer, int32_t timeout);
+		      size_t min_xfer, s32_t timeout);
 
 /**
  * @brief Read data from a pipe.
@@ -2781,7 +2996,7 @@ extern int k_pipe_put(struct k_pipe *pipe, void *data,
  */
 extern int k_pipe_get(struct k_pipe *pipe, void *data,
 		      size_t bytes_to_read, size_t *bytes_read,
-		      size_t min_xfer, int32_t timeout);
+		      size_t min_xfer, s32_t timeout);
 
 /**
  * @brief Write memory block to a pipe.
@@ -2810,11 +3025,11 @@ extern void k_pipe_block_put(struct k_pipe *pipe, struct k_mem_block *block,
 
 struct k_mem_slab {
 	_wait_q_t wait_q;
-	uint32_t num_blocks;
+	u32_t num_blocks;
 	size_t block_size;
 	char *buffer;
 	char *free_list;
-	uint32_t num_used;
+	u32_t num_used;
 
 	_OBJECT_TRACING_NEXT_PTR(k_mem_slab);
 };
@@ -2887,7 +3102,7 @@ struct k_mem_slab {
  * @return N/A
  */
 extern void k_mem_slab_init(struct k_mem_slab *slab, void *buffer,
-			   size_t block_size, uint32_t num_blocks);
+			   size_t block_size, u32_t num_blocks);
 
 /**
  * @brief Allocate memory from a memory slab.
@@ -2906,7 +3121,7 @@ extern void k_mem_slab_init(struct k_mem_slab *slab, void *buffer,
  * @retval -EAGAIN Waiting period timed out.
  */
 extern int k_mem_slab_alloc(struct k_mem_slab *slab, void **mem,
-			    int32_t timeout);
+			    s32_t timeout);
 
 /**
  * @brief Free memory allocated from a memory slab.
@@ -2931,7 +3146,7 @@ extern void k_mem_slab_free(struct k_mem_slab *slab, void **mem);
  *
  * @return Number of allocated memory blocks.
  */
-static inline uint32_t k_mem_slab_num_used_get(struct k_mem_slab *slab)
+static inline u32_t k_mem_slab_num_used_get(struct k_mem_slab *slab)
 {
 	return slab->num_used;
 }
@@ -2946,7 +3161,7 @@ static inline uint32_t k_mem_slab_num_used_get(struct k_mem_slab *slab)
  *
  * @return Number of unallocated memory blocks.
  */
-static inline uint32_t k_mem_slab_num_free_get(struct k_mem_slab *slab)
+static inline u32_t k_mem_slab_num_free_get(struct k_mem_slab *slab)
 {
 	return slab->num_blocks - slab->num_used;
 }
@@ -2959,199 +3174,80 @@ static inline uint32_t k_mem_slab_num_free_get(struct k_mem_slab *slab)
  * @cond INTERNAL_HIDDEN
  */
 
-/*
- * Memory pool requires a buffer and two arrays of structures for the
- * memory block accounting:
- * A set of arrays of k_mem_pool_quad_block structures where each keeps a
- * status of four blocks of memory.
- */
-struct k_mem_pool_quad_block {
-	char *mem_blocks; /* pointer to the first of four memory blocks */
-	uint32_t mem_status; /* four bits. If bit is set, memory block is
-				allocated */
-};
-/*
- * Memory pool mechanism uses one array of k_mem_pool_quad_block for accounting
- * blocks of one size. Block sizes go from maximal to minimal. Next memory
- * block size is 4 times less than the previous one and thus requires 4 times
- * bigger array of k_mem_pool_quad_block structures to keep track of the
- * memory blocks.
- */
-
-/*
- * The array of k_mem_pool_block_set keeps the information of each array of
- * k_mem_pool_quad_block structures
- */
-struct k_mem_pool_block_set {
-	size_t block_size; /* memory block size */
-	uint32_t nr_of_entries; /* nr of quad block structures in the array */
-	struct k_mem_pool_quad_block *quad_block;
-	int count;
+struct k_mem_pool_lvl {
+	union {
+		u32_t *bits_p;
+		u32_t bits;
+	};
+	sys_dlist_t free_list;
 };
 
-/* Memory pool descriptor */
 struct k_mem_pool {
-	size_t max_block_size;
-	size_t min_block_size;
-	uint32_t nr_of_maxblocks;
-	uint32_t nr_of_block_sets;
-	struct k_mem_pool_block_set *block_set;
-	char *bufblock;
+	void *buf;
+	size_t max_sz;
+	u16_t n_max;
+	u8_t n_levels;
+	u8_t max_inline_level;
+	struct k_mem_pool_lvl *levels;
 	_wait_q_t wait_q;
-	_OBJECT_TRACING_NEXT_PTR(k_mem_pool);
 };
 
-#ifdef CONFIG_ARM
-#define _SECTION_TYPE_SIGN "%"
-#else
-#define _SECTION_TYPE_SIGN "@"
-#endif
+#define _ALIGN4(n) ((((n)+3)/4)*4)
 
-/*
- * Static memory pool initialization
+#define _MPOOL_HAVE_LVL(max, min, l) (((max) >> (2*(l))) >= (min) ? 1 : 0)
+
+#define _MPOOL_LVLS(maxsz, minsz)		\
+	(_MPOOL_HAVE_LVL(maxsz, minsz, 0) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 1) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 2) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 3) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 4) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 5) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 6) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 7) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 8) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 9) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 10) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 11) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 12) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 13) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 14) +	\
+	_MPOOL_HAVE_LVL(maxsz, minsz, 15))
+
+/* Rounds the needed bits up to integer multiples of u32_t */
+#define _MPOOL_LBIT_WORDS_UNCLAMPED(n_max, l) \
+	((((n_max) << (2*(l))) + 31) / 32)
+
+/* One word gets stored free unioned with the pointer, otherwise the
+ * calculated unclamped value
  */
+#define _MPOOL_LBIT_WORDS(n_max, l)			\
+	(_MPOOL_LBIT_WORDS_UNCLAMPED(n_max, l) < 2 ? 0	\
+	 : _MPOOL_LBIT_WORDS_UNCLAMPED(n_max, l))
 
-/*
- * Use .altmacro to be able to recalculate values and pass them as string
- * arguments when calling assembler macros resursively
- */
-__asm__(".altmacro\n\t");
+/* How many bytes for the bitfields of a single level? */
+#define _MPOOL_LBIT_BYTES(maxsz, minsz, l, n_max)	\
+	(_MPOOL_LVLS((maxsz), (minsz)) >= (l) ?		\
+	 4 * _MPOOL_LBIT_WORDS((n_max), l) : 0)
 
-/*
- * Recursively calls a macro
- * The followig global symbols need to be initialized:
- * __memory_pool_max_block_size - maximal size of the memory block
- * __memory_pool_min_block_size - minimal size of the memory block
- * Notes:
- * Global symbols are used due the fact that assembler macro allows only
- * one argument be passed with the % conversion
- * Some assemblers do not get division operation ("/"). To avoid it >> 2
- * is used instead of / 4.
- * n_max argument needs to go first in the invoked macro, as some
- * assemblers concatenate \name and %(\n_max * 4) arguments
- * if \name goes first
- */
-__asm__(".macro __do_recurse macro_name, name, n_max\n\t"
-	".ifge __memory_pool_max_block_size >> 2 -"
-	" __memory_pool_min_block_size\n\t\t"
-	"__memory_pool_max_block_size = __memory_pool_max_block_size >> 2\n\t\t"
-	"\\macro_name %(\\n_max * 4) \\name\n\t"
-	".endif\n\t"
-	".endm\n");
-
-/*
- * Build quad blocks
- * Macro allocates space in memory for the array of k_mem_pool_quad_block
- * structures and recursively calls itself for the next array, 4 times
- * larger.
- * The followig global symbols need to be initialized:
- * __memory_pool_max_block_size - maximal size of the memory block
- * __memory_pool_min_block_size - minimal size of the memory block
- * __memory_pool_quad_block_size - sizeof(struct k_mem_pool_quad_block)
- */
-__asm__(".macro _build_quad_blocks n_max, name\n\t"
-	".balign 4\n\t"
-	"_mem_pool_quad_blocks_\\name\\()_\\n_max:\n\t"
-	".skip __memory_pool_quad_block_size * \\n_max >> 2\n\t"
-	".if \\n_max % 4\n\t\t"
-	".skip __memory_pool_quad_block_size\n\t"
-	".endif\n\t"
-	"__do_recurse _build_quad_blocks \\name \\n_max\n\t"
-	".endm\n");
-
-/*
- * Build block sets and initialize them
- * Macro initializes the k_mem_pool_block_set structure and
- * recursively calls itself for the next one.
- * The followig global symbols need to be initialized:
- * __memory_pool_max_block_size - maximal size of the memory block
- * __memory_pool_min_block_size - minimal size of the memory block
- * __memory_pool_block_set_count, the number of the elements in the
- * block set array must be set to 0. Macro calculates it's real
- * value.
- * Since the macro initializes pointers to an array of k_mem_pool_quad_block
- * structures, _build_quad_blocks must be called prior it.
- */
-__asm__(".macro _build_block_set n_max, name\n\t"
-	".int __memory_pool_max_block_size\n\t" /* block_size */
-	".if \\n_max % 4\n\t\t"
-	".int \\n_max >> 2 + 1\n\t" /* nr_of_entries */
-	".else\n\t\t"
-	".int \\n_max >> 2\n\t"
-	".endif\n\t"
-	".int _mem_pool_quad_blocks_\\name\\()_\\n_max\n\t" /* quad_block */
-	".int 0\n\t" /* count */
-	"__memory_pool_block_set_count = __memory_pool_block_set_count + 1\n\t"
-	"__do_recurse _build_block_set \\name \\n_max\n\t"
-	".endm\n");
-
-/*
- * Build a memory pool structure and initialize it
- * Macro uses __memory_pool_block_set_count global symbol,
- * block set addresses and buffer address, it may be called only after
- * _build_block_set
- */
-__asm__(".macro _build_mem_pool name, min_size, max_size, n_max\n\t"
-	".pushsection ._k_mem_pool.static.\\name,\"aw\","
-	_SECTION_TYPE_SIGN "progbits\n\t"
-	".globl \\name\n\t"
-	"\\name:\n\t"
-	".int \\max_size\n\t" /* max_block_size */
-	".int \\min_size\n\t" /* min_block_size */
-	".int \\n_max\n\t" /* nr_of_maxblocks */
-	".int __memory_pool_block_set_count\n\t" /* nr_of_block_sets */
-	".int _mem_pool_block_sets_\\name\n\t" /* block_set */
-	".int _mem_pool_buffer_\\name\n\t" /* bufblock */
-	".int 0\n\t" /* wait_q->head */
-	".int 0\n\t" /* wait_q->next */
-	".popsection\n\t"
-	".endm\n");
-
-#define _MEMORY_POOL_QUAD_BLOCK_DEFINE(name, min_size, max_size, n_max) \
-	__asm__(".pushsection ._k_memory_pool.struct,\"aw\","		\
-		_SECTION_TYPE_SIGN "progbits\n\t");			\
-	__asm__("__memory_pool_min_block_size = " STRINGIFY(min_size) "\n\t"); \
-	__asm__("__memory_pool_max_block_size = " STRINGIFY(max_size) "\n\t"); \
-	__asm__("_build_quad_blocks " STRINGIFY(n_max) " "		\
-		STRINGIFY(name) "\n\t");				\
-	__asm__(".popsection\n\t")
-
-#define _MEMORY_POOL_BLOCK_SETS_DEFINE(name, min_size, max_size, n_max) \
-	__asm__("__memory_pool_block_set_count = 0\n\t");		\
-	__asm__("__memory_pool_max_block_size = " STRINGIFY(max_size) "\n\t"); \
-	__asm__(".pushsection ._k_memory_pool.struct,\"aw\","		\
-		_SECTION_TYPE_SIGN "progbits\n\t");			\
-	__asm__(".balign 4\n\t");			\
-	__asm__("_mem_pool_block_sets_" STRINGIFY(name) ":\n\t");	\
-	__asm__("_build_block_set " STRINGIFY(n_max) " "		\
-		STRINGIFY(name) "\n\t");				\
-	__asm__("_mem_pool_block_set_count_" STRINGIFY(name) ":\n\t");	\
-	__asm__(".int __memory_pool_block_set_count\n\t");		\
-	__asm__(".popsection\n\t");					\
-	extern uint32_t _mem_pool_block_set_count_##name;		\
-	extern struct k_mem_pool_block_set _mem_pool_block_sets_##name[]
-
-#define _MEMORY_POOL_BUFFER_DEFINE(name, max_size, n_max, align)	\
-	char __noinit __aligned(align)                                  \
-		_mem_pool_buffer_##name[(max_size) * (n_max)]
-
-/*
- * Dummy function that assigns the value of sizeof(struct k_mem_pool_quad_block)
- * to __memory_pool_quad_block_size absolute symbol.
- * This function does not get called, but compiler calculates the value and
- * assigns it to the absolute symbol, that, in turn is used by assembler macros.
- */
-static void __attribute__ ((used)) __k_mem_pool_quad_block_size_define(void)
-{
-	__asm__(".globl __memory_pool_quad_block_size\n\t"
-#if defined(CONFIG_NIOS2) || defined(CONFIG_XTENSA)
-	    "__memory_pool_quad_block_size = %0\n\t"
-#else
-	    "__memory_pool_quad_block_size = %c0\n\t"
-#endif
-	    :
-	    : "n"(sizeof(struct k_mem_pool_quad_block)));
-}
+/* Size of the bitmap array that follows the buffer in allocated memory */
+#define _MPOOL_BITS_SIZE(maxsz, minsz, n_max) \
+	(_MPOOL_LBIT_BYTES(maxsz, minsz, 0, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 1, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 2, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 3, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 4, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 5, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 6, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 7, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 8, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 9, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 10, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 11, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 12, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 13, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 14, n_max) +	\
+	_MPOOL_LBIT_BYTES(maxsz, minsz, 15, n_max))
 
 /**
  * INTERNAL_HIDDEN @endcond
@@ -3168,9 +3264,7 @@ static void __attribute__ ((used)) __k_mem_pool_quad_block_size_define(void)
  * The memory pool's buffer contains @a n_max blocks that are @a max_size bytes
  * long. The memory pool allows blocks to be repeatedly partitioned into
  * quarters, down to blocks of @a min_size bytes long. The buffer is aligned
- * to a @a align -byte boundary. To ensure that the minimum sized blocks are
- * similarly aligned to this boundary, @a min_size must also be a multiple of
- * @a align.
+ * to a @a align -byte boundary.
  *
  * If the pool is to be accessed outside the module where it is defined, it
  * can be declared via
@@ -3178,18 +3272,22 @@ static void __attribute__ ((used)) __k_mem_pool_quad_block_size_define(void)
  * @code extern struct k_mem_pool <name>; @endcode
  *
  * @param name Name of the memory pool.
- * @param min_size Size of the smallest blocks in the pool (in bytes).
- * @param max_size Size of the largest blocks in the pool (in bytes).
- * @param n_max Number of maximum sized blocks in the pool.
+ * @param minsz Size of the smallest blocks in the pool (in bytes).
+ * @param maxsz Size of the largest blocks in the pool (in bytes).
+ * @param nmax Number of maximum sized blocks in the pool.
  * @param align Alignment of the pool's buffer (power of 2).
  */
-#define K_MEM_POOL_DEFINE(name, min_size, max_size, n_max, align)     \
-	_MEMORY_POOL_QUAD_BLOCK_DEFINE(name, min_size, max_size, n_max); \
-	_MEMORY_POOL_BLOCK_SETS_DEFINE(name, min_size, max_size, n_max); \
-	_MEMORY_POOL_BUFFER_DEFINE(name, max_size, n_max, align);        \
-	__asm__("_build_mem_pool " STRINGIFY(name) " " STRINGIFY(min_size) " " \
-	       STRINGIFY(max_size) " " STRINGIFY(n_max) "\n\t");	\
-	extern struct k_mem_pool name
+#define K_MEM_POOL_DEFINE(name, minsz, maxsz, nmax, align)		\
+	char __aligned(align) _mpool_buf_##name[_ALIGN4(maxsz * nmax)	\
+				  + _MPOOL_BITS_SIZE(maxsz, minsz, nmax)]; \
+	struct k_mem_pool_lvl _mpool_lvls_##name[_MPOOL_LVLS(maxsz, minsz)]; \
+	struct k_mem_pool name __in_section(_k_mem_pool, static, name) = { \
+		.buf = _mpool_buf_##name,				\
+		.max_sz = maxsz,					\
+		.n_max = nmax,						\
+		.n_levels = _MPOOL_LVLS(maxsz, minsz),			\
+		.levels = _mpool_lvls_##name,				\
+	}
 
 /**
  * @brief Allocate memory from a memory pool.
@@ -3209,7 +3307,7 @@ static void __attribute__ ((used)) __k_mem_pool_quad_block_size_define(void)
  * @retval -EAGAIN Waiting period timed out.
  */
 extern int k_mem_pool_alloc(struct k_mem_pool *pool, struct k_mem_block *block,
-			    size_t size, int32_t timeout);
+			    size_t size, s32_t timeout);
 
 /**
  * @brief Free memory allocated from a memory pool.
@@ -3226,16 +3324,13 @@ extern void k_mem_pool_free(struct k_mem_block *block);
 /**
  * @brief Defragment a memory pool.
  *
- * This routine instructs a memory pool to concatenate unused memory blocks
- * into larger blocks wherever possible. Manually defragmenting the memory
- * pool may speed up future allocations of memory blocks by eliminating the
- * need for the memory pool to perform an automatic partial defragmentation.
+ * This is a no-op API preserved for backward compatibility only.
  *
- * @param pool Address of the memory pool.
+ * @param pool Unused
  *
  * @return N/A
  */
-extern void k_mem_pool_defrag(struct k_mem_pool *pool);
+static inline void __deprecated k_mem_pool_defrag(struct k_mem_pool *pool) {}
 
 /**
  * @} end addtogroup mem_pool_apis
@@ -3404,19 +3499,19 @@ struct k_poll_event {
 	struct _poller *poller;
 
 	/* optional user-specified tag, opaque, untouched by the API */
-	uint32_t tag:8;
+	u32_t tag:8;
 
 	/* bitfield of event types (bitwise-ORed K_POLL_TYPE_xxx values) */
-	uint32_t type:_POLL_NUM_TYPES;
+	u32_t type:_POLL_NUM_TYPES;
 
 	/* bitfield of event states (bitwise-ORed K_POLL_STATE_xxx values) */
-	uint32_t state:_POLL_NUM_STATES;
+	u32_t state:_POLL_NUM_STATES;
 
 	/* mode of operation, from enum k_poll_modes */
-	uint32_t mode:1;
+	u32_t mode:1;
 
 	/* unused bits in 32-bit word */
-	uint32_t unused:_POLL_EVENT_NUM_UNUSED_BITS;
+	u32_t unused:_POLL_EVENT_NUM_UNUSED_BITS;
 
 	/* per-type data */
 	union {
@@ -3466,7 +3561,7 @@ struct k_poll_event {
  * @return N/A
  */
 
-extern void k_poll_event_init(struct k_poll_event *event, uint32_t type,
+extern void k_poll_event_init(struct k_poll_event *event, u32_t type,
 			      int mode, void *obj);
 
 /**
@@ -3511,7 +3606,7 @@ extern void k_poll_event_init(struct k_poll_event *event, uint32_t type,
  */
 
 extern int k_poll(struct k_poll_event *events, int num_events,
-		  int32_t timeout);
+		  s32_t timeout);
 
 /**
  * @brief Initialize a poll signal object.
@@ -3548,7 +3643,7 @@ extern int k_poll_signal(struct k_poll_signal *signal, int result);
 
 /* private internal function */
 extern int _handle_obj_poll_event(struct k_poll_event **obj_poll_event,
-				  uint32_t state);
+				  u32_t state);
 
 /**
  * @} end defgroup poll_apis
@@ -3580,13 +3675,54 @@ extern void k_cpu_idle(void);
  */
 extern void k_cpu_atomic_idle(unsigned int key);
 
-extern void _sys_power_save_idle_exit(int32_t ticks);
+extern void _sys_power_save_idle_exit(s32_t ticks);
 
-/* Include legacy APIs */
-#if defined(CONFIG_LEGACY_KERNEL)
-#include <legacy.h>
-#endif
 #include <arch/cpu.h>
+
+#ifdef _ARCH_EXCEPT
+/* This archtecture has direct support for triggering a CPU exception */
+#define _k_except_reason(reason)	_ARCH_EXCEPT(reason)
+#else
+
+#include <misc/printk.h>
+
+/* NOTE: This is the implementation for arches that do not implement
+ * _ARCH_EXCEPT() to generate a real CPU exception.
+ *
+ * We won't have a real exception frame to determine the PC value when
+ * the oops occurred, so print file and line number before we jump into
+ * the fatal error handler.
+ */
+#define _k_except_reason(reason) do { \
+		printk("@ %s:%d:\n", __FILE__,  __LINE__); \
+		_NanoFatalErrorHandler(reason, &_default_esf); \
+		CODE_UNREACHABLE; \
+	} while (0)
+
+#endif /* _ARCH__EXCEPT */
+
+/**
+ * @brief Fatally terminate a thread
+ *
+ * This should be called when a thread has encountered an unrecoverable
+ * runtime condition and needs to terminate. What this ultimately
+ * means is determined by the _fatal_error_handler() implementation, which
+ * will be called will reason code _NANO_ERR_KERNEL_OOPS.
+ *
+ * If this is called from ISR context, the default system fatal error handler
+ * will treat it as an unrecoverable system error, just like k_panic().
+ */
+#define k_oops()	_k_except_reason(_NANO_ERR_KERNEL_OOPS)
+
+/**
+ * @brief Fatally terminate the system
+ *
+ * This should be called when the Zephyr kernel has encountered an
+ * unrecoverable runtime condition and needs to terminate. What this ultimately
+ * means is determined by the _fatal_error_handler() implementation, which
+ * will be called will reason code _NANO_ERR_KERNEL_PANIC.
+ */
+#define k_panic()	_k_except_reason(_NANO_ERR_KERNEL_PANIC)
 
 /*
  * private APIs that are utilized by one or more public APIs
@@ -3600,6 +3736,103 @@ extern void _init_static_threads(void);
 
 extern int _is_thread_essential(void);
 extern void _timer_expiration_handler(struct _timeout *t);
+
+/* arch/cpu.h may declare an architecture or platform-specific macro
+ * for properly declaring stacks, compatible with MMU/MPU constraints if
+ * enabled
+ */
+#ifdef _ARCH_THREAD_STACK_DEFINE
+#define K_THREAD_STACK_DEFINE(sym, size) _ARCH_THREAD_STACK_DEFINE(sym, size)
+#define K_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size) \
+		_ARCH_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size)
+#define K_THREAD_STACK_MEMBER(sym, size) _ARCH_THREAD_STACK_MEMBER(sym, size)
+#define K_THREAD_STACK_SIZEOF(sym) _ARCH_THREAD_STACK_SIZEOF(sym)
+#define K_THREAD_STACK_BUFFER(sym) _ARCH_THREAD_STACK_BUFFER(sym)
+#else
+/**
+ * @brief Declare a toplevel thread stack memory region
+ *
+ * This declares a region of memory suitable for use as a thread's stack.
+ *
+ * This is the generic, historical definition. Align to STACK_ALIGN and put in
+ * 'noinit' section so that it isn't zeroed at boot
+ *
+ * The declared symbol will always be a character array which can be passed to
+ * k_thread_create, but should otherwise not be manipulated.
+ *
+ * It is legal to precede this definition with the 'static' keyword.
+ *
+ * It is NOT legal to take the sizeof(sym) and pass that to the stackSize
+ * parameter of k_thread_create(), it may not be the same as the
+ * 'size' parameter. Use K_THREAD_STACK_SIZEOF() instead.
+ *
+ * @param sym Thread stack symbol name
+ * @param size Size of the stack memory region
+ */
+#define K_THREAD_STACK_DEFINE(sym, size) \
+	char __noinit __aligned(STACK_ALIGN) sym[size]
+
+/**
+ * @brief Declare a toplevel array of thread stack memory regions
+ *
+ * Create an array of equally sized stacks. See K_THREAD_STACK_DEFINE
+ * definition for additional details and constraints.
+ *
+ * This is the generic, historical definition. Align to STACK_ALIGN and put in
+ * 'noinit' section so that it isn't zeroed at boot
+ *
+ * @param sym Thread stack symbol name
+ * @param nmemb Number of stacks to declare
+ * @param size Size of the stack memory region
+ */
+
+#define K_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size) \
+	char __noinit __aligned(STACK_ALIGN) sym[nmemb][size]
+
+/**
+ * @brief Declare an embedded stack memory region
+ *
+ * Used for stacks embedded within other data structures. Use is highly
+ * discouraged but in some cases necessary. For memory protection scenarios,
+ * it is very important that any RAM preceding this member not be writable
+ * by threads else a stack overflow will lead to silent corruption. In other
+ * words, the containing data structure should live in RAM owned by the kernel.
+ *
+ * @param sym Thread stack symbol name
+ * @param size Size of the stack memory region
+ */
+#define K_THREAD_STACK_MEMBER(sym, size) \
+	char __aligned(STACK_ALIGN) sym[size]
+
+/**
+ * @brief Return the size in bytes of a stack memory region
+ *
+ * Convenience macro for passing the desired stack size to k_thread_create()
+ * since the underlying implementation may actually create something larger
+ * (for instance a guard area).
+ *
+ * The value returned here is guaranteed to match the 'size' parameter
+ * passed to K_THREAD_STACK_DEFINE and related macros.
+ *
+ * @param sym Stack memory symbol
+ * @return Size of the stack
+ */
+#define K_THREAD_STACK_SIZEOF(sym) sizeof(sym)
+
+/**
+ * @brief Get a pointer to the physical stack buffer
+ *
+ * Convenience macro to get at the real underlying stack buffer used by
+ * the CPU. Guaranteed to be a character pointer of size K_THREAD_STACK_SIZEOF.
+ * This is really only intended for diagnostic tools which want to examine
+ * stack memory contents.
+ *
+ * @param sym Declared stack symbol name
+ * @return The buffer itself, a char *
+ */
+#define K_THREAD_STACK_BUFFER(sym) sym
+
+#endif /* _ARCH_DECLARE_STACK */
 
 #ifdef __cplusplus
 }

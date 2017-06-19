@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include <misc/util.h>
 #include <net/buf.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_if.h>
 #include <net/net_core.h>
 #include <console/uart_pipe.h>
@@ -44,19 +44,20 @@ struct slip_context {
 	bool first;		/* SLIP received it's byte or not after
 				 * driver initialization or SLIP_END byte.
 				 */
-	uint8_t buf[1];		/* SLIP data is read into this buf */
-	struct net_buf *rx;	/* and then placed into this net_buf */
+	u8_t buf[1];		/* SLIP data is read into this buf */
+	struct net_pkt *rx;	/* and then placed into this net_pkt */
 	struct net_buf *last;	/* Pointer to last fragment in the list */
-	uint8_t *ptr;		/* Where in net_buf to add data */
-	uint8_t state;
+	u8_t *ptr;		/* Where in net_pkt to add data */
+	struct net_if *iface;
+	u8_t state;
 
-	uint8_t mac_addr[6];
+	u8_t mac_addr[6];
 	struct net_linkaddr ll_addr;
 
 #if defined(CONFIG_SLIP_STATISTICS)
 #define SLIP_STATS(statement)
 #else
-	uint16_t garbage;
+	u16_t garbage;
 #define SLIP_STATS(statement) statement
 #endif
 };
@@ -70,7 +71,7 @@ struct slip_context {
 #define COLOR_YELLOW  ""
 #endif
 
-static void hexdump(const char *str, const uint8_t *packet,
+static void hexdump(const char *str, const u8_t *packet,
 		    size_t length, size_t ll_reserve)
 {
 	int n = 0;
@@ -119,30 +120,61 @@ static void hexdump(const char *str, const uint8_t *packet,
 
 static inline void slip_writeb(unsigned char c)
 {
-	uint8_t buf[1] = { c };
+	u8_t buf[1] = { c };
 
 	uart_pipe_send(&buf[0], 1);
 }
 
-static int slip_send(struct net_if *iface, struct net_buf *buf)
+/**
+ *  @brief Write byte to SLIP, escape if it is END or ESC character
+ *
+ *  @param c  a byte to write
+ */
+static void slip_writeb_esc(unsigned char c)
+{
+	switch (c) {
+	case SLIP_END:
+		/* If it's the same code as an END character,
+		 * we send a special two character code so as
+		 * not to make the receiver think we sent
+		 * an END.
+		 */
+		slip_writeb(SLIP_ESC);
+		slip_writeb(SLIP_ESC_END);
+		break;
+	case SLIP_ESC:
+		/* If it's the same code as an ESC character,
+		 * we send a special two character code so as
+		 * not to make the receiver think we sent
+		 * an ESC.
+		 */
+		slip_writeb(SLIP_ESC);
+		slip_writeb(SLIP_ESC_ESC);
+		break;
+	default:
+		slip_writeb(c);
+	}
+}
+
+static int slip_send(struct net_if *iface, struct net_pkt *pkt)
 {
 	struct net_buf *frag;
 #if defined(CONFIG_SLIP_TAP)
-	uint16_t ll_reserve = net_nbuf_ll_reserve(buf);
+	u16_t ll_reserve = net_pkt_ll_reserve(pkt);
 	bool send_header_once = false;
 #endif
-	uint8_t *ptr;
-	uint16_t i;
-	uint8_t c;
+	u8_t *ptr;
+	u16_t i;
+	u8_t c;
 
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		/* No data? */
 		return -ENODATA;
 	}
 
 	slip_writeb(SLIP_END);
 
-	for (frag = buf->frags; frag; frag = frag->frags) {
+	for (frag = pkt->frags; frag; frag = frag->frags) {
 #if defined(CONFIG_SLIP_DEBUG)
 		int frag_count = 0;
 #endif
@@ -153,7 +185,7 @@ static int slip_send(struct net_if *iface, struct net_buf *buf)
 		/* This writes ethernet header */
 		if (!send_header_once && ll_reserve) {
 			for (i = 0; i < ll_reserve; i++) {
-				slip_writeb(*ptr++);
+				slip_writeb_esc(*ptr++);
 			}
 		}
 
@@ -173,53 +205,31 @@ static int slip_send(struct net_if *iface, struct net_buf *buf)
 
 		for (i = 0; i < frag->len; ++i) {
 			c = *ptr++;
-
-			switch (c) {
-			case SLIP_END:
-				/* If it's the same code as an END character,
-				 * we send a special two character code so as
-				 * not to make the receiver think we sent
-				 * an END.
-				 */
-				slip_writeb(SLIP_ESC);
-				slip_writeb(SLIP_ESC_END);
-				break;
-			case SLIP_ESC:
-				/* If it's the same code as an ESC character,
-				 * we send a special two character code so as
-				 * not to make the receiver think we sent
-				 * an ESC.
-				 */
-				slip_writeb(SLIP_ESC);
-				slip_writeb(SLIP_ESC_ESC);
-				break;
-			default:
-				slip_writeb(c);
-			}
+			slip_writeb_esc(c);
 		}
 
 #if defined(CONFIG_SLIP_DEBUG)
 		SYS_LOG_DBG("sent data %d bytes",
-			    frag->len + net_nbuf_ll_reserve(buf));
+			    frag->len + net_pkt_ll_reserve(pkt));
 		if (frag->len + ll_reserve) {
 			char msg[8 + 1];
 
 			snprintf(msg, sizeof(msg), "<slip %2d", frag_count++);
 
-			hexdump(msg, net_nbuf_ll(buf),
-				frag->len + net_nbuf_ll_reserve(buf),
-				net_nbuf_ll_reserve(buf));
+			hexdump(msg, net_pkt_ll(pkt),
+				frag->len + net_pkt_ll_reserve(pkt),
+				net_pkt_ll_reserve(pkt));
 		}
 #endif
 	}
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 	slip_writeb(SLIP_END);
 
 	return 0;
 }
 
-static struct net_buf *slip_poll_handler(struct slip_context *slip)
+static struct net_pkt *slip_poll_handler(struct slip_context *slip)
 {
 	if (slip->last && slip->last->len) {
 		return slip->rx;
@@ -230,18 +240,19 @@ static struct net_buf *slip_poll_handler(struct slip_context *slip)
 
 static void process_msg(struct slip_context *slip)
 {
-	struct net_buf *buf;
+	struct net_pkt *pkt;
 
-	buf = slip_poll_handler(slip);
-	if (!buf || !buf->frags) {
+	pkt = slip_poll_handler(slip);
+	if (!pkt || !pkt->frags) {
 		return;
 	}
 
-	if (net_recv_data(net_if_get_by_link_addr(&slip->ll_addr), buf) < 0) {
-		net_nbuf_unref(buf);
+	if (net_recv_data(slip->iface, pkt) < 0) {
+		net_pkt_unref(pkt);
 	}
 
-	slip->rx = slip->last = NULL;
+	slip->rx = NULL;
+	slip->last = NULL;
 }
 
 static inline int slip_input_byte(struct slip_context *slip,
@@ -293,34 +304,42 @@ static inline int slip_input_byte(struct slip_context *slip,
 		if (!slip->first) {
 			slip->first = true;
 
-			slip->rx = net_nbuf_get_reserve_rx(0, K_NO_WAIT);
+			slip->rx = net_pkt_get_reserve_rx(0, K_NO_WAIT);
 			if (!slip->rx) {
 				return 0;
 			}
 
-			slip->last = net_nbuf_get_frag(slip->rx, K_NO_WAIT);
+			slip->last = net_pkt_get_frag(slip->rx, K_NO_WAIT);
 			if (!slip->last) {
-				net_nbuf_unref(slip->rx);
+				net_pkt_unref(slip->rx);
 				slip->rx = NULL;
 				return 0;
 			}
 
-			net_buf_frag_add(slip->rx, slip->last);
-			slip->ptr = net_nbuf_ip_data(slip->rx);
+			net_pkt_frag_add(slip->rx, slip->last);
+			slip->ptr = net_pkt_ip_data(slip->rx);
 		}
 
 		break;
+	}
+
+	/* It is possible that slip->last is not set during the startup
+	 * of the device. If this happens do not continue and overwrite
+	 * some random memory.
+	 */
+	if (!slip->last) {
+		return 0;
 	}
 
 	if (!net_buf_tailroom(slip->last)) {
 		/* We need to allocate a new fragment */
 		struct net_buf *frag;
 
-		frag = net_nbuf_get_reserve_rx_data(0, K_NO_WAIT);
+		frag = net_pkt_get_reserve_rx_data(0, K_NO_WAIT);
 		if (!frag) {
 			SYS_LOG_ERR("[%p] cannot allocate data fragment",
 				    slip);
-			net_nbuf_unref(slip->rx);
+			net_pkt_unref(slip->rx);
 			slip->rx = NULL;
 			slip->last = NULL;
 
@@ -346,7 +365,7 @@ static inline int slip_input_byte(struct slip_context *slip,
 	return 0;
 }
 
-static uint8_t *recv_cb(uint8_t *buf, size_t *off)
+static u8_t *recv_cb(u8_t *buf, size_t *off)
 {
 	struct slip_context *slip =
 		CONTAINER_OF(buf, struct slip_context, buf);
@@ -387,6 +406,33 @@ static uint8_t *recv_cb(uint8_t *buf, size_t *off)
 	return buf;
 }
 
+static inline int _slip_mac_addr_from_str(struct slip_context *slip,
+					  const char *src)
+{
+	unsigned int len, i;
+	char *endptr;
+
+	len = strlen(src);
+	for (i = 0; i < len; i++) {
+		if (!(src[i] >= '0' && src[i] <= '9') &&
+		    !(src[i] >= 'A' && src[i] <= 'F') &&
+		    !(src[i] >= 'a' && src[i] <= 'f') &&
+		    src[i] != ':') {
+			return -EINVAL;
+		}
+	}
+
+	memset(slip->mac_addr, 0, sizeof(slip->mac_addr));
+
+	for (i = 0; i < sizeof(slip->mac_addr); i++) {
+		slip->mac_addr[i] = strtol(src, &endptr, 16);
+		src = ++endptr;
+	}
+
+	return 0;
+}
+
+
 static int slip_init(struct device *dev)
 {
 	struct slip_context *slip = dev->driver_data;
@@ -408,17 +454,6 @@ static int slip_init(struct device *dev)
 
 static inline struct net_linkaddr *slip_get_mac(struct slip_context *slip)
 {
-	if (slip->mac_addr[0] == 0x00) {
-		/* 10-00-00-00-00 to 10-00-00-00-FF Documentation RFC7042 */
-		slip->mac_addr[0] = 0x10;
-		slip->mac_addr[1] = 0x00;
-		slip->mac_addr[2] = 0x00;
-
-		slip->mac_addr[3] = 0x00;
-		slip->mac_addr[4] = 0x00;
-		slip->mac_addr[5] = sys_rand32_get();
-	}
-
 	slip->ll_addr.addr = slip->mac_addr;
 	slip->ll_addr.len = sizeof(slip->mac_addr);
 
@@ -431,7 +466,22 @@ static void slip_iface_init(struct net_if *iface)
 	struct net_linkaddr *ll_addr = slip_get_mac(slip);
 
 	slip->init_done = true;
+	slip->iface = iface;
 
+	if (CONFIG_SLIP_MAC_ADDR[0] != 0) {
+		if (_slip_mac_addr_from_str(slip, CONFIG_SLIP_MAC_ADDR) < 0) {
+			goto use_random_mac;
+		}
+	} else {
+use_random_mac:
+		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
+		slip->mac_addr[0] = 0x00;
+		slip->mac_addr[1] = 0x00;
+		slip->mac_addr[2] = 0x5E;
+		slip->mac_addr[3] = 0x00;
+		slip->mac_addr[4] = 0x53;
+		slip->mac_addr[5] = sys_rand32_get();
+	}
 	net_if_set_link_addr(iface, ll_addr->addr, ll_addr->len,
 			     NET_LINK_ETHERNET);
 }

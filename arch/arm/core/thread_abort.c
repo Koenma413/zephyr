@@ -19,11 +19,11 @@
 #include <kernel.h>
 #include <kernel_structs.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <ksched.h>
 #include <wait_q.h>
 
-extern void _k_thread_single_abort(struct tcs *thread);
+extern void _k_thread_single_abort(struct k_thread *thread);
 
 void k_thread_abort(k_tid_t thread)
 {

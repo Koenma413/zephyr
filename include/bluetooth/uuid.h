@@ -32,22 +32,22 @@ enum {
 
 /** @brief This is a 'tentative' type and should be used as a pointer only */
 struct bt_uuid {
-	uint8_t type;
+	u8_t type;
 };
 
 struct bt_uuid_16 {
 	struct bt_uuid uuid;
-	uint16_t val;
+	u16_t val;
 };
 
 struct bt_uuid_32 {
 	struct bt_uuid uuid;
-	uint32_t val;
+	u32_t val;
 };
 
 struct bt_uuid_128 {
 	struct bt_uuid uuid;
-	uint8_t val[16];
+	u8_t val[16];
 };
 
 #define BT_UUID_INIT_16(value)		\
@@ -219,6 +219,11 @@ struct bt_uuid_128 {
  */
 #define BT_UUID_GAP_PPCP                  BT_UUID_DECLARE_16(0x2a04)
 #define BT_UUID_GAP_PPCP_VAL              0x2a04
+/** @def BT_UUID_GATT_SC
+ *  @brief GATT Characteristic Service Changed
+ */
+#define BT_UUID_GATT_SC                   BT_UUID_DECLARE_16(0x2a05)
+#define BT_UUID_GATT_SC_VAL               0x2a05
 /** @def BT_UUID_BAS_BATTERY_LEVEL
  *  @brief BAS Characteristic Battery Level
  */

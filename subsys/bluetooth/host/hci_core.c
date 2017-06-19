@@ -1,6 +1,7 @@
 /* hci_core.c - HCI core Bluetooth handling */
 
 /*
+ * Copyright (c) 2017 Nordic Semiconductor ASA
  * Copyright (c) 2015-2016 Intel Corporation
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -12,19 +13,23 @@
 #include <errno.h>
 #include <atomic.h>
 #include <misc/util.h>
+#include <misc/slist.h>
 #include <misc/byteorder.h>
 #include <misc/stack.h>
 #include <misc/__assert.h>
 #include <soc.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_CORE)
-#include <bluetooth/log.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
+#include <bluetooth/l2cap.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_driver.h>
 #include <bluetooth/storage.h>
 
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_CORE)
+#include "common/log.h"
+
+#include "common/rpa.h"
 #include "keys.h"
 #include "monitor.h"
 #include "hci_core.h"
@@ -35,14 +40,22 @@
 #include "l2cap_internal.h"
 #include "smp.h"
 
+#if defined(CONFIG_BLUETOOTH_HOST_CRYPTO)
+#include "crypto.h"
+#endif
+
 /* Peripheral timeout to initialize Connection Parameter Update procedure */
 #define CONN_UPDATE_TIMEOUT  K_SECONDS(5)
 #define RPA_TIMEOUT          K_SECONDS(CONFIG_BLUETOOTH_RPA_TIMEOUT)
 
+#define HCI_CMD_TIMEOUT      K_SECONDS(10)
+
 /* Stacks for the threads */
 #if !defined(CONFIG_BLUETOOTH_RECV_IS_RX_THREAD)
+static struct k_thread rx_thread_data;
 static BT_STACK_NOINIT(rx_thread_stack, CONFIG_BLUETOOTH_RX_STACK_SIZE);
 #endif
+static struct k_thread tx_thread_data;
 static BT_STACK_NOINIT(tx_thread_stack, CONFIG_BLUETOOTH_HCI_TX_STACK_SIZE);
 
 static void init_work(struct k_work *work);
@@ -70,7 +83,7 @@ const struct bt_storage *bt_storage;
 
 static bt_le_scan_cb_t *scan_dev_found_cb;
 
-static uint8_t pub_key[64];
+static u8_t pub_key[64];
 static struct bt_pub_key_cb *pub_key_cb;
 static bt_dh_key_cb_t dh_key_cb;
 
@@ -83,13 +96,13 @@ static size_t discovery_results_count;
 
 struct cmd_data {
 	/** BT_BUF_CMD */
-	uint8_t  type;
+	u8_t  type;
 
 	/** HCI status of the command completion */
-	uint8_t  status;
+	u8_t  status;
 
 	/** The command OpCode that the buffer contains */
-	uint16_t opcode;
+	u16_t opcode;
 
 	/** Used by bt_hci_cmd_send_sync. */
 	struct k_sem *sync;
@@ -97,10 +110,10 @@ struct cmd_data {
 
 struct acl_data {
 	/** BT_BUF_ACL_IN */
-	uint8_t  type;
+	u8_t  type;
 
 	/** ACL connection handle */
-	uint16_t handle;
+	u16_t handle;
 };
 
 #define cmd(buf) ((struct cmd_data *)net_buf_user_data(buf))
@@ -116,35 +129,46 @@ NET_BUF_POOL_DEFINE(hci_cmd_pool, CONFIG_BLUETOOTH_HCI_CMD_COUNT,
 NET_BUF_POOL_DEFINE(hci_rx_pool, CONFIG_BLUETOOTH_RX_BUF_COUNT,
 		    BT_BUF_RX_SIZE, BT_BUF_USER_DATA_MIN, NULL);
 
-#if defined(CONFIG_BLUETOOTH_DEBUG)
-const char *bt_addr_str(const bt_addr_t *addr)
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+static void report_completed_packet(struct net_buf *buf)
 {
-	static char bufs[2][18];
-	static uint8_t cur;
-	char *str;
 
-	str = bufs[cur++];
-	cur %= ARRAY_SIZE(bufs);
-	bt_addr_to_str(addr, str, sizeof(bufs[cur]));
+	struct bt_hci_cp_host_num_completed_packets *cp;
+	u16_t handle = acl(buf)->handle;
+	struct bt_hci_handle_count *hc;
 
-	return str;
+	net_buf_destroy(buf);
+
+	/* Do nothing if controller to host flow control is not supported */
+	if (!(bt_dev.supported_commands[10] & 0x20)) {
+		return;
+	}
+
+	BT_DBG("Reporting completed packet for handle %u", handle);
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_HOST_NUM_COMPLETED_PACKETS,
+				sizeof(*cp) + sizeof(*hc));
+	if (!buf) {
+		BT_ERR("Unable to allocate new HCI command");
+		return;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->num_handles = sys_cpu_to_le16(1);
+
+	hc = net_buf_add(buf, sizeof(*hc));
+	hc->handle = sys_cpu_to_le16(handle);
+	hc->count  = sys_cpu_to_le16(1);
+
+	bt_hci_cmd_send(BT_HCI_OP_HOST_NUM_COMPLETED_PACKETS, buf);
 }
 
-const char *bt_addr_le_str(const bt_addr_le_t *addr)
-{
-	static char bufs[2][27];
-	static uint8_t cur;
-	char *str;
+#define ACL_IN_SIZE BT_L2CAP_BUF_SIZE(CONFIG_BLUETOOTH_L2CAP_RX_MTU)
+NET_BUF_POOL_DEFINE(acl_in_pool, CONFIG_BLUETOOTH_ACL_RX_COUNT, ACL_IN_SIZE,
+		    BT_BUF_USER_DATA_MIN, report_completed_packet);
+#endif /* CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL */
 
-	str = bufs[cur++];
-	cur %= ARRAY_SIZE(bufs);
-	bt_addr_le_to_str(addr, str, sizeof(bufs[cur]));
-
-	return str;
-}
-#endif /* CONFIG_BLUETOOTH_DEBUG */
-
-struct net_buf *bt_hci_cmd_create(uint16_t opcode, uint8_t param_len)
+struct net_buf *bt_hci_cmd_create(u16_t opcode, u8_t param_len)
 {
 	struct bt_hci_cmd_hdr *hdr;
 	struct net_buf *buf;
@@ -169,7 +193,7 @@ struct net_buf *bt_hci_cmd_create(uint16_t opcode, uint8_t param_len)
 	return buf;
 }
 
-int bt_hci_cmd_send(uint16_t opcode, struct net_buf *buf)
+int bt_hci_cmd_send(u16_t opcode, struct net_buf *buf)
 {
 	if (!buf) {
 		buf = bt_hci_cmd_create(opcode, 0);
@@ -200,7 +224,7 @@ int bt_hci_cmd_send(uint16_t opcode, struct net_buf *buf)
 	return 0;
 }
 
-int bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *buf,
+int bt_hci_cmd_send_sync(u16_t opcode, struct net_buf *buf,
 			 struct net_buf **rsp)
 {
 	struct k_sem sync_sem;
@@ -223,7 +247,8 @@ int bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *buf,
 
 	net_buf_put(&bt_dev.cmd_tx_queue, buf);
 
-	k_sem_take(&sync_sem, K_FOREVER);
+	err = k_sem_take(&sync_sem, HCI_CMD_TIMEOUT);
+	__ASSERT(err == 0, "k_sem_take failed with err %d", err);
 
 	BT_DBG("opcode 0x%04x status 0x%02x", opcode, cmd(buf)->status);
 
@@ -368,7 +393,7 @@ static int le_set_private_addr(void)
 		return 0;
 	}
 
-	err = bt_smp_create_rpa(bt_dev.irk, &rpa);
+	err = bt_rpa_create(bt_dev.irk, &rpa);
 	if (!err) {
 		err = set_random_address(&rpa);
 		if (!err) {
@@ -426,9 +451,9 @@ static int le_set_private_addr(void)
 static void hci_acl(struct net_buf *buf)
 {
 	struct bt_hci_acl_hdr *hdr = (void *)buf->data;
-	uint16_t handle, len = sys_le16_to_cpu(hdr->len);
+	u16_t handle, len = sys_le16_to_cpu(hdr->len);
 	struct bt_conn *conn;
-	uint8_t flags;
+	u8_t flags;
 
 	BT_DBG("buf %p", buf);
 
@@ -461,12 +486,12 @@ static void hci_acl(struct net_buf *buf)
 static void hci_num_completed_packets(struct net_buf *buf)
 {
 	struct bt_hci_evt_num_completed_packets *evt = (void *)buf->data;
-	uint16_t i, num_handles = sys_le16_to_cpu(evt->num_handles);
+	u16_t i, num_handles = sys_le16_to_cpu(evt->num_handles);
 
 	BT_DBG("num_handles %u", num_handles);
 
 	for (i = 0; i < num_handles; i++) {
-		uint16_t handle, count;
+		u16_t handle, count;
 		struct bt_conn *conn;
 		unsigned int key;
 
@@ -484,17 +509,21 @@ static void hci_num_completed_packets(struct net_buf *buf)
 			continue;
 		}
 
-		if (conn->pending_pkts >= count) {
-			conn->pending_pkts -= count;
-		} else {
-			BT_ERR("completed packets mismatch: %u > %u",
-			       count, conn->pending_pkts);
-			conn->pending_pkts = 0;
-		}
-
 		irq_unlock(key);
 
 		while (count--) {
+			sys_snode_t *node;
+
+			key = irq_lock();
+			node = sys_slist_get(&conn->tx_pending);
+			irq_unlock(key);
+
+			if (!node) {
+				BT_ERR("packets count mismatch");
+				break;
+			}
+
+			k_fifo_put(&conn->tx_notify, node);
 			k_sem_give(bt_conn_get_pkts(conn));
 		}
 
@@ -532,7 +561,7 @@ static int hci_le_create_conn(const struct bt_conn *conn)
 static void hci_disconn_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_disconn_complete *evt = (void *)buf->data;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 	struct bt_conn *conn;
 
 	BT_DBG("status %u handle %u reason %u", evt->status, handle,
@@ -551,17 +580,21 @@ static void hci_disconn_complete(struct net_buf *buf)
 	conn->err = evt->reason;
 
 	/* Check stacks usage (no-ops if not enabled) */
+	k_call_stacks_analyze();
 #if !defined(CONFIG_BLUETOOTH_RECV_IS_RX_THREAD)
-	stack_analyze("rx stack", rx_thread_stack, sizeof(rx_thread_stack));
+	STACK_ANALYZE("rx stack", rx_thread_stack);
 #endif
-	stack_analyze("tx stack", tx_thread_stack,
-		      sizeof(tx_thread_stack));
+	STACK_ANALYZE("tx stack", tx_thread_stack);
 
 	bt_conn_set_state(conn, BT_CONN_DISCONNECTED);
 	conn->handle = 0;
 
 	if (conn->type != BT_CONN_TYPE_LE) {
 #if defined(CONFIG_BLUETOOTH_BREDR)
+		if (conn->type == BT_CONN_TYPE_SCO) {
+			bt_sco_cleanup(conn);
+			return;
+		}
 		/*
 		 * If only for one connection session bond was set, clear keys
 		 * database row for this connection.
@@ -611,6 +644,62 @@ static int hci_le_read_remote_features(struct bt_conn *conn)
 	return 0;
 }
 
+static int hci_le_set_data_len(struct bt_conn *conn)
+{
+	struct bt_hci_rp_le_read_max_data_len *rp;
+	struct bt_hci_cp_le_set_data_len *cp;
+	struct net_buf *buf, *rsp;
+	u16_t tx_octets, tx_time;
+	int err;
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_MAX_DATA_LEN, NULL, &rsp);
+	if (err) {
+		return err;
+	}
+
+	rp = (void *)rsp->data;
+	tx_octets = sys_le16_to_cpu(rp->max_tx_octets);
+	tx_time = sys_le16_to_cpu(rp->max_tx_time);
+	net_buf_unref(rsp);
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_DATA_LEN, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(conn->handle);
+	cp->tx_octets = sys_cpu_to_le16(tx_octets);
+	cp->tx_time = sys_cpu_to_le16(tx_time);
+	err = bt_hci_cmd_send(BT_HCI_OP_LE_SET_DATA_LEN, buf);
+	if (err) {
+		return err;
+	}
+
+	return 0;
+}
+
+static int hci_le_set_phy(struct bt_conn *conn)
+{
+	struct bt_hci_cp_le_set_phy *cp;
+	struct net_buf *buf;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_PHY, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(conn->handle);
+	cp->all_phys = 0;
+	cp->tx_phys = BT_HCI_LE_PHY_PREFER_2M;
+	cp->rx_phys = BT_HCI_LE_PHY_PREFER_2M;
+	cp->phy_opts = BT_HCI_LE_PHY_CODED_ANY;
+	bt_hci_cmd_send(BT_HCI_OP_LE_SET_PHY, buf);
+
+	return 0;
+}
+
 static void update_conn_param(struct bt_conn *conn)
 {
 	/*
@@ -626,7 +715,7 @@ static void update_conn_param(struct bt_conn *conn)
 static void le_conn_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_le_conn_complete *evt = (void *)buf->data;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 	const bt_addr_le_t *id_addr;
 	struct bt_conn *conn;
 	int err;
@@ -748,6 +837,22 @@ static void le_conn_complete(struct net_buf *buf)
 		}
 	}
 
+	if (BT_FEAT_LE_PHY_2M(bt_dev.le.features)) {
+		err = hci_le_set_phy(conn);
+		if (!err) {
+			atomic_set_bit(conn->flags, BT_CONN_AUTO_PHY_UPDATE);
+			goto done;
+		}
+	}
+
+	if (BT_FEAT_LE_DLE(bt_dev.le.features)) {
+		err = hci_le_set_data_len(conn);
+		if (!err) {
+			atomic_set_bit(conn->flags, BT_CONN_AUTO_DATA_LEN);
+			goto done;
+		}
+	}
+
 	update_conn_param(conn);
 
 done:
@@ -757,8 +862,8 @@ done:
 
 static void le_remote_feat_complete(struct net_buf *buf)
 {
-	struct bt_hci_ev_le_remote_feat_complete *evt = (void *)buf->data;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	struct bt_hci_evt_le_remote_feat_complete *evt = (void *)buf->data;
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 	struct bt_conn *conn;
 
 	conn = bt_conn_lookup_handle(handle);
@@ -772,8 +877,96 @@ static void le_remote_feat_complete(struct net_buf *buf)
 		       sizeof(conn->le.features));
 	}
 
+	if (BT_FEAT_LE_PHY_2M(bt_dev.le.features) &&
+	    BT_FEAT_LE_PHY_2M(conn->le.features)) {
+		int err;
+
+		err = hci_le_set_phy(conn);
+		if (!err) {
+			atomic_set_bit(conn->flags, BT_CONN_AUTO_PHY_UPDATE);
+			goto done;
+		}
+	}
+
+	if (BT_FEAT_LE_DLE(bt_dev.le.features) &&
+	    BT_FEAT_LE_DLE(conn->le.features)) {
+		int err;
+
+		err = hci_le_set_data_len(conn);
+		if (!err) {
+			atomic_set_bit(conn->flags, BT_CONN_AUTO_DATA_LEN);
+			goto done;
+		}
+	}
+
 	update_conn_param(conn);
 
+done:
+	bt_conn_unref(conn);
+}
+
+static void le_data_len_change(struct net_buf *buf)
+{
+	struct bt_hci_evt_le_data_len_change *evt = (void *)buf->data;
+	u16_t max_tx_octets = sys_le16_to_cpu(evt->max_tx_octets);
+	u16_t max_rx_octets = sys_le16_to_cpu(evt->max_rx_octets);
+	u16_t max_tx_time = sys_le16_to_cpu(evt->max_tx_time);
+	u16_t max_rx_time = sys_le16_to_cpu(evt->max_rx_time);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
+	struct bt_conn *conn;
+
+	conn = bt_conn_lookup_handle(handle);
+	if (!conn) {
+		BT_ERR("Unable to lookup conn for handle %u", handle);
+		return;
+	}
+
+	BT_DBG("max. tx: %u (%uus), max. rx: %u (%uus)", max_tx_octets,
+	       max_tx_time, max_rx_octets, max_rx_time);
+
+	if (!atomic_test_and_clear_bit(conn->flags, BT_CONN_AUTO_DATA_LEN)) {
+		goto done;
+	}
+
+	update_conn_param(conn);
+
+done:
+	bt_conn_unref(conn);
+}
+
+static void le_phy_update_complete(struct net_buf *buf)
+{
+	struct bt_hci_evt_le_phy_update_complete *evt = (void *)buf->data;
+	u16_t handle = sys_le16_to_cpu(evt->handle);
+	struct bt_conn *conn;
+
+	conn = bt_conn_lookup_handle(handle);
+	if (!conn) {
+		BT_ERR("Unable to lookup conn for handle %u", handle);
+		return;
+	}
+
+	BT_DBG("PHY updated: status: 0x%x, tx: %u, rx: %u",
+	       evt->status, evt->tx_phy, evt->rx_phy);
+
+	if (!atomic_test_and_clear_bit(conn->flags, BT_CONN_AUTO_PHY_UPDATE)) {
+		goto done;
+	}
+
+	if (BT_FEAT_LE_DLE(bt_dev.le.features) &&
+	    BT_FEAT_LE_DLE(conn->le.features)) {
+		int err;
+
+		err = hci_le_set_data_len(conn);
+		if (!err) {
+			atomic_set_bit(conn->flags, BT_CONN_AUTO_DATA_LEN);
+			goto done;
+		}
+	}
+
+	update_conn_param(conn);
+
+done:
 	bt_conn_unref(conn);
 }
 
@@ -799,7 +992,7 @@ bool bt_le_conn_params_valid(const struct bt_le_conn_param *param)
 	return true;
 }
 
-static int le_conn_param_neg_reply(uint16_t handle, uint8_t reason)
+static int le_conn_param_neg_reply(u16_t handle, u8_t reason)
 {
 	struct bt_hci_cp_le_conn_param_req_neg_reply *cp;
 	struct net_buf *buf;
@@ -817,7 +1010,7 @@ static int le_conn_param_neg_reply(uint16_t handle, uint8_t reason)
 	return bt_hci_cmd_send(BT_HCI_OP_LE_CONN_PARAM_REQ_NEG_REPLY, buf);
 }
 
-static int le_conn_param_req_reply(uint16_t handle,
+static int le_conn_param_req_reply(u16_t handle,
 				   const struct bt_le_conn_param *param)
 {
 	struct bt_hci_cp_le_conn_param_req_reply *cp;
@@ -845,7 +1038,7 @@ static int le_conn_param_req(struct net_buf *buf)
 	struct bt_hci_evt_le_conn_param_req *evt = (void *)buf->data;
 	struct bt_le_conn_param param;
 	struct bt_conn *conn;
-	uint16_t handle;
+	u16_t handle;
 	int err;
 
 	handle = sys_le16_to_cpu(evt->handle);
@@ -863,7 +1056,7 @@ static int le_conn_param_req(struct net_buf *buf)
 
 	if (!le_param_req(conn, &param)) {
 		err = le_conn_param_neg_reply(handle,
-					      BT_HCI_ERR_INVALID_LL_PARAMS);
+					      BT_HCI_ERR_INVALID_LL_PARAM);
 	} else {
 		err = le_conn_param_req_reply(handle, &param);
 	}
@@ -876,7 +1069,7 @@ static void le_conn_update_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_le_conn_update_complete *evt = (void *)buf->data;
 	struct bt_conn *conn;
-	uint16_t handle;
+	u16_t handle;
 
 	handle = sys_le16_to_cpu(evt->handle);
 
@@ -899,7 +1092,7 @@ static void le_conn_update_complete(struct net_buf *buf)
 }
 
 static void check_pending_conn(const bt_addr_le_t *id_addr,
-			       const bt_addr_le_t *addr, uint8_t evtype)
+			       const bt_addr_le_t *addr, u8_t evtype)
 {
 	struct bt_conn *conn;
 
@@ -956,6 +1149,46 @@ failed:
 	bt_conn_unref(conn);
 	bt_le_scan_update(false);
 }
+
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+static int set_flow_control(void)
+{
+	struct bt_hci_cp_host_buffer_size *hbs;
+	struct net_buf *buf;
+	int err;
+
+	/* Check if host flow control is actually supported */
+	if (!(bt_dev.supported_commands[10] & 0x20)) {
+		BT_WARN("Controller to host flow control not supported");
+		return 0;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_HOST_BUFFER_SIZE,
+				sizeof(*hbs));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	hbs = net_buf_add(buf, sizeof(*hbs));
+	memset(hbs, 0, sizeof(*hbs));
+	hbs->acl_mtu = sys_cpu_to_le16(CONFIG_BLUETOOTH_L2CAP_RX_MTU +
+				       sizeof(struct bt_l2cap_hdr));
+	hbs->acl_pkts = sys_cpu_to_le16(CONFIG_BLUETOOTH_ACL_RX_COUNT);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_HOST_BUFFER_SIZE, buf, NULL);
+	if (err) {
+		return err;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_SET_CTL_TO_HOST_FLOW, 1);
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	net_buf_add_u8(buf, BT_HCI_CTL_TO_HOST_FLOW_ENABLE);
+	return bt_hci_cmd_send_sync(BT_HCI_OP_SET_CTL_TO_HOST_FLOW, buf, NULL);
+}
+#endif /* CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL */
 #endif /* CONFIG_BLUETOOTH_CONN */
 
 #if defined(CONFIG_BLUETOOTH_BREDR)
@@ -969,7 +1202,7 @@ static void reset_pairing(struct bt_conn *conn)
 	conn->required_sec_level = conn->sec_level;
 }
 
-static int reject_conn(const bt_addr_t *bdaddr, uint8_t reason)
+static int reject_conn(const bt_addr_t *bdaddr, u8_t reason)
 {
 	struct bt_hci_cp_reject_conn_req *cp;
 	struct net_buf *buf;
@@ -1053,7 +1286,14 @@ static void bt_esco_conn_req(struct bt_hci_evt_conn_request *evt)
 		return;
 	}
 
-	accept_sco_conn(&evt->bdaddr, sco_conn);
+	if (accept_sco_conn(&evt->bdaddr, sco_conn)) {
+		BT_ERR("Error accepting connection from %s",
+		       bt_addr_str(&evt->bdaddr));
+		reject_conn(&evt->bdaddr, BT_HCI_ERR_UNSPECIFIED);
+		bt_sco_cleanup(sco_conn);
+		return;
+	}
+
 	sco_conn->role = BT_HCI_ROLE_SLAVE;
 	bt_conn_set_state(sco_conn, BT_CONN_CONNECT);
 	bt_conn_unref(sco_conn);
@@ -1113,12 +1353,39 @@ static void update_sec_level_br(struct bt_conn *conn)
 	}
 }
 
+static void synchronous_conn_complete(struct net_buf *buf)
+{
+	struct bt_hci_evt_sync_conn_complete *evt = (void *)buf->data;
+	struct bt_conn *sco_conn;
+	u16_t handle = sys_le16_to_cpu(evt->handle);
+
+	BT_DBG("status 0x%02x, handle %u, type 0x%02x", evt->status, handle,
+	       evt->link_type);
+
+	sco_conn = bt_conn_lookup_addr_sco(&evt->bdaddr);
+	if (!sco_conn) {
+		BT_ERR("Unable to find conn for %s", bt_addr_str(&evt->bdaddr));
+		return;
+	}
+
+	if (evt->status) {
+		sco_conn->err = evt->status;
+		bt_conn_set_state(sco_conn, BT_CONN_DISCONNECTED);
+		bt_conn_unref(sco_conn);
+		return;
+	}
+
+	sco_conn->handle = handle;
+	bt_conn_set_state(sco_conn, BT_CONN_CONNECTED);
+	bt_conn_unref(sco_conn);
+}
+
 static void conn_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_conn_complete *evt = (void *)buf->data;
 	struct bt_conn *conn;
 	struct bt_hci_cp_read_remote_features *cp;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 
 	BT_DBG("status 0x%02x, handle %u, type 0x%02x", evt->status, handle,
 	       evt->link_type);
@@ -1172,7 +1439,7 @@ static void pin_code_req(struct net_buf *buf)
 
 static void link_key_notify(struct net_buf *buf)
 {
-	struct bt_hci_ev_link_key_notify *evt = (void *)buf->data;
+	struct bt_hci_evt_link_key_notify *evt = (void *)buf->data;
 	struct bt_conn *conn;
 
 	conn = bt_conn_lookup_addr_br(&evt->bdaddr);
@@ -1262,7 +1529,7 @@ static void link_key_neg_reply(const bt_addr_t *bdaddr)
 	bt_hci_cmd_send_sync(BT_HCI_OP_LINK_KEY_NEG_REPLY, buf, NULL);
 }
 
-static void link_key_reply(const bt_addr_t *bdaddr, const uint8_t *lk)
+static void link_key_reply(const bt_addr_t *bdaddr, const u8_t *lk)
 {
 	struct bt_hci_cp_link_key_reply *cp;
 	struct net_buf *buf;
@@ -1321,7 +1588,7 @@ static void link_key_req(struct net_buf *buf)
 	bt_conn_unref(conn);
 }
 
-static void io_capa_neg_reply(const bt_addr_t *bdaddr, const uint8_t reason)
+static void io_capa_neg_reply(const bt_addr_t *bdaddr, const u8_t reason)
 {
 	struct bt_hci_cp_io_capability_neg_reply *cp;
 	struct net_buf *resp_buf;
@@ -1350,14 +1617,14 @@ static void io_capa_resp(struct net_buf *buf)
 	if (evt->authentication > BT_HCI_GENERAL_BONDING_MITM) {
 		BT_ERR("Invalid remote authentication requirements");
 		io_capa_neg_reply(&evt->bdaddr,
-				  BT_HCI_ERR_UNSUPP_FEATURE_PARAMS_VAL);
+				  BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL);
 		return;
 	}
 
 	if (evt->capability > BT_IO_NO_INPUT_OUTPUT) {
 		BT_ERR("Invalid remote io capability requirements");
 		io_capa_neg_reply(&evt->bdaddr,
-				  BT_HCI_ERR_UNSUPP_FEATURE_PARAMS_VAL);
+				  BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL);
 		return;
 	}
 
@@ -1379,7 +1646,7 @@ static void io_capa_req(struct net_buf *buf)
 	struct net_buf *resp_buf;
 	struct bt_conn *conn;
 	struct bt_hci_cp_io_capability_reply *cp;
-	uint8_t auth;
+	u8_t auth;
 
 	BT_DBG("");
 
@@ -1490,12 +1757,12 @@ static void user_passkey_req(struct net_buf *buf)
 }
 
 struct discovery_priv {
-	uint16_t clock_offset;
-	uint8_t pscan_rep_mode;
-	uint8_t resolving;
+	u16_t clock_offset;
+	u8_t pscan_rep_mode;
+	u8_t resolving;
 } __packed;
 
-static int request_name(const bt_addr_t *addr, uint8_t pscan, uint16_t offset)
+static int request_name(const bt_addr_t *addr, u8_t pscan, u16_t offset)
 {
 	struct bt_hci_cp_remote_name_request *cp;
 	struct net_buf *buf;
@@ -1518,7 +1785,7 @@ static int request_name(const bt_addr_t *addr, uint8_t pscan, uint16_t offset)
 #define EIR_SHORT_NAME		0x08
 #define EIR_COMPLETE_NAME	0x09
 
-static bool eir_has_name(const uint8_t *eir)
+static bool eir_has_name(const u8_t *eir)
 {
 	int len = 240;
 
@@ -1605,7 +1872,7 @@ static void inquiry_complete(struct net_buf *buf)
 }
 
 static struct bt_br_discovery_result *get_result_slot(const bt_addr_t *addr,
-						      int8_t rssi)
+						      s8_t rssi)
 {
 	struct bt_br_discovery_result *result = NULL;
 	size_t i;
@@ -1656,7 +1923,7 @@ static struct bt_br_discovery_result *get_result_slot(const bt_addr_t *addr,
 static void inquiry_result_with_rssi(struct net_buf *buf)
 {
 	struct bt_hci_evt_inquiry_result_with_rssi *evt;
-	uint8_t num_reports = net_buf_pull_u8(buf);
+	u8_t num_reports = net_buf_pull_u8(buf);
 
 	if (!atomic_test_bit(bt_dev.flags, BT_DEV_INQUIRY)) {
 		return;
@@ -1726,7 +1993,7 @@ static void remote_name_request_complete(struct net_buf *buf)
 	struct bt_br_discovery_result *result;
 	struct discovery_priv *priv;
 	int eir_len = 240;
-	uint8_t *eir;
+	u8_t *eir;
 	int i;
 
 	result = get_result_slot(&evt->bdaddr, 0xff);
@@ -1803,7 +2070,7 @@ check_names:
 	discovery_results_count = 0;
 }
 
-static void link_encr(const uint16_t handle)
+static void link_encr(const u16_t handle)
 {
 	struct bt_hci_cp_set_conn_encrypt *encr;
 	struct net_buf *buf;
@@ -1827,7 +2094,7 @@ static void auth_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_auth_complete *evt = (void *)buf->data;
 	struct bt_conn *conn;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 
 	BT_DBG("status %u, handle %u", evt->status, handle);
 
@@ -1856,7 +2123,7 @@ static void auth_complete(struct net_buf *buf)
 static void read_remote_features_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_remote_features *evt = (void *)buf->data;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 	struct bt_hci_cp_read_remote_ext_features *cp;
 	struct bt_conn *conn;
 
@@ -1898,7 +2165,7 @@ done:
 static void read_remote_ext_features_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_remote_ext_features *evt = (void *)buf->data;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 	struct bt_conn *conn;
 
 	BT_DBG("status %u handle %u", evt->status, handle);
@@ -1975,7 +2242,7 @@ static void update_sec_level(struct bt_conn *conn)
 static void hci_encrypt_change(struct net_buf *buf)
 {
 	struct bt_hci_evt_encrypt_change *evt = (void *)buf->data;
-	uint16_t handle = sys_le16_to_cpu(evt->handle);
+	u16_t handle = sys_le16_to_cpu(evt->handle);
 	struct bt_conn *conn;
 
 	BT_DBG("status %u handle %u encrypt 0x%02x", evt->status, handle,
@@ -2049,7 +2316,7 @@ static void hci_encrypt_key_refresh_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_encrypt_key_refresh_complete *evt = (void *)buf->data;
 	struct bt_conn *conn;
-	uint16_t handle;
+	u16_t handle;
 
 	handle = sys_le16_to_cpu(evt->handle);
 
@@ -2096,8 +2363,8 @@ static void le_ltk_request(struct net_buf *buf)
 	struct bt_hci_evt_le_ltk_request *evt = (void *)buf->data;
 	struct bt_hci_cp_le_ltk_req_neg_reply *cp;
 	struct bt_conn *conn;
-	uint16_t handle;
-	uint8_t tk[16];
+	u16_t handle;
+	u8_t tk[16];
 
 	handle = sys_le16_to_cpu(evt->handle);
 
@@ -2246,7 +2513,7 @@ static void le_dhkey_complete(struct net_buf *buf)
 
 static void hci_reset_complete(struct net_buf *buf)
 {
-	uint8_t status = buf->data[0];
+	u8_t status = buf->data[0];
 
 	BT_DBG("status %u", status);
 
@@ -2266,11 +2533,14 @@ static void hci_reset_complete(struct net_buf *buf)
 	atomic_set(bt_dev.flags, BIT(BT_DEV_ENABLE));
 }
 
-static void hci_cmd_done(uint16_t opcode, uint8_t status, struct net_buf *buf)
+static void hci_cmd_done(u16_t opcode, u8_t status, struct net_buf *buf)
 {
 	BT_DBG("opcode 0x%04x status 0x%02x buf %p", opcode, status, buf);
 
-	if (buf->pool != &hci_cmd_pool) {
+	if (net_buf_pool_get(buf->pool_id) != &hci_cmd_pool) {
+		BT_WARN("pool id %u pool %p != &hci_cmd_pool %p",
+			buf->pool_id, net_buf_pool_get(buf->pool_id),
+			&hci_cmd_pool);
 		return;
 	}
 
@@ -2289,8 +2559,8 @@ static void hci_cmd_done(uint16_t opcode, uint8_t status, struct net_buf *buf)
 static void hci_cmd_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_cmd_complete *evt = (void *)buf->data;
-	uint16_t opcode = sys_le16_to_cpu(evt->opcode);
-	uint8_t status, ncmd = evt->ncmd;
+	u16_t opcode = sys_le16_to_cpu(evt->opcode);
+	u8_t status, ncmd = evt->ncmd;
 
 	BT_DBG("opcode 0x%04x", opcode);
 
@@ -2312,8 +2582,8 @@ static void hci_cmd_complete(struct net_buf *buf)
 static void hci_cmd_status(struct net_buf *buf)
 {
 	struct bt_hci_evt_cmd_status *evt = (void *)buf->data;
-	uint16_t opcode = sys_le16_to_cpu(evt->opcode);
-	uint8_t ncmd = evt->ncmd;
+	u16_t opcode = sys_le16_to_cpu(evt->opcode);
+	u8_t ncmd = evt->ncmd;
 
 	BT_DBG("opcode 0x%04x", opcode);
 
@@ -2327,103 +2597,15 @@ static void hci_cmd_status(struct net_buf *buf)
 	}
 }
 
-#if !defined(CONFIG_BLUETOOTH_CONTROLLER)
-#include <tinycrypt/constants.h>
-#include <tinycrypt/hmac_prng.h>
-#include <tinycrypt/utils.h>
-
-static struct tc_hmac_prng_struct prng;
-
-static int prng_reseed(struct tc_hmac_prng_struct *h)
-{
-	uint8_t seed[32];
-	int64_t extra;
-	int ret, i;
-
-	for (i = 0; i < (sizeof(seed) / 8); i++) {
-		struct bt_hci_rp_le_rand *rp;
-		struct net_buf *rsp;
-
-		ret = bt_hci_cmd_send_sync(BT_HCI_OP_LE_RAND, NULL, &rsp);
-		if (ret) {
-			return ret;
-		}
-
-		rp = (void *)rsp->data;
-		memcpy(&seed[i * 8], rp->rand, 8);
-
-		net_buf_unref(rsp);
-	}
-
-	extra = k_uptime_get();
-
-	ret = tc_hmac_prng_reseed(h, seed, sizeof(seed), (uint8_t *)&extra,
-				  sizeof(extra));
-	if (ret == TC_CRYPTO_FAIL) {
-		BT_ERR("Failed to re-seed PRNG");
-		return -EIO;
-	}
-
-	return 0;
-}
-
-static int prng_init(struct tc_hmac_prng_struct *h)
-{
-	struct bt_hci_rp_le_rand *rp;
-	struct net_buf *rsp;
-	int ret;
-
-	ret = bt_hci_cmd_send_sync(BT_HCI_OP_LE_RAND, NULL, &rsp);
-	if (ret) {
-		return ret;
-	}
-
-	rp = (void *)rsp->data;
-
-	ret = tc_hmac_prng_init(h, rp->rand, sizeof(rp->rand));
-
-	net_buf_unref(rsp);
-
-	if (ret == TC_CRYPTO_FAIL) {
-		BT_ERR("Failed to initialize PRNG");
-		return -EIO;
-	}
-
-	/* re-seed is needed after init */
-	return prng_reseed(h);
-}
-
-int bt_rand(void *buf, size_t len)
-{
-	int ret;
-
-	ret = tc_hmac_prng_generate(buf, len, &prng);
-	if (ret == TC_HMAC_PRNG_RESEED_REQ) {
-		ret = prng_reseed(&prng);
-		if (ret) {
-			return ret;
-		}
-
-		ret = tc_hmac_prng_generate(buf, len, &prng);
-	}
-
-	if (ret == TC_CRYPTO_SUCCESS) {
-		return 0;
-	}
-
-	return -EIO;
-}
-#endif /* !CONFIG_BLUETOOTH_CONTROLLER */
-
-static int start_le_scan(uint8_t scan_type, uint16_t interval, uint16_t window,
-			 uint8_t filter_dup)
+static int start_le_scan(u8_t scan_type, u16_t interval, u16_t window,
+			 u8_t filter_dup)
 {
 	struct net_buf *buf, *rsp;
-	struct bt_hci_cp_le_set_scan_params *set_param;
+	struct bt_hci_cp_le_set_scan_param *set_param;
 	struct bt_hci_cp_le_set_scan_enable *scan_enable;
 	int err;
 
-	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_SCAN_PARAMS,
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_SCAN_PARAM,
 				sizeof(*set_param));
 	if (!buf) {
 		return -ENOBUFS;
@@ -2464,7 +2646,7 @@ static int start_le_scan(uint8_t scan_type, uint16_t interval, uint16_t window,
 		}
 	}
 
-	bt_hci_cmd_send(BT_HCI_OP_LE_SET_SCAN_PARAMS, buf);
+	bt_hci_cmd_send(BT_HCI_OP_LE_SET_SCAN_PARAM, buf);
 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_SCAN_ENABLE,
 				sizeof(*scan_enable));
 	if (!buf) {
@@ -2511,7 +2693,7 @@ int bt_le_scan_update(bool fast_scan)
 	}
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_CENTRAL)) {
-		uint16_t interval, window;
+		u16_t interval, window;
 		struct bt_conn *conn;
 
 		conn = bt_conn_lookup_state_le(NULL, BT_CONN_CONNECT_SCAN);
@@ -2538,14 +2720,14 @@ int bt_le_scan_update(bool fast_scan)
 
 static void le_adv_report(struct net_buf *buf)
 {
-	uint8_t num_reports = net_buf_pull_u8(buf);
-	struct bt_hci_ev_le_advertising_info *info;
+	u8_t num_reports = net_buf_pull_u8(buf);
+	struct bt_hci_evt_le_advertising_info *info;
 
 	BT_DBG("Adv number of reports %u",  num_reports);
 
 	while (num_reports--) {
 		const bt_addr_le_t *addr;
-		int8_t rssi;
+		s8_t rssi;
 
 		info = (void *)buf->data;
 		net_buf_pull(buf, sizeof(*info));
@@ -2584,6 +2766,8 @@ static void hci_le_meta_event(struct net_buf *buf)
 {
 	struct bt_hci_evt_le_meta_event *evt = (void *)buf->data;
 
+	BT_DBG("subevent 0x%02x", evt->subevent);
+
 	net_buf_pull(buf, sizeof(*evt));
 
 	switch (evt->subevent) {
@@ -2599,6 +2783,12 @@ static void hci_le_meta_event(struct net_buf *buf)
 		break;
 	case BT_HCI_EVT_LE_CONN_PARAM_REQ:
 		le_conn_param_req(buf);
+		break;
+	case BT_HCI_EVT_LE_DATA_LEN_CHANGE:
+		le_data_len_change(buf);
+		break;
+	case BT_HCI_EVT_LE_PHY_UPDATE_COMPLETE:
+		le_phy_update_complete(buf);
 		break;
 #endif /* CONFIG_BLUETOOTH_CONN */
 #if defined(CONFIG_BLUETOOTH_SMP)
@@ -2691,6 +2881,9 @@ static void hci_event(struct net_buf *buf)
 	case BT_HCI_EVT_ROLE_CHANGE:
 		role_change(buf);
 		break;
+	case BT_HCI_EVT_SYNC_CONN_COMPLETE:
+		synchronous_conn_complete(buf);
+		break;
 #endif
 #if defined(CONFIG_BLUETOOTH_CONN)
 	case BT_HCI_EVT_DISCONN_COMPLETE:
@@ -2769,13 +2962,20 @@ static void process_events(struct k_poll_event *ev, int count)
 		case K_POLL_STATE_FIFO_DATA_AVAILABLE:
 			if (ev->tag == BT_EVENT_CMD_TX) {
 				send_cmd();
-			} else if (IS_ENABLED(CONFIG_BLUETOOTH_CONN) &&
-				   ev->tag == BT_EVENT_CONN_TX) {
+			} else if (IS_ENABLED(CONFIG_BLUETOOTH_CONN)) {
 				struct bt_conn *conn;
 
-				conn = CONTAINER_OF(ev->fifo, struct bt_conn,
-						    tx_queue);
-				bt_conn_process_tx(conn);
+				if (ev->tag == BT_EVENT_CONN_TX_NOTIFY) {
+					conn = CONTAINER_OF(ev->fifo,
+							    struct bt_conn,
+							    tx_notify);
+					bt_conn_notify_tx(conn);
+				} else if (ev->tag == BT_EVENT_CONN_TX_QUEUE) {
+					conn = CONTAINER_OF(ev->fifo,
+							    struct bt_conn,
+							    tx_queue);
+					bt_conn_process_tx(conn);
+				}
 			}
 			break;
 		case K_POLL_STATE_NOT_READY:
@@ -2788,8 +2988,8 @@ static void process_events(struct k_poll_event *ev, int count)
 }
 
 #if defined(CONFIG_BLUETOOTH_CONN)
-/* command FIFO + conn_change signal + MAX_CONN */
-#define EV_COUNT (2 + CONFIG_BLUETOOTH_MAX_CONN)
+/* command FIFO + conn_change signal + MAX_CONN * 2 (tx & tx_notify) */
+#define EV_COUNT (2 + (CONFIG_BLUETOOTH_MAX_CONN * 2))
 #else
 /* command FIFO */
 #define EV_COUNT 1
@@ -2867,7 +3067,7 @@ static void read_le_features_complete(struct net_buf *buf)
 static void read_buffer_size_complete(struct net_buf *buf)
 {
 	struct bt_hci_rp_read_buffer_size *rp = (void *)buf->data;
-	uint16_t pkts;
+	u16_t pkts;
 
 	BT_DBG("status %u", rp->status);
 
@@ -2878,11 +3078,11 @@ static void read_buffer_size_complete(struct net_buf *buf)
 
 	k_sem_init(&bt_dev.br.pkts, pkts, pkts);
 }
-#else
+#elif defined(CONFIG_BLUETOOTH_CONN)
 static void read_buffer_size_complete(struct net_buf *buf)
 {
 	struct bt_hci_rp_read_buffer_size *rp = (void *)buf->data;
-	uint16_t pkts;
+	u16_t pkts;
 
 	BT_DBG("status %u", rp->status);
 
@@ -2896,24 +3096,31 @@ static void read_buffer_size_complete(struct net_buf *buf)
 
 	BT_DBG("ACL BR/EDR buffers: pkts %u mtu %u", pkts, bt_dev.le.mtu);
 
+	pkts = min(pkts, CONFIG_BLUETOOTH_CONN_TX_MAX);
+
 	k_sem_init(&bt_dev.le.pkts, pkts, pkts);
 }
 #endif
 
+#if defined(CONFIG_BLUETOOTH_CONN)
 static void le_read_buffer_size_complete(struct net_buf *buf)
 {
 	struct bt_hci_rp_le_read_buffer_size *rp = (void *)buf->data;
+	u8_t le_max_num;
 
 	BT_DBG("status %u", rp->status);
 
 	bt_dev.le.mtu = sys_le16_to_cpu(rp->le_max_len);
-
-	if (bt_dev.le.mtu) {
-		k_sem_init(&bt_dev.le.pkts, rp->le_max_num, rp->le_max_num);
-		BT_DBG("ACL LE buffers: pkts %u mtu %u", rp->le_max_num,
-		       bt_dev.le.mtu);
+	if (!bt_dev.le.mtu) {
+		return;
 	}
+
+	BT_DBG("ACL LE buffers: pkts %u mtu %u", rp->le_max_num, bt_dev.le.mtu);
+
+	le_max_num = min(rp->le_max_num, CONFIG_BLUETOOTH_CONN_TX_MAX);
+	k_sem_init(&bt_dev.le.pkts, le_max_num, le_max_num);
 }
+#endif
 
 static void read_supported_commands_complete(struct net_buf *buf)
 {
@@ -2965,12 +3172,12 @@ static int common_init(void)
 	hci_reset_complete(rsp);
 	net_buf_unref(rsp);
 
+#if defined(CONFIG_BLUETOOTH_HOST_CRYPTO)
 	/*
 	 * initialize PRNG right after reset so that it is safe to use it later
 	 * on in initialization process
 	 */
-#if !defined(CONFIG_BLUETOOTH_CONTROLLER)
-	err = prng_init(&prng);
+	err = prng_init();
 	if (err) {
 		return err;
 	}
@@ -3010,13 +3217,70 @@ static int common_init(void)
 	read_supported_commands_complete(rsp);
 	net_buf_unref(rsp);
 
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+	err = set_flow_control();
+	if (err) {
+		return err;
+	}
+#endif /* CONFIG_BLUETOOTH_CONN */
+
 	return 0;
+}
+
+static int le_set_event_mask(void)
+{
+	struct bt_hci_cp_le_set_event_mask *cp_mask;
+	struct net_buf *buf;
+	u64_t mask = 0;
+
+	/* Set LE event mask */
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_EVENT_MASK, sizeof(*cp_mask));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp_mask = net_buf_add(buf, sizeof(*cp_mask));
+
+	mask |= BT_EVT_MASK_LE_ADVERTISING_REPORT;
+
+	if (IS_ENABLED(CONFIG_BLUETOOTH_CONN)) {
+		mask |= BT_EVT_MASK_LE_CONN_COMPLETE;
+		mask |= BT_EVT_MASK_LE_CONN_UPDATE_COMPLETE;
+		mask |= BT_EVT_MASK_LE_REMOTE_FEAT_COMPLETE;
+		if (BT_FEAT_LE_CONN_PARAM_REQ_PROC(bt_dev.le.features)) {
+			mask |= BT_EVT_MASK_LE_CONN_PARAM_REQ;
+		}
+		if (BT_FEAT_LE_DLE(bt_dev.le.features)) {
+			mask |= BT_EVT_MASK_LE_DATA_LEN_CHANGE;
+		}
+		if (BT_FEAT_LE_PHY_2M(bt_dev.le.features) ||
+		    BT_FEAT_LE_PHY_CODED(bt_dev.le.features)) {
+			mask |= BT_EVT_MASK_LE_PHY_UPDATE_COMPLETE;
+		}
+	}
+
+	if (IS_ENABLED(CONFIG_BLUETOOTH_SMP) &&
+	    BT_FEAT_LE_ENCR(bt_dev.le.features)) {
+		mask |= BT_EVT_MASK_LE_LTK_REQUEST;
+	}
+
+	/*
+	 * If "LE Read Local P-256 Public Key" and "LE Generate DH Key" are
+	 * supported we need to enable events generated by those commands.
+	 */
+	if ((bt_dev.supported_commands[34] & 0x02) &&
+	    (bt_dev.supported_commands[34] & 0x04)) {
+		mask |= BT_EVT_MASK_LE_P256_PUBLIC_KEY_COMPLETE;
+		mask |= BT_EVT_MASK_LE_GENERATE_DHKEY_COMPLETE;
+	}
+
+	sys_put_le64(mask, cp_mask->events);
+	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_SET_EVENT_MASK, buf, NULL);
 }
 
 static int le_init(void)
 {
 	struct bt_hci_cp_write_le_host_supp *cp_le;
-	struct bt_hci_cp_le_set_event_mask *cp_mask;
 	struct net_buf *buf;
 	struct net_buf *rsp;
 	int err;
@@ -3036,13 +3300,16 @@ static int le_init(void)
 	read_le_features_complete(rsp);
 	net_buf_unref(rsp);
 
+#if defined(CONFIG_BLUETOOTH_CONN)
 	/* Read LE Buffer Size */
-	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_BUFFER_SIZE, NULL, &rsp);
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_BUFFER_SIZE,
+				   NULL, &rsp);
 	if (err) {
 		return err;
 	}
 	le_read_buffer_size_complete(rsp);
 	net_buf_unref(rsp);
+#endif
 
 	if (BT_FEAT_BREDR(bt_dev.features)) {
 		buf = bt_hci_cmd_create(BT_HCI_OP_LE_WRITE_LE_HOST_SUPP,
@@ -3074,47 +3341,42 @@ static int le_init(void)
 		net_buf_unref(rsp);
 	}
 
-	/* Set LE event mask */
-	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_EVENT_MASK, sizeof(*cp_mask));
-	if (!buf) {
-		return -ENOBUFS;
+	if (IS_ENABLED(CONFIG_BLUETOOTH_CONN) &&
+	    BT_FEAT_LE_DLE(bt_dev.le.features)) {
+		struct bt_hci_cp_le_write_default_data_len *cp;
+		struct bt_hci_rp_le_read_max_data_len *rp;
+		struct net_buf *buf, *rsp;
+		u16_t tx_octets, tx_time;
+
+		err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_MAX_DATA_LEN, NULL,
+					   &rsp);
+		if (err) {
+			return err;
+		}
+
+		rp = (void *)rsp->data;
+		tx_octets = sys_le16_to_cpu(rp->max_tx_octets);
+		tx_time = sys_le16_to_cpu(rp->max_tx_time);
+		net_buf_unref(rsp);
+
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_WRITE_DEFAULT_DATA_LEN,
+					sizeof(*cp));
+		if (!buf) {
+			return -ENOBUFS;
+		}
+
+		cp = net_buf_add(buf, sizeof(*cp));
+		cp->max_tx_octets = sys_cpu_to_le16(tx_octets);
+		cp->max_tx_time = sys_cpu_to_le16(tx_time);
+
+		err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_WRITE_DEFAULT_DATA_LEN,
+					   buf, NULL);
+		if (err) {
+			return err;
+		}
 	}
 
-	cp_mask = net_buf_add(buf, sizeof(*cp_mask));
-	memset(cp_mask, 0, sizeof(*cp_mask));
-
-	cp_mask->events[0] |= 0x02; /* LE Advertising Report Event */
-
-	if (IS_ENABLED(CONFIG_BLUETOOTH_CONN)) {
-		/* LE Connection Complete Event */
-		cp_mask->events[0] |= 0x01;
-		/* LE Connection Update Complete Event */
-		cp_mask->events[0] |= 0x04;
-		/* LE Read Remote Used Features Compl Evt */
-		cp_mask->events[0] |= 0x08;
-	}
-
-	if (IS_ENABLED(CONFIG_BLUETOOTH_SMP)) {
-		/* LE Long Term Key Request Event */
-		cp_mask->events[0] |= 0x10;
-	}
-
-	/*
-	 * If "LE Read Local P-256 Public Key" and "LE Generate DH Key" are
-	 * supported we need to enable events generated by those commands.
-	 */
-	if ((bt_dev.supported_commands[34] & 0x02) &&
-	    (bt_dev.supported_commands[34] & 0x04)) {
-		cp_mask->events[0] |= 0x80; /* LE Read Local P-256 PKey Compl */
-		cp_mask->events[1] |= 0x01; /* LE Generate DHKey Compl Event */
-	}
-
-	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_SET_EVENT_MASK, buf, NULL);
-	if (err) {
-		return err;
-	}
-
-	return 0;
+	return  le_set_event_mask();
 }
 
 #if defined(CONFIG_BLUETOOTH_BREDR)
@@ -3164,36 +3426,36 @@ void device_supported_pkt_type(void)
 {
 	/* Device supported features and sco packet types */
 	if (BT_FEAT_HV2_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_HV2);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_HV2);
 	}
 
 	if (BT_FEAT_HV3_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_HV3);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_HV3);
 	}
 
 	if (BT_FEAT_LMP_ESCO_CAPABLE(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_EV3);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_EV3);
 	}
 
 	if (BT_FEAT_EV4_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_EV4);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_EV4);
 	}
 
 	if (BT_FEAT_EV5_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_EV5);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_EV5);
 	}
 
 	if (BT_FEAT_2EV3_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_2EV3);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_2EV3);
 	}
 
 	if (BT_FEAT_3EV3_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_3EV3);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_3EV3);
 	}
 
 	if (BT_FEAT_3SLOT_PKT(bt_dev.features)) {
-		bt_dev.esco.pkt_type |= (HCI_PKT_TYPE_ESCO_2EV5 |
-					 HCI_PKT_TYPE_ESCO_3EV5);
+		bt_dev.br.esco_pkt_type |= (HCI_PKT_TYPE_ESCO_2EV5 |
+					    HCI_PKT_TYPE_ESCO_3EV5);
 	}
 }
 
@@ -3267,7 +3529,7 @@ static int br_init(void)
 	}
 
 	/* Set page timeout*/
-	buf = bt_hci_cmd_create(BT_HCI_OP_WRITE_PAGE_TIMEOUT, sizeof(uint16_t));
+	buf = bt_hci_cmd_create(BT_HCI_OP_WRITE_PAGE_TIMEOUT, sizeof(u16_t));
 	if (!buf) {
 		return -ENOBUFS;
 	}
@@ -3304,6 +3566,7 @@ static int br_init(void)
 #else
 static int br_init(void)
 {
+#if defined(CONFIG_BLUETOOTH_CONN)
 	struct net_buf *rsp;
 	int err;
 
@@ -3319,6 +3582,7 @@ static int br_init(void)
 
 	read_buffer_size_complete(rsp);
 	net_buf_unref(rsp);
+#endif /* CONFIG_BLUETOOTH_CONN */
 
 	return 0;
 }
@@ -3328,6 +3592,7 @@ static int set_event_mask(void)
 {
 	struct bt_hci_cp_set_event_mask *ev;
 	struct net_buf *buf;
+	u64_t mask = 0;
 
 	buf = bt_hci_cmd_create(BT_HCI_OP_SET_EVENT_MASK, sizeof(*ev));
 	if (!buf) {
@@ -3335,49 +3600,49 @@ static int set_event_mask(void)
 	}
 
 	ev = net_buf_add(buf, sizeof(*ev));
-	memset(ev, 0, sizeof(*ev));
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_BREDR)) {
-		ev->events[0] |= 0x01; /* Inquiry Complete  */
-		ev->events[0] |= 0x04; /* Connection Complete */
-		ev->events[0] |= 0x08; /* Connection Request */
-		ev->events[0] |= 0x20; /* Authentication Complete */
-		ev->events[0] |= 0x40; /* Remote Name Request Complete */
-		ev->events[1] |= 0x04; /* Read Remote Feature Complete */
-		ev->events[2] |= 0x02; /* Role Change */
-		ev->events[2] |= 0x20; /* Pin Code Request */
-		ev->events[2] |= 0x40; /* Link Key Request */
-		ev->events[2] |= 0x80; /* Link Key Notif */
-		ev->events[4] |= 0x02; /* Inquiry Result With RSSI */
-		ev->events[4] |= 0x04; /* Remote Extended Features Complete */
-		ev->events[5] |= 0x08; /* Synchronous Conn Complete Event */
-		ev->events[5] |= 0x40; /* Extended Inquiry Result */
-		ev->events[6] |= 0x01; /* IO Capability Request */
-		ev->events[6] |= 0x02; /* IO Capability Response */
-		ev->events[6] |= 0x04; /* User Confirmation Request */
-		ev->events[6] |= 0x08; /* User Passkey Request */
-		ev->events[6] |= 0x20; /* Simple Pairing Complete */
-		ev->events[7] |= 0x04; /* User Passkey Notification */
+		/* Since we require LE support, we can count on a
+		 * Bluetooth 4.0 feature set
+		 */
+		mask |= BT_EVT_MASK_INQUIRY_COMPLETE;
+		mask |= BT_EVT_MASK_CONN_COMPLETE;
+		mask |= BT_EVT_MASK_CONN_REQUEST;
+		mask |= BT_EVT_MASK_AUTH_COMPLETE;
+		mask |= BT_EVT_MASK_REMOTE_NAME_REQ_COMPLETE;
+		mask |= BT_EVT_MASK_REMOTE_FEATURES;
+		mask |= BT_EVT_MASK_ROLE_CHANGE;
+		mask |= BT_EVT_MASK_PIN_CODE_REQ;
+		mask |= BT_EVT_MASK_LINK_KEY_REQ;
+		mask |= BT_EVT_MASK_LINK_KEY_NOTIFY;
+		mask |= BT_EVT_MASK_INQUIRY_RESULT_WITH_RSSI;
+		mask |= BT_EVT_MASK_REMOTE_EXT_FEATURES;
+		mask |= BT_EVT_MASK_SYNC_CONN_COMPLETE;
+		mask |= BT_EVT_MASK_EXTENDED_INQUIRY_RESULT;
+		mask |= BT_EVT_MASK_IO_CAPA_REQ;
+		mask |= BT_EVT_MASK_IO_CAPA_RESP;
+		mask |= BT_EVT_MASK_USER_CONFIRM_REQ;
+		mask |= BT_EVT_MASK_USER_PASSKEY_REQ;
+		mask |= BT_EVT_MASK_SSP_COMPLETE;
+		mask |= BT_EVT_MASK_USER_PASSKEY_NOTIFY;
 	}
 
-	ev->events[1] |= 0x20; /* Command Complete */
-	ev->events[1] |= 0x40; /* Command Status */
-	ev->events[1] |= 0x80; /* Hardware Error */
-	ev->events[3] |= 0x02; /* Data Buffer Overflow */
-	ev->events[7] |= 0x20; /* LE Meta-Event */
+	mask |= BT_EVT_MASK_HARDWARE_ERROR;
+	mask |= BT_EVT_MASK_DATA_BUFFER_OVERFLOW;
+	mask |= BT_EVT_MASK_LE_META_EVENT;
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_CONN)) {
-		ev->events[0] |= 0x10; /* Disconnection Complete */
-		ev->events[1] |= 0x08; /* Read Remote Version Info Complete */
-		ev->events[2] |= 0x04; /* Number of Completed Packets */
+		mask |= BT_EVT_MASK_DISCONN_COMPLETE;
+		mask |= BT_EVT_MASK_REMOTE_VERSION_INFO;
 	}
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_SMP) &&
 	    BT_FEAT_LE_ENCR(bt_dev.le.features)) {
-		ev->events[0] |= 0x80; /* Encryption Change */
-		ev->events[5] |= 0x80; /* Encryption Key Refresh Complete */
+		mask |= BT_EVT_MASK_ENCRYPT_CHANGE;
+		mask |= BT_EVT_MASK_ENCRYPT_KEY_REFRESH_COMPLETE;
 	}
 
+	sys_put_le64(mask, ev->events);
 	return bt_hci_cmd_send_sync(BT_HCI_OP_SET_EVENT_MASK, buf, NULL);
 }
 
@@ -3490,7 +3755,7 @@ set_addr:
 }
 
 #if defined(CONFIG_BLUETOOTH_DEBUG)
-static const char *ver_str(uint8_t ver)
+static const char *ver_str(u8_t ver)
 {
 	const char * const str[] = {
 		"1.0b", "1.1", "1.2", "2.0", "2.1", "3.0", "4.0", "4.1", "4.2",
@@ -3574,16 +3839,23 @@ int bt_send(struct net_buf *buf)
 
 	bt_monitor_send(bt_monitor_opcode(buf), buf->data, buf->len);
 
+	if (IS_ENABLED(CONFIG_BLUETOOTH_TINYCRYPT_ECC)) {
+		return bt_hci_ecc_send(buf);
+	}
+
 	return bt_dev.drv->send(buf);
 }
 
 int bt_recv(struct net_buf *buf)
 {
+	struct net_buf_pool *pool;
+
 	bt_monitor_send(bt_monitor_opcode(buf), buf->data, buf->len);
 
 	BT_DBG("buf %p len %u", buf, buf->len);
 
-	if (buf->pool->user_data_size < BT_BUF_USER_DATA_MIN) {
+	pool = net_buf_pool_get(buf->pool_id);
+	if (pool->user_data_size < BT_BUF_USER_DATA_MIN) {
 		BT_ERR("Too small user data size");
 		net_buf_unref(buf);
 		return -EINVAL;
@@ -3648,7 +3920,7 @@ int bt_recv_prio(struct net_buf *buf)
 	return 0;
 }
 
-int bt_hci_driver_register(struct bt_hci_driver *drv)
+int bt_hci_driver_register(const struct bt_hci_driver *drv)
 {
 	if (bt_dev.drv) {
 		return -EALREADY;
@@ -3797,18 +4069,22 @@ int bt_enable(bt_ready_cb_t cb)
 	ready_cb = cb;
 
 	/* TX thread */
-	k_thread_spawn(tx_thread_stack, sizeof(tx_thread_stack),
-		       hci_tx_thread, NULL, NULL, NULL, K_PRIO_COOP(7), 0,
-		       K_NO_WAIT);
+	k_thread_create(&tx_thread_data, tx_thread_stack,
+			K_THREAD_STACK_SIZEOF(tx_thread_stack),
+			hci_tx_thread, NULL, NULL,
+			NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 #if !defined(CONFIG_BLUETOOTH_RECV_IS_RX_THREAD)
 	/* RX thread */
-	k_thread_spawn(rx_thread_stack, sizeof(rx_thread_stack),
-		       (k_thread_entry_t)hci_rx_thread, NULL, NULL, NULL,
-		       K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&rx_thread_data, rx_thread_stack,
+			K_THREAD_STACK_SIZEOF(rx_thread_stack),
+			(k_thread_entry_t)hci_rx_thread, NULL, NULL, NULL,
+			K_PRIO_COOP(7), 0, K_NO_WAIT);
 #endif
 
-	bt_hci_ecc_init();
+	if (IS_ENABLED(CONFIG_BLUETOOTH_TINYCRYPT_ECC)) {
+		bt_hci_ecc_init();
+	}
 
 	err = bt_dev.drv->open();
 	if (err) {
@@ -3859,7 +4135,7 @@ static bool valid_adv_param(const struct bt_le_adv_param *param)
 	return true;
 }
 
-static int set_ad(uint16_t hci_op, const struct bt_data *ad, size_t ad_len)
+static int set_ad(u16_t hci_op, const struct bt_data *ad, size_t ad_len)
 {
 	struct bt_hci_cp_le_set_adv_data *set_data;
 	struct net_buf *buf;
@@ -3929,7 +4205,8 @@ int bt_le_adv_start(const struct bt_le_adv_param *param,
 		}
 	}
 
-	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_ADV_PARAM, sizeof(*set_param));
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_ADV_PARAM,
+				sizeof(*set_param));
 	if (!buf) {
 		return -ENOBUFS;
 	}
@@ -4113,19 +4390,32 @@ int bt_le_scan_stop(void)
 	return bt_le_scan_update(false);
 }
 
-struct net_buf *bt_buf_get_rx(int32_t timeout)
+struct net_buf *bt_buf_get_rx(enum bt_buf_type type, s32_t timeout)
 {
 	struct net_buf *buf;
 
+	__ASSERT(type == BT_BUF_EVT || type == BT_BUF_ACL_IN,
+		 "Invalid buffer type requested");
+
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+	if (type == BT_BUF_EVT) {
+		buf = net_buf_alloc(&hci_rx_pool, timeout);
+	} else {
+		buf = net_buf_alloc(&acl_in_pool, timeout);
+	}
+#else
 	buf = net_buf_alloc(&hci_rx_pool, timeout);
+#endif
+
 	if (buf) {
 		net_buf_reserve(buf, CONFIG_BLUETOOTH_HCI_RESERVE);
+		bt_buf_set_type(buf, type);
 	}
 
 	return buf;
 }
 
-struct net_buf *bt_buf_get_cmd_complete(int32_t timeout)
+struct net_buf *bt_buf_get_cmd_complete(s32_t timeout)
 {
 	struct net_buf *buf;
 	unsigned int key;
@@ -4145,18 +4435,13 @@ struct net_buf *bt_buf_get_cmd_complete(int32_t timeout)
 		return buf;
 	}
 
-	buf = bt_buf_get_rx(timeout);
-	if (buf) {
-		bt_buf_set_type(buf, BT_BUF_EVT);
-	}
-
-	return buf;
+	return bt_buf_get_rx(BT_BUF_EVT, timeout);
 }
 
 #if defined(CONFIG_BLUETOOTH_BREDR)
 static int br_start_inquiry(const struct bt_br_discovery_param *param)
 {
-	const uint8_t iac[3] = { 0x33, 0x8b, 0x9e };
+	const u8_t iac[3] = { 0x33, 0x8b, 0x9e };
 	struct bt_hci_op_inquiry *cp;
 	struct net_buf *buf;
 
@@ -4274,7 +4559,7 @@ int bt_br_discovery_stop(void)
 	return 0;
 }
 
-static int write_scan_enable(uint8_t scan)
+static int write_scan_enable(u8_t scan)
 {
 	struct net_buf *buf;
 	int err;
@@ -4409,7 +4694,7 @@ int bt_storage_clear(const bt_addr_le_t *addr)
 	return 0;
 }
 
-uint16_t bt_hci_get_cmd_opcode(struct net_buf *buf)
+u16_t bt_hci_get_cmd_opcode(struct net_buf *buf)
 {
 	return cmd(buf)->opcode;
 }
@@ -4457,7 +4742,7 @@ int bt_pub_key_gen(struct bt_pub_key_cb *new_cb)
 	return 0;
 }
 
-const uint8_t *bt_pub_key_get(void)
+const u8_t *bt_pub_key_get(void)
 {
 	if (atomic_test_bit(bt_dev.flags, BT_DEV_HAS_PUB_KEY)) {
 		return pub_key;
@@ -4466,7 +4751,7 @@ const uint8_t *bt_pub_key_get(void)
 	return NULL;
 }
 
-int bt_dh_key_gen(const uint8_t remote_pk[64], bt_dh_key_cb_t cb)
+int bt_dh_key_gen(const u8_t remote_pk[64], bt_dh_key_cb_t cb)
 {
 	struct bt_hci_cp_le_generate_dhkey *cp;
 	struct net_buf *buf;

@@ -11,7 +11,7 @@
 #ifndef __SENSOR_LSM9DS0_MFD_H__
 #define __SENSOR_LSM9DS0_MFD_H__
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <misc/util.h>
 
 #define LSM9DS0_MFD_REG_OUT_TEMP_L_XM		0x05
@@ -526,7 +526,7 @@
 
 struct lsm9ds0_mfd_config {
 	char *i2c_master_dev_name;
-	uint16_t i2c_slave_addr;
+	u16_t i2c_slave_addr;
 };
 
 struct lsm9ds0_mfd_data {
@@ -546,13 +546,13 @@ struct lsm9ds0_mfd_data {
 
 #if defined(CONFIG_LSM9DS0_MFD_ACCEL_FULL_SCALE_RUNTIME)
 #if !defined(LSM9DS0_MFD_ACCEL_DISABLED)
-	uint8_t accel_fs, sample_accel_fs;
+	u8_t accel_fs, sample_accel_fs;
 #endif
 #endif
 
 #if defined(CONFIG_LSM9DS0_MFD_MAGN_FULL_SCALE_RUNTIME)
 #if !defined(LSM9DS0_MFD_MAGN_DISABLED)
-	uint8_t magn_fs, sample_magn_fs;
+	u8_t magn_fs, sample_magn_fs;
 #endif
 #endif
 };

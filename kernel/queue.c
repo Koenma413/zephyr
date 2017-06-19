@@ -15,7 +15,7 @@
 #include <kernel_structs.h>
 #include <debug/object_tracing_common.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <wait_q.h>
 #include <ksched.h>
 #include <misc/slist.h>
@@ -24,9 +24,9 @@
 extern struct k_queue _k_queue_list_start[];
 extern struct k_queue _k_queue_list_end[];
 
-struct k_queue *_trace_list_k_queue;
-
 #ifdef CONFIG_OBJECT_TRACING
+
+struct k_queue *_trace_list_k_queue;
 
 /*
  * Complete initialization of statically defined queues.
@@ -68,13 +68,38 @@ static void prepare_thread_to_run(struct k_thread *thread, void *data)
 static inline int handle_poll_event(struct k_queue *queue)
 {
 #ifdef CONFIG_POLL
-	uint32_t state = K_POLL_STATE_DATA_AVAILABLE;
+	u32_t state = K_POLL_STATE_DATA_AVAILABLE;
 
 	return queue->poll_event ?
 	       _handle_obj_poll_event(&queue->poll_event, state) : 0;
 #else
 	return 0;
 #endif
+}
+
+void k_queue_cancel_wait(struct k_queue *queue)
+{
+	struct k_thread *first_pending_thread;
+	unsigned int key;
+
+	key = irq_lock();
+
+	first_pending_thread = _unpend_first_thread(&queue->wait_q);
+
+	if (first_pending_thread) {
+		prepare_thread_to_run(first_pending_thread, NULL);
+		if (!_is_in_isr() && _must_switch_threads()) {
+			(void)_Swap(key);
+			return;
+		}
+	} else {
+		if (handle_poll_event(queue)) {
+			(void)_Swap(key);
+			return;
+		}
+	}
+
+	irq_unlock(key);
 }
 
 void k_queue_insert(struct k_queue *queue, void *prev, void *data)
@@ -161,7 +186,7 @@ void k_queue_merge_slist(struct k_queue *queue, sys_slist_t *list)
 	sys_slist_init(list);
 }
 
-void *k_queue_get(struct k_queue *queue, int32_t timeout)
+void *k_queue_get(struct k_queue *queue, s32_t timeout)
 {
 	unsigned int key;
 	void *data;

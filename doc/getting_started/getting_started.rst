@@ -28,22 +28,17 @@ Use the following procedures to create a new development environment.
 Checking Out the Source Code Anonymously
 ========================================
 
-The code is hosted at the Linux Foundation with a Gerrit backend that supports
+The code is hosted in a GitHub repo that supports
 anonymous cloning via git.
 
 To clone the repository anonymously, enter:
 
 .. code-block:: console
 
-   $ git clone https://gerrit.zephyrproject.org/r/zephyr zephyr-project
+   $ git clone https://github.com/zephyrproject-rtos/zephyr.git
 
 You have successfully checked out a copy of the source code to your local
 machine.
-
-Once you're ready to start contributing, follow the steps to make yourself
-a Linux Foundation account at `Gerrit Accounts`_.
-
-.. _Gerrit Accounts: https://wiki.zephyrproject.org/view/Gerrit_accounts
 
 Building and Running an Application
 ***********************************
@@ -69,7 +64,6 @@ To build an example application follow these steps:
    .. code-block:: console
 
       $ export ZEPHYR_GCC_VARIANT=zephyr
-
       $ export ZEPHYR_SDK_INSTALL_DIR=<sdk installation directory>
 
 #. Navigate to the main project directory:
@@ -90,7 +84,6 @@ To build an example application follow these steps:
    .. code-block:: console
 
       $ cd $ZEPHYR_BASE/samples/hello_world
-
       $ make
 
 The above invocation of make will build the :ref:`hello_world` sample application
@@ -138,7 +131,6 @@ follow the steps below to build with any custom or 3rd party cross-compilers:
    .. code-block:: console
 
       $ unset ZEPHYR_GCC_VARIANT
-
       $ unset ZEPHYR_SDK_INSTALL_DIR
 
 #. We will use the `GCC ARM Embedded`_ compiler for this example, download the
@@ -165,11 +157,8 @@ follow the steps below to build with any custom or 3rd party cross-compilers:
    .. code-block:: console
 
       $ export GCCARMEMB_TOOLCHAIN_PATH="~/gcc-arm-none-eabi-5_3-2016q1/"
-
       $ export ZEPHYR_GCC_VARIANT=gccarmemb
-
       $ cd $ZEPHYR_BASE/samples/hello_world
-
       $ make CROSS_COMPILE=~/gcc-arm-none-eabi-5_3-2016q1/bin/arm-none-eabi- BOARD=arduino_due
 
 The above will build the sample using the toolchain downloaded from
@@ -180,22 +169,17 @@ Alternatively, you can use the existing support for GCC ARM Embedded:
    .. code-block:: console
 
       $ export GCCARMEMB_TOOLCHAIN_PATH="~/gcc-arm-none-eabi-5_3-2016q1/"
-
       $ export ZEPHYR_GCC_VARIANT=gccarmemb
-
       $ cd zephyr-project
-
       $ source zephyr-env.sh
-
       $ cd $ZEPHYR_BASE/samples/hello_world
-
       $ make BOARD=arduino_due
 
 Running a Sample Application in QEMU
 ====================================
 
 To perform rapid testing of an application in the development environment you
-can use the qemu emulation board configuration available for both X86 and ARM
+can use the QEMU emulation board configuration available for both X86 and ARM
 Cortex-M3 architectures. This can be easily accomplished by calling a special
 target when building an application that invokes QEMU once the build process is
 completed.
@@ -217,9 +201,5 @@ QEMU is not supported on all boards and SoCs. When developing for a specific
 hardware target you should always test on the actual hardware and should not
 rely on testing in the QEMU emulation environment only.
 
-
-.. _Linux Foundation ID website: https://identity.linuxfoundation.org
-
-.. _Gerrit: https://gerrit.zephyrproject.org/
 
 .. _GCC ARM Embedded: https://launchpad.net/gcc-arm-embedded

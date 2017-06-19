@@ -26,16 +26,6 @@ extern void _SpuriousIntHandler(void *);
 extern void _SpuriousIntNoErrCodeHandler(void *);
 
 /*
- * These 'dummy' variables are used in nanoArchInit() to force the inclusion of
- * the spurious interrupt handlers. They *must* be declared in a module other
- * than the one they are used in to get around garbage collection issues and
- * warnings issued some compilers that they aren't used. Therefore care must
- * be taken if they are to be moved. See kernel_structs.h for more information.
- */
-void *_dummy_spurious_interrupt;
-void *_dummy_exception_vector_stub;
-
-/*
  * Place the addresses of the spurious interrupt handlers into the intList
  * section. The genIdt tool can then populate any unused vectors with
  * these routines.
@@ -61,7 +51,7 @@ void *__attribute__((section(".spurNoErrIsr")))
 void _arch_irq_direct_pm(void)
 {
 	if (_kernel.idle) {
-		int32_t idle_val = _kernel.idle;
+		s32_t idle_val = _kernel.idle;
 
 		_kernel.idle = 0;
 		_sys_power_save_idle_exit(idle_val);

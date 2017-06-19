@@ -7,9 +7,9 @@
  */
 
 #include <zephyr.h>
-#include <sections.h>
+#include <linker/sections.h>
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,7 +17,7 @@
 #include <device.h>
 #include <init.h>
 #include <net/net_core.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_ip.h>
 
 #include <tc_util.h>
@@ -91,8 +91,8 @@
 		{ { { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
 		      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbb, 0xaa } } }
 
-uint8_t src_mac[8] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa, 0xbb };
-uint8_t dst_mac[8] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbb, 0xaa };
+u8_t src_mac[8] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa, 0xbb };
+u8_t dst_mac[8] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbb, 0xaa };
 
 /* Source and Destination addresses are contect related addresses. */
 #if defined(CONFIG_NET_6LO_CONTEXT)
@@ -106,8 +106,8 @@ uint8_t dst_mac[8] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbb, 0xaa };
 /* 6CO contexts */
 static struct net_icmpv6_nd_opt_6co ctx1 = {
 	.type = 0x22,
-	.len = 0x03,
-	.context_len = 0x80,
+	.len = 0x02,
+	.context_len = 0x40,
 	.flag = 0x11,
 	.reserved = 0,
 	.lifetime = 0x1234,
@@ -198,9 +198,9 @@ static void net_6lo_iface_init(struct net_if *iface)
 	net_if_set_link_addr(iface, src_mac, 8, NET_LINK_IEEE802154);
 }
 
-static int tester_send(struct net_if *iface, struct net_buf *buf)
+static int tester_send(struct net_if *iface, struct net_pkt *pkt)
 {
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 	return NET_OK;
 }
 
@@ -214,61 +214,61 @@ NET_DEVICE_INIT(net_6lo_test, "net_6lo_test",
 		CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
 		&net_6lo_if_api, DUMMY_L2, NET_L2_GET_CTX_TYPE(DUMMY_L2), 127);
 
-static bool compare_data(struct net_buf *buf, struct net_6lo_data *data)
+static bool compare_data(struct net_pkt *pkt, struct net_6lo_data *data)
 {
 	struct net_buf *frag;
-	uint8_t bytes;
-	uint8_t compare;
-	uint8_t pos = 0;
-	uint8_t offset = 0;
+	u8_t bytes;
+	u8_t compare;
+	u8_t pos = 0;
+	u8_t offset = 0;
 	int remaining = data->small ? SIZE_OF_SMALL_DATA : SIZE_OF_LARGE_DATA;
 
 	if (data->nh_udp) {
-		if (net_buf_frags_len(buf->frags) !=
+		if (net_pkt_get_len(pkt) !=
 		    (NET_IPV6UDPH_LEN + remaining)) {
 
 			TC_PRINT("mismatch lengths, expected %d received %zu\n",
 				 NET_IPV6UDPH_LEN + remaining,
-				 net_buf_frags_len(buf->frags));
+				 net_pkt_get_len(pkt));
 
 			return false;
 		}
 	} else if (data->nh_icmp) {
-		if (net_buf_frags_len(buf->frags) !=
+		if (net_pkt_get_len(pkt) !=
 		    (NET_IPV6ICMPH_LEN + remaining)) {
 
 			TC_PRINT("mismatch lengths, expected %d received %zu\n",
 				 NET_IPV6ICMPH_LEN + remaining,
-				 net_buf_frags_len(buf->frags));
+				 net_pkt_get_len(pkt));
 
 			return false;
 		}
 	} else {
-		if (net_buf_frags_len(buf->frags) !=
+		if (net_pkt_get_len(pkt) !=
 		    (NET_IPV6H_LEN + remaining)) {
 
 			TC_PRINT("mismatch lengths, expected %d received %zu\n",
 				 NET_IPV6H_LEN + remaining,
-				 net_buf_frags_len(buf->frags));
+				 net_pkt_get_len(pkt));
 
 			return false;
 		}
 	}
 
-	frag = buf->frags;
+	frag = pkt->frags;
 
 	if (data->nh_udp) {
-		if (memcmp(frag->data, (uint8_t *)data, NET_IPV6UDPH_LEN)) {
+		if (memcmp(frag->data, (u8_t *)data, NET_IPV6UDPH_LEN)) {
 			TC_PRINT("mismatch headers\n");
 			return false;
 		}
 	} else	if (data->nh_icmp) {
-		if (memcmp(frag->data, (uint8_t *)data, NET_IPV6ICMPH_LEN)) {
+		if (memcmp(frag->data, (u8_t *)data, NET_IPV6ICMPH_LEN)) {
 			TC_PRINT("mismatch headers\n");
 			return false;
 		}
 	} else {
-		if (memcmp(frag->data, (uint8_t *)data, NET_IPV6H_LEN)) {
+		if (memcmp(frag->data, (u8_t *)data, NET_IPV6H_LEN)) {
 			TC_PRINT("mismatch headers\n");
 			return false;
 		}
@@ -301,42 +301,43 @@ static bool compare_data(struct net_buf *buf, struct net_6lo_data *data)
 	return true;
 }
 
-static struct net_buf *create_buf(struct net_6lo_data *data)
+static struct net_pkt *create_pkt(struct net_6lo_data *data)
 {
-	struct net_buf *buf, *frag;
-	uint8_t bytes, pos;
-	uint16_t len;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
+	u8_t bytes, pos;
+	u16_t len;
 	int remaining;
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
-	if (!buf) {
+	pkt = net_pkt_get_reserve_tx(0, K_FOREVER);
+	if (!pkt) {
 		return NULL;
 	}
 
-	net_nbuf_set_iface(buf, net_if_get_default());
-	net_nbuf_set_ip_hdr_len(buf, NET_IPV6H_LEN);
+	net_pkt_set_iface(pkt, net_if_get_default());
+	net_pkt_set_ip_hdr_len(pkt, NET_IPV6H_LEN);
 
-	net_nbuf_ll_src(buf)->addr = src_mac;
-	net_nbuf_ll_src(buf)->len = 8;
+	net_pkt_ll_src(pkt)->addr = src_mac;
+	net_pkt_ll_src(pkt)->len = 8;
 
-	net_nbuf_ll_dst(buf)->addr = dst_mac;
-	net_nbuf_ll_dst(buf)->len = 8;
+	net_pkt_ll_dst(pkt)->addr = dst_mac;
+	net_pkt_ll_dst(pkt)->len = 8;
 
-	frag = net_nbuf_get_frag(buf, K_FOREVER);
+	frag = net_pkt_get_frag(pkt, K_FOREVER);
 	if (!frag) {
-		net_nbuf_unref(buf);
+		net_pkt_unref(pkt);
 		return NULL;
 	}
 
 	if (data->nh_udp) {
-		memcpy(frag->data, (uint8_t *) data, NET_IPV6UDPH_LEN);
+		memcpy(frag->data, (u8_t *) data, NET_IPV6UDPH_LEN);
 		net_buf_add(frag, NET_IPV6UDPH_LEN);
 	} else if (data->nh_icmp) {
-		memcpy(frag->data, (uint8_t *) data, NET_IPV6ICMPH_LEN);
+		memcpy(frag->data, (u8_t *) data, NET_IPV6ICMPH_LEN);
 		net_buf_add(frag, NET_IPV6ICMPH_LEN);
 
 	} else {
-		memcpy(frag->data, (uint8_t *) data, NET_IPV6H_LEN);
+		memcpy(frag->data, (u8_t *) data, NET_IPV6H_LEN);
 		net_buf_add(frag, NET_IPV6H_LEN);
 	}
 
@@ -354,20 +355,20 @@ static struct net_buf *create_buf(struct net_6lo_data *data)
 	/* length is not set in net_6lo_data data pointer, calculate and set
 	 * in ipv6, udp and in data pointer too (it's required in comparison) */
 	frag->data[4] = len >> 8;
-	frag->data[5] = (uint8_t) len;
+	frag->data[5] = (u8_t) len;
 
 	data->ipv6.len[0] = len >> 8;
-	data->ipv6.len[1] = (uint8_t) len;
+	data->ipv6.len[1] = (u8_t) len;
 
 	if (data->nh_udp) {
 		frag->data[44] = len >> 8;
-		frag->data[45] = (uint8_t) len;
+		frag->data[45] = (u8_t) len;
 
 		data->nh.udp.len = htons(len);
 	}
 
 	while (remaining > 0) {
-		uint8_t copy;
+		u8_t copy;
 
 		bytes = net_buf_tailroom(frag);
 		copy = remaining > bytes ? bytes : remaining;
@@ -377,18 +378,18 @@ static struct net_buf *create_buf(struct net_6lo_data *data)
 		remaining -= bytes;
 
 		if (net_buf_tailroom(frag) - (bytes - copy)) {
-			net_nbuf_unref(buf);
+			net_pkt_unref(pkt);
 			return NULL;
 		}
 
-		net_buf_frag_add(buf, frag);
+		net_pkt_frag_add(pkt, frag);
 
 		if (remaining > 0) {
-			frag = net_nbuf_get_frag(buf, K_FOREVER);
+			frag = net_pkt_get_frag(pkt, K_FOREVER);
 		}
 	}
 
-	return buf;
+	return pkt;
 }
 
 static struct net_6lo_data test_data_1 = {
@@ -455,7 +456,7 @@ static struct net_6lo_data test_data_4 = {
 	.ipv6.len = { 0x00, 0x00 },
 	.ipv6.nexthdr = IPPROTO_UDP,
 	.ipv6.hop_limit = 0xff,
-	.ipv6.src = src_sac1_sam00,
+	.ipv6.src = src_sam00,
 	.ipv6.dst = dst_m1_dam00,
 	.nh.udp.src_port = htons(udp_src_port_16bit),
 	.nh.udp.dst_port = htons(udp_dst_port_16bit),
@@ -794,53 +795,72 @@ static struct net_6lo_data test_data_22 = {
 	.small = true,
 	.iphc = true
 };
+
+static struct net_6lo_data test_data_23 = {
+	.ipv6.vtc = 0x60,
+	.ipv6.tcflow = 0x20,
+	.ipv6.flow = 0x3412,
+	.ipv6.len = { 0x00, 0x00 },
+	.ipv6.nexthdr = IPPROTO_UDP,
+	.ipv6.hop_limit = 0xff,
+	.ipv6.src = src_sam00,
+	.ipv6.dst = dst_dac1_dam01,
+	.nh.udp.src_port = htons(udp_src_port_8bit_y),
+	.nh.udp.dst_port = htons(udp_dst_port_8bit),
+	.nh.udp.len = 0x00,
+	.nh.udp.chksum = 0x00,
+	.nh_udp = true,
+	.nh_icmp = false,
+	.small = false,
+	.iphc = true
+};
 #endif
 
 static int test_6lo(struct net_6lo_data *data)
 {
-	struct net_buf *buf;
+	struct net_pkt *pkt;
 	int result = TC_FAIL;
 
-	buf = create_buf(data);
-	if (!buf) {
+	pkt = create_pkt(data);
+	if (!pkt) {
 		TC_PRINT("%s: failed to create buffer\n", __func__);
 		goto end;
 	}
 
 #if DEBUG > 0
 	TC_PRINT("length before compression %zu\n",
-		 net_buf_frags_len(buf->frags));
-	net_hexdump_frags("before-compression", buf);
+		 net_pkt_get_len(pkt));
+	net_hexdump_frags("before-compression", pkt);
 #endif
 
-	if (!net_6lo_compress(buf, data->iphc, NULL)) {
+	if (!net_6lo_compress(pkt, data->iphc, NULL)) {
 		TC_PRINT("compression failed\n");
 		goto end;
 	}
 
 #if DEBUG > 0
 	TC_PRINT("length after compression %zu\n",
-		 net_buf_frags_len(buf->frags));
-	net_hexdump_frags("after-compression", buf);
+		 net_pkt_get_len(pkt));
+	net_hexdump_frags("after-compression", pkt);
 #endif
 
-	if (!net_6lo_uncompress(buf)) {
+	if (!net_6lo_uncompress(pkt)) {
 		TC_PRINT("uncompression failed\n");
 		goto end;
 	}
 
 #if DEBUG > 0
 	TC_PRINT("length after uncompression %zu\n",
-	       net_buf_frags_len(buf->frags));
-	net_hexdump_frags("after-uncompression", buf);
+	       net_pkt_get_len(pkt));
+	net_hexdump_frags("after-uncompression", pkt);
 #endif
 
-	if (compare_data(buf, data)) {
+	if (compare_data(pkt, data)) {
 		result = TC_PASS;
 	}
 
 end:
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 	return result;
 }
 
@@ -855,7 +875,7 @@ static const struct {
 	{ "test_6lo_sam00_dam00", &test_data_1},
 	{ "test_6lo_sam01_dam01", &test_data_2},
 	{ "test_6lo_sam10_dam10", &test_data_3},
-	{ "test_6lo_sac1_sam00_m1_dam00", &test_data_4},
+	{ "test_6lo_sam00_m1_dam00", &test_data_4},
 	{ "test_6lo_sam01_m1_dam01", &test_data_5},
 	{ "test_6lo_sam10_m1_dam10", &test_data_6},
 	{ "test_6lo_sam10_m1_dam10_no_udp", &test_data_7},
@@ -875,12 +895,15 @@ static const struct {
 	{ "test_6lo_sac1_sam01_m1_dam01", &test_data_20},
 	{ "test_6lo_sac1_sam10_m1_dam10", &test_data_21},
 	{ "test_6lo_sac1_sam11_m1_dam10", &test_data_22},
+	{ "test_6lo_sac0_sam00_dac1_dam01", &test_data_23},
 #endif
 };
 
-static void main_thread(void)
+void main(void)
 {
 	int count, pass;
+
+	k_thread_priority_set(k_current_get(), K_PRIO_COOP(7));
 
 #if defined(CONFIG_NET_6LO_CONTEXT)
 	net_6lo_set_context(net_if_get_default(), &ctx1);
@@ -898,17 +921,7 @@ static void main_thread(void)
 		}
 	}
 
-	net_nbuf_print();
+	net_pkt_print();
 
 	TC_END_REPORT(((pass != ARRAY_SIZE(tests)) ? TC_FAIL : TC_PASS));
-}
-
-#define STACKSIZE 2000
-char __noinit __stack thread_stack[STACKSIZE];
-
-void main(void)
-{
-	k_thread_spawn(&thread_stack[0], STACKSIZE,
-		       (k_thread_entry_t)main_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }

@@ -9,7 +9,7 @@
 #include <zephyr.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 
 #include <toolchain.h>
 #include <bluetooth/bluetooth.h>
@@ -19,17 +19,18 @@
 #include "bttester.h"
 
 #define STACKSIZE 2048
-static char __stack stack[STACKSIZE];
+static K_THREAD_STACK_DEFINE(stack, STACKSIZE);
+static struct k_thread cmd_thread;
 
 #define CMD_QUEUED 2
-static uint8_t cmd_buf[CMD_QUEUED * BTP_MTU];
+static u8_t cmd_buf[CMD_QUEUED * BTP_MTU];
 
 static K_FIFO_DEFINE(cmds_queue);
 static K_FIFO_DEFINE(avail_queue);
 
-static void supported_commands(uint8_t *data, uint16_t len)
+static void supported_commands(u8_t *data, u16_t len)
 {
-	uint8_t buf[1];
+	u8_t buf[1];
 	struct core_read_supported_commands_rp *rp = (void *) buf;
 
 	memset(buf, 0, sizeof(buf));
@@ -39,12 +40,12 @@ static void supported_commands(uint8_t *data, uint16_t len)
 	tester_set_bit(buf, CORE_REGISTER_SERVICE);
 
 	tester_send(BTP_SERVICE_ID_CORE, CORE_READ_SUPPORTED_COMMANDS,
-		    BTP_INDEX_NONE, (uint8_t *) rp, sizeof(buf));
+		    BTP_INDEX_NONE, (u8_t *) rp, sizeof(buf));
 }
 
-static void supported_services(uint8_t *data, uint16_t len)
+static void supported_services(u8_t *data, u16_t len)
 {
-	uint8_t buf[1];
+	u8_t buf[1];
 	struct core_read_supported_services_rp *rp = (void *) buf;
 
 	memset(buf, 0, sizeof(buf));
@@ -57,13 +58,13 @@ static void supported_services(uint8_t *data, uint16_t len)
 #endif /* CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL */
 
 	tester_send(BTP_SERVICE_ID_CORE, CORE_READ_SUPPORTED_SERVICES,
-		    BTP_INDEX_NONE, (uint8_t *) rp, sizeof(buf));
+		    BTP_INDEX_NONE, (u8_t *) rp, sizeof(buf));
 }
 
-static void register_service(uint8_t *data, uint16_t len)
+static void register_service(u8_t *data, u16_t len)
 {
 	struct core_register_service_cmd *cmd = (void *) data;
-	uint8_t status;
+	u8_t status;
 
 	switch (cmd->id) {
 	case BTP_SERVICE_ID_GAP:
@@ -91,8 +92,8 @@ rsp:
 		   status);
 }
 
-static void handle_core(uint8_t opcode, uint8_t index, uint8_t *data,
-			uint16_t len)
+static void handle_core(u8_t opcode, u8_t index, u8_t *data,
+			u16_t len)
 {
 	if (index != BTP_INDEX_NONE) {
 		tester_rsp(BTP_SERVICE_ID_CORE, opcode, index, BTP_STATUS_FAILED);
@@ -120,7 +121,7 @@ static void cmd_handler(void *p1, void *p2, void *p3)
 {
 	while (1) {
 		struct btp_hdr *cmd;
-		uint16_t len;
+		u16_t len;
 
 		cmd = k_fifo_get(&cmds_queue, K_FOREVER);
 
@@ -158,11 +159,11 @@ static void cmd_handler(void *p1, void *p2, void *p3)
 	}
 }
 
-static uint8_t *recv_cb(uint8_t *buf, size_t *off)
+static u8_t *recv_cb(u8_t *buf, size_t *off)
 {
 	struct btp_hdr *cmd = (void *) buf;
-	uint8_t *new_buf;
-	uint16_t len;
+	u8_t *new_buf;
+	u16_t len;
 
 	if (*off < sizeof(*cmd)) {
 		return buf;
@@ -200,8 +201,8 @@ void tester_init(void)
 		k_fifo_put(&avail_queue, &cmd_buf[i * BTP_MTU]);
 	}
 
-	k_thread_spawn(stack, STACKSIZE, cmd_handler, NULL, NULL, NULL,
-		       K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&cmd_thread, stack, STACKSIZE, cmd_handler,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	uart_pipe_register(k_fifo_get(&avail_queue, K_NO_WAIT),
 			   BTP_MTU, recv_cb);
@@ -210,7 +211,7 @@ void tester_init(void)
 		    NULL, 0);
 }
 
-void tester_send(uint8_t service, uint8_t opcode, uint8_t index, uint8_t *data,
+void tester_send(u8_t service, u8_t opcode, u8_t index, u8_t *data,
 		 size_t len)
 {
 	struct btp_hdr msg;
@@ -220,13 +221,13 @@ void tester_send(uint8_t service, uint8_t opcode, uint8_t index, uint8_t *data,
 	msg.index = index;
 	msg.len = len;
 
-	uart_pipe_send((uint8_t *)&msg, sizeof(msg));
+	uart_pipe_send((u8_t *)&msg, sizeof(msg));
 	if (data && len) {
 		uart_pipe_send(data, len);
 	}
 }
 
-void tester_rsp(uint8_t service, uint8_t opcode, uint8_t index, uint8_t status)
+void tester_rsp(u8_t service, u8_t opcode, u8_t index, u8_t status)
 {
 	struct btp_status s;
 
@@ -236,5 +237,5 @@ void tester_rsp(uint8_t service, uint8_t opcode, uint8_t index, uint8_t status)
 	}
 
 	s.code = status;
-	tester_send(service, BTP_STATUS, index, (uint8_t *) &s, sizeof(s));
+	tester_send(service, BTP_STATUS, index, (u8_t *) &s, sizeof(s));
 }

@@ -41,7 +41,7 @@ struct ipm_console_receiver_config_info {
 	 * Ring buffer data area for stashing characters from the interrupt
 	 * callback
 	 */
-	uint32_t *ring_buf_data;
+	u32_t *ring_buf_data;
 
 	/** Size of ring_buf_data in 32-bit chunks */
 	unsigned int rb_size32;
@@ -77,6 +77,9 @@ struct ipm_console_receiver_runtime_data {
 	 * full buffer
 	 */
 	int channel_disabled;
+
+	/** Receiver worker thread */
+	struct k_thread rx_thread;
 };
 
 struct ipm_console_sender_config_info {

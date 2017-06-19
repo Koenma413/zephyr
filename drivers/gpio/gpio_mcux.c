@@ -17,28 +17,34 @@
 struct gpio_mcux_config {
 	GPIO_Type *gpio_base;
 	PORT_Type *port_base;
+	unsigned int flags;
 };
 
 struct gpio_mcux_data {
 	/* port ISR callback routine address */
 	sys_slist_t callbacks;
 	/* pin callback routine enable flags, by pin number */
-	uint32_t pin_callback_enables;
+	u32_t pin_callback_enables;
 };
 
 static int gpio_mcux_configure(struct device *dev,
-			       int access_op, uint32_t pin, int flags)
+			       int access_op, u32_t pin, int flags)
 {
 	const struct gpio_mcux_config *config = dev->config->config_info;
 	GPIO_Type *gpio_base = config->gpio_base;
 	PORT_Type *port_base = config->port_base;
 	port_interrupt_t port_interrupt = 0;
-	uint32_t mask = 0;
-	uint32_t pcr = 0;
-	uint8_t i;
+	u32_t mask = 0;
+	u32_t pcr = 0;
+	u8_t i;
 
 	/* Check for an invalid pin configuration */
 	if ((flags & GPIO_INT) && (flags & GPIO_DIR_OUT)) {
+		return -EINVAL;
+	}
+
+	/* Check if GPIO port supports interrupts */
+	if ((flags & GPIO_INT) && ((config->flags & GPIO_INT) == 0)) {
 		return -EINVAL;
 	}
 
@@ -119,7 +125,7 @@ static int gpio_mcux_configure(struct device *dev,
 }
 
 static int gpio_mcux_write(struct device *dev,
-			   int access_op, uint32_t pin, uint32_t value)
+			   int access_op, u32_t pin, u32_t value)
 {
 	const struct gpio_mcux_config *config = dev->config->config_info;
 	GPIO_Type *gpio_base = config->gpio_base;
@@ -147,7 +153,7 @@ static int gpio_mcux_write(struct device *dev,
 }
 
 static int gpio_mcux_read(struct device *dev,
-			  int access_op, uint32_t pin, uint32_t *value)
+			  int access_op, u32_t pin, u32_t *value)
 {
 	const struct gpio_mcux_config *config = dev->config->config_info;
 	GPIO_Type *gpio_base = config->gpio_base;
@@ -174,7 +180,7 @@ static int gpio_mcux_manage_callback(struct device *dev,
 }
 
 static int gpio_mcux_enable_callback(struct device *dev,
-				     int access_op, uint32_t pin)
+				     int access_op, u32_t pin)
 {
 	struct gpio_mcux_data *data = dev->driver_data;
 
@@ -188,7 +194,7 @@ static int gpio_mcux_enable_callback(struct device *dev,
 }
 
 static int gpio_mcux_disable_callback(struct device *dev,
-				      int access_op, uint32_t pin)
+				      int access_op, u32_t pin)
 {
 	struct gpio_mcux_data *data = dev->driver_data;
 
@@ -206,7 +212,7 @@ static void gpio_mcux_port_isr(void *arg)
 	struct device *dev = (struct device *)arg;
 	const struct gpio_mcux_config *config = dev->config->config_info;
 	struct gpio_mcux_data *data = dev->driver_data;
-	uint32_t enabled_int, int_status;
+	u32_t enabled_int, int_status;
 
 	int_status = config->port_base->ISFR;
 	enabled_int = int_status & data->pin_callback_enables;
@@ -233,6 +239,11 @@ static int gpio_mcux_porta_init(struct device *dev);
 static const struct gpio_mcux_config gpio_mcux_porta_config = {
 	.gpio_base = GPIOA,
 	.port_base = PORTA,
+#ifdef IRQ_GPIO_PORTA
+	.flags = GPIO_INT,
+#else
+	.flags = 0,
+#endif
 };
 
 static struct gpio_mcux_data gpio_mcux_porta_data;
@@ -245,12 +256,16 @@ DEVICE_AND_API_INIT(gpio_mcux_porta, CONFIG_GPIO_MCUX_PORTA_NAME,
 
 static int gpio_mcux_porta_init(struct device *dev)
 {
+#ifdef IRQ_GPIO_PORTA
 	IRQ_CONNECT(IRQ_GPIO_PORTA, CONFIG_GPIO_MCUX_PORTA_PRI,
 		    gpio_mcux_port_isr, DEVICE_GET(gpio_mcux_porta), 0);
 
 	irq_enable(IRQ_GPIO_PORTA);
 
 	return 0;
+#else
+	return -1;
+#endif
 }
 #endif /* CONFIG_GPIO_MCUX_PORTA */
 
@@ -260,6 +275,11 @@ static int gpio_mcux_portb_init(struct device *dev);
 static const struct gpio_mcux_config gpio_mcux_portb_config = {
 	.gpio_base = GPIOB,
 	.port_base = PORTB,
+#ifdef IRQ_GPIO_PORTB
+	.flags = GPIO_INT,
+#else
+	.flags = 0,
+#endif
 };
 
 static struct gpio_mcux_data gpio_mcux_portb_data;
@@ -272,12 +292,16 @@ DEVICE_AND_API_INIT(gpio_mcux_portb, CONFIG_GPIO_MCUX_PORTB_NAME,
 
 static int gpio_mcux_portb_init(struct device *dev)
 {
+#ifdef IRQ_GPIO_PORTB
 	IRQ_CONNECT(IRQ_GPIO_PORTB, CONFIG_GPIO_MCUX_PORTB_PRI,
 		    gpio_mcux_port_isr, DEVICE_GET(gpio_mcux_portb), 0);
 
 	irq_enable(IRQ_GPIO_PORTB);
 
 	return 0;
+#else
+	return -1;
+#endif
 }
 #endif /* CONFIG_GPIO_MCUX_PORTB */
 
@@ -287,6 +311,11 @@ static int gpio_mcux_portc_init(struct device *dev);
 static const struct gpio_mcux_config gpio_mcux_portc_config = {
 	.gpio_base = GPIOC,
 	.port_base = PORTC,
+#ifdef IRQ_GPIO_PORTC
+	.flags = GPIO_INT,
+#else
+	.flags = 0,
+#endif
 };
 
 static struct gpio_mcux_data gpio_mcux_portc_data;
@@ -299,12 +328,16 @@ DEVICE_AND_API_INIT(gpio_mcux_portc, CONFIG_GPIO_MCUX_PORTC_NAME,
 
 static int gpio_mcux_portc_init(struct device *dev)
 {
+#ifdef IRQ_GPIO_PORTC
 	IRQ_CONNECT(IRQ_GPIO_PORTC, CONFIG_GPIO_MCUX_PORTC_PRI,
 		    gpio_mcux_port_isr, DEVICE_GET(gpio_mcux_portc), 0);
 
 	irq_enable(IRQ_GPIO_PORTC);
 
 	return 0;
+#else
+	return -1;
+#endif
 }
 #endif /* CONFIG_GPIO_MCUX_PORTC */
 
@@ -314,6 +347,11 @@ static int gpio_mcux_portd_init(struct device *dev);
 static const struct gpio_mcux_config gpio_mcux_portd_config = {
 	.gpio_base = GPIOD,
 	.port_base = PORTD,
+#ifdef IRQ_GPIO_PORTD
+	.flags = GPIO_INT,
+#else
+	.flags = 0,
+#endif
 };
 
 static struct gpio_mcux_data gpio_mcux_portd_data;
@@ -326,12 +364,16 @@ DEVICE_AND_API_INIT(gpio_mcux_portd, CONFIG_GPIO_MCUX_PORTD_NAME,
 
 static int gpio_mcux_portd_init(struct device *dev)
 {
+#ifdef IRQ_GPIO_PORTD
 	IRQ_CONNECT(IRQ_GPIO_PORTD, CONFIG_GPIO_MCUX_PORTD_PRI,
 		    gpio_mcux_port_isr, DEVICE_GET(gpio_mcux_portd), 0);
 
 	irq_enable(IRQ_GPIO_PORTD);
 
 	return 0;
+#else
+	return -1;
+#endif
 }
 #endif /* CONFIG_GPIO_MCUX_PORTD */
 
@@ -341,6 +383,11 @@ static int gpio_mcux_porte_init(struct device *dev);
 static const struct gpio_mcux_config gpio_mcux_porte_config = {
 	.gpio_base = GPIOE,
 	.port_base = PORTE,
+#ifdef IRQ_GPIO_PORTE
+	.flags = GPIO_INT,
+#else
+	.flags = 0,
+#endif
 };
 
 static struct gpio_mcux_data gpio_mcux_porte_data;
@@ -353,11 +400,16 @@ DEVICE_AND_API_INIT(gpio_mcux_porte, CONFIG_GPIO_MCUX_PORTE_NAME,
 
 static int gpio_mcux_porte_init(struct device *dev)
 {
+#ifdef IRQ_GPIO_PORTE
 	IRQ_CONNECT(IRQ_GPIO_PORTE, CONFIG_GPIO_MCUX_PORTE_PRI,
 		    gpio_mcux_port_isr, DEVICE_GET(gpio_mcux_porte), 0);
 
 	irq_enable(IRQ_GPIO_PORTE);
 
 	return 0;
+#else
+	return -1;
+#endif
 }
 #endif /* CONFIG_GPIO_MCUX_PORTE */
+

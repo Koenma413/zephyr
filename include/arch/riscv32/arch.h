@@ -51,7 +51,7 @@ extern "C" {
  * SOC-specific function to get the IRQ number generating the interrupt.
  * __soc_get_irq returns a bitfield of pending IRQs.
  */
-extern uint32_t __soc_get_irq(void);
+extern u32_t __soc_get_irq(void);
 
 void _arch_irq_enable(unsigned int irq);
 void _arch_irq_disable(unsigned int irq);
@@ -72,11 +72,20 @@ void _irq_spurious(void *unused);
  *
  * @return The vector assigned to this interrupt
  */
+#if defined(CONFIG_RISCV_HAS_PLIC)
+#define _ARCH_IRQ_CONNECT(irq_p, priority_p, isr_p, isr_param_p, flags_p) \
+({ \
+	_ISR_DECLARE(irq_p, 0, isr_p, isr_param_p); \
+	riscv_plic_set_priority(irq_p, priority_p); \
+	irq_p; \
+})
+#else
 #define _ARCH_IRQ_CONNECT(irq_p, priority_p, isr_p, isr_param_p, flags_p) \
 ({ \
 	_ISR_DECLARE(irq_p, 0, isr_p, isr_param_p); \
 	irq_p; \
 })
+#endif
 
 /*
  * use atomic instruction csrrc to lock global irq
@@ -109,7 +118,7 @@ static ALWAYS_INLINE void _arch_irq_unlock(unsigned int key)
 			  : "memory");
 }
 
-extern uint32_t _timer_cycle_get_32(void);
+extern u32_t _timer_cycle_get_32(void);
 #define _arch_k_cycle_get_32()	_timer_cycle_get_32()
 
 #endif /*_ASMLANGUAGE */
@@ -118,6 +127,8 @@ extern uint32_t _timer_cycle_get_32(void);
 #include <arch/riscv32/pulpino/asm_inline.h>
 #elif defined(CONFIG_SOC_RISCV32_QEMU)
 #include <arch/riscv32/riscv32-qemu/asm_inline.h>
+#elif defined(CONFIG_SOC_RISCV32_FE310)
+#include <arch/riscv32/fe310/asm_inline.h>
 #endif
 
 #ifdef __cplusplus

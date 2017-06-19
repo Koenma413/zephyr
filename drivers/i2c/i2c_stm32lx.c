@@ -28,15 +28,15 @@
 #define I2C_STRUCT(dev)							\
 	((volatile struct i2c_stm32lx *)(DEV_CFG(dev))->base)
 
-static int i2c_stm32lx_runtime_configure(struct device *dev, uint32_t config)
+static int i2c_stm32lx_runtime_configure(struct device *dev, u32_t config)
 {
 	volatile struct i2c_stm32lx *i2c = I2C_STRUCT(dev);
 	struct i2c_stm32lx_data *data = DEV_DATA(dev);
 	const struct i2c_stm32lx_config *cfg = DEV_CFG(dev);
-	uint32_t clock;
-	uint32_t i2c_h_min_time, i2c_l_min_time;
-	uint32_t i2c_hold_time_min, i2c_setup_time_min;
-	uint32_t presc = 1;
+	u32_t clock;
+	u32_t i2c_h_min_time, i2c_l_min_time;
+	u32_t i2c_hold_time_min, i2c_setup_time_min;
+	u32_t presc = 1;
 
 	data->dev_config.raw = config;
 
@@ -70,12 +70,12 @@ static int i2c_stm32lx_runtime_configure(struct device *dev, uint32_t config)
 
 	/* Calculate period until prescaler matches */
 	do {
-		uint32_t t_presc = clock / presc;
-		uint32_t ns_presc = NSEC_PER_SEC / t_presc;
-		uint32_t sclh = i2c_h_min_time / ns_presc;
-		uint32_t scll = i2c_l_min_time / ns_presc;
-		uint32_t sdadel = i2c_hold_time_min / ns_presc;
-		uint32_t scldel = i2c_setup_time_min / ns_presc;
+		u32_t t_presc = clock / presc;
+		u32_t ns_presc = NSEC_PER_SEC / t_presc;
+		u32_t sclh = i2c_h_min_time / ns_presc;
+		u32_t scll = i2c_l_min_time / ns_presc;
+		u32_t sdadel = i2c_hold_time_min / ns_presc;
+		u32_t scldel = i2c_setup_time_min / ns_presc;
 
 		if ((sclh - 1) > 255 ||
 		    (scll - 1) > 255 ||
@@ -163,7 +163,7 @@ static void i2c_stm32lx_er_isr(void *arg)
 }
 #endif
 
-static inline void transfer_setup(struct device *dev, uint16_t slave_address,
+static inline void transfer_setup(struct device *dev, u16_t slave_address,
 				  unsigned int read_transfer)
 {
 	volatile struct i2c_stm32lx *i2c = I2C_STRUCT(dev);
@@ -186,7 +186,7 @@ static inline int msg_write(struct device *dev, struct i2c_msg *msg,
 	struct i2c_stm32lx_data *data = DEV_DATA(dev);
 #endif
 	unsigned int len = msg->len;
-	uint8_t *buf = msg->buf;
+	u8_t *buf = msg->buf;
 
 	if (len > 255)
 		return -EINVAL;
@@ -272,7 +272,7 @@ static inline int msg_read(struct device *dev, struct i2c_msg *msg,
 	struct i2c_stm32lx_data *data = DEV_DATA(dev);
 #endif
 	unsigned int len = msg->len;
-	uint8_t *buf = msg->buf;
+	u8_t *buf = msg->buf;
 
 	if (len > 255)
 		return -EINVAL;
@@ -336,12 +336,12 @@ static inline int msg_read(struct device *dev, struct i2c_msg *msg,
 }
 
 static int i2c_stm32lx_transfer(struct device *dev,
-				struct i2c_msg *msgs, uint8_t num_msgs,
-				uint16_t slave_address)
+				struct i2c_msg *msgs, u8_t num_msgs,
+				u16_t slave_address)
 {
 	volatile struct i2c_stm32lx *i2c = I2C_STRUCT(dev);
 	struct i2c_msg *cur_msg = msgs;
-	uint8_t msg_left = num_msgs;
+	u8_t msg_left = num_msgs;
 	int ret = 0;
 
 	/* Enable Peripheral */
@@ -432,46 +432,90 @@ static int i2c_stm32lx_init(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_I2C_0
+#ifdef CONFIG_I2C_1
 
 #ifdef CONFIG_I2C_STM32LX_INTERRUPT
-static void i2c_stm32lx_irq_config_func_0(struct device *port);
+static void i2c_stm32lx_irq_config_func_1(struct device *port);
 #endif
 
-static const struct i2c_stm32lx_config i2c_stm32lx_cfg_0 = {
-	.base = (uint8_t *)I2C1_BASE,
+static const struct i2c_stm32lx_config i2c_stm32lx_cfg_1 = {
+	.base = (u8_t *)I2C1_BASE,
 	.pclken = { .bus = STM32_CLOCK_BUS_APB1,
 		    .enr = LL_APB1_GRP1_PERIPH_I2C1 },
 #ifdef CONFIG_I2C_STM32LX_INTERRUPT
-	.irq_config_func = i2c_stm32lx_irq_config_func_0,
+	.irq_config_func = i2c_stm32lx_irq_config_func_1,
 #endif
 };
 
-static struct i2c_stm32lx_data i2c_stm32lx_dev_data_0 = {
-	.dev_config.raw = CONFIG_I2C_0_DEFAULT_CFG,
+static struct i2c_stm32lx_data i2c_stm32lx_dev_data_1 = {
+	.dev_config.raw = CONFIG_I2C_1_DEFAULT_CFG,
 };
 
-DEVICE_AND_API_INIT(i2c_stm32lx_0, CONFIG_I2C_0_NAME, &i2c_stm32lx_init,
-		    &i2c_stm32lx_dev_data_0, &i2c_stm32lx_cfg_0,
+DEVICE_AND_API_INIT(i2c_stm32lx_1, CONFIG_I2C_1_NAME, &i2c_stm32lx_init,
+		    &i2c_stm32lx_dev_data_1, &i2c_stm32lx_cfg_1,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &api_funcs);
 
 #ifdef CONFIG_I2C_STM32LX_INTERRUPT
-static void i2c_stm32lx_irq_config_func_0(struct device *dev)
+static void i2c_stm32lx_irq_config_func_1(struct device *dev)
 {
 #ifdef CONFIG_SOC_SERIES_STM32L4X
-#define PORT_0_EV_IRQ STM32L4_IRQ_I2C1_EV
-#define PORT_0_ER_IRQ STM32L4_IRQ_I2C1_ER
+#define PORT_1_EV_IRQ STM32L4_IRQ_I2C1_EV
+#define PORT_1_ER_IRQ STM32L4_IRQ_I2C1_ER
 #endif
 
-	IRQ_CONNECT(PORT_0_EV_IRQ, CONFIG_I2C_0_IRQ_PRI,
-		i2c_stm32lx_ev_isr, DEVICE_GET(i2c_stm32lx_0), 0);
-	irq_enable(PORT_0_EV_IRQ);
+	IRQ_CONNECT(PORT_1_EV_IRQ, CONFIG_I2C_1_IRQ_PRI,
+		i2c_stm32lx_ev_isr, DEVICE_GET(i2c_stm32lx_1), 0);
+	irq_enable(PORT_1_EV_IRQ);
 
-	IRQ_CONNECT(PORT_0_ER_IRQ, CONFIG_I2C_0_IRQ_PRI,
-		i2c_stm32lx_er_isr, DEVICE_GET(i2c_stm32lx_0), 0);
-	irq_enable(PORT_0_ER_IRQ);
+	IRQ_CONNECT(PORT_1_ER_IRQ, CONFIG_I2C_1_IRQ_PRI,
+		i2c_stm32lx_er_isr, DEVICE_GET(i2c_stm32lx_1), 0);
+	irq_enable(PORT_1_ER_IRQ);
 }
 #endif
 
-#endif /* CONFIG_I2C_0 */
+#endif /* CONFIG_I2C_1 */
+
+#ifdef CONFIG_I2C_2
+
+#ifdef CONFIG_I2C_STM32LX_INTERRUPT
+static void i2c_stm32lx_irq_config_func_2(struct device *port);
+#endif
+
+static const struct i2c_stm32lx_config i2c_stm32lx_cfg_2 = {
+	.base = (u8_t *)I2C2_BASE,
+	.pclken = { .bus = STM32_CLOCK_BUS_APB1,
+		    .enr = LL_APB1_GRP1_PERIPH_I2C2 },
+#ifdef CONFIG_I2C_STM32LX_INTERRUPT
+	.irq_config_func = i2c_stm32lx_irq_config_func_2,
+#endif
+};
+
+static struct i2c_stm32lx_data i2c_stm32lx_dev_data_2 = {
+	.dev_config.raw = CONFIG_I2C_2_DEFAULT_CFG,
+};
+
+DEVICE_AND_API_INIT(i2c_stm32lx_2, CONFIG_I2C_2_NAME, &i2c_stm32lx_init,
+		    &i2c_stm32lx_dev_data_2, &i2c_stm32lx_cfg_2,
+		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
+		    &api_funcs);
+
+#ifdef CONFIG_I2C_STM32LX_INTERRUPT
+static void i2c_stm32lx_irq_config_func_2(struct device *dev)
+{
+#ifdef CONFIG_SOC_SERIES_STM32L4X
+#define PORT_2_EV_IRQ STM32L4_IRQ_I2C2_EV
+#define PORT_2_ER_IRQ STM32L4_IRQ_I2C2_ER
+#endif
+
+	IRQ_CONNECT(PORT_2_EV_IRQ, CONFIG_I2C_2_IRQ_PRI,
+		i2c_stm32lx_ev_isr, DEVICE_GET(i2c_stm32lx_2), 0);
+	irq_enable(PORT_2_EV_IRQ);
+
+	IRQ_CONNECT(PORT_2_ER_IRQ, CONFIG_I2C_2_IRQ_PRI,
+		i2c_stm32lx_er_isr, DEVICE_GET(i2c_stm32lx_2), 0);
+	irq_enable(PORT_2_ER_IRQ);
+}
+#endif
+
+#endif /* CONFIG_I2C_2 */

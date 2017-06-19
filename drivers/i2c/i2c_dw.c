@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <stddef.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdlib.h>
 #include <stdbool.h>
 
@@ -39,10 +39,10 @@
 static inline void _i2c_dw_data_ask(struct device *dev)
 {
 	struct i2c_dw_dev_config * const dw = dev->driver_data;
-	uint32_t data;
-	uint8_t tx_empty;
-	int8_t rx_empty;
-	uint8_t cnt;
+	u32_t data;
+	u8_t tx_empty;
+	s8_t rx_empty;
+	u8_t cnt;
 
 	volatile struct i2c_dw_registers * const regs =
 		(struct i2c_dw_registers *)dw->base_address;
@@ -124,7 +124,7 @@ static void _i2c_dw_data_read(struct device *dev)
 static int _i2c_dw_data_send(struct device *dev)
 {
 	struct i2c_dw_dev_config * const dw = dev->driver_data;
-	uint32_t data = 0;
+	u32_t data = 0;
 
 	volatile struct i2c_dw_registers * const regs =
 		(struct i2c_dw_registers *)dw->base_address;
@@ -169,7 +169,7 @@ static int _i2c_dw_data_send(struct device *dev)
 static inline void _i2c_dw_transfer_complete(struct device *dev)
 {
 	struct i2c_dw_dev_config * const dw = dev->driver_data;
-	uint32_t value;
+	u32_t value;
 
 	volatile struct i2c_dw_registers * const regs =
 		(struct i2c_dw_registers *)dw->base_address;
@@ -185,7 +185,7 @@ static void i2c_dw_isr(void *arg)
 	struct device *port = (struct device *)arg;
 	struct i2c_dw_dev_config * const dw = port->driver_data;
 	union ic_interrupt_register intr_stat;
-	uint32_t value;
+	u32_t value;
 	int ret = 0;
 
 	volatile struct i2c_dw_registers * const regs =
@@ -293,10 +293,10 @@ done:
 }
 
 
-static int _i2c_dw_setup(struct device *dev, uint16_t slave_address)
+static int _i2c_dw_setup(struct device *dev, u16_t slave_address)
 {
 	struct i2c_dw_dev_config * const dw = dev->driver_data;
-	uint32_t value;
+	u32_t value;
 	union ic_con_register ic_con;
 	volatile struct i2c_dw_registers * const regs =
 		(struct i2c_dw_registers *)dw->base_address;
@@ -402,13 +402,13 @@ static int _i2c_dw_setup(struct device *dev, uint16_t slave_address)
 }
 
 static int i2c_dw_transfer(struct device *dev,
-			   struct i2c_msg *msgs, uint8_t num_msgs,
-			   uint16_t slave_address)
+			   struct i2c_msg *msgs, u8_t num_msgs,
+			   u16_t slave_address)
 {
 	struct i2c_dw_dev_config * const dw = dev->driver_data;
 	struct i2c_msg *cur_msg = msgs;
-	uint8_t msg_left = num_msgs;
-	uint8_t pflags;
+	u8_t msg_left = num_msgs;
+	u8_t pflags;
 	int ret;
 
 	volatile struct i2c_dw_registers * const regs =
@@ -514,11 +514,11 @@ static int i2c_dw_transfer(struct device *dev,
 	return ret;
 }
 
-static int i2c_dw_runtime_configure(struct device *dev, uint32_t config)
+static int i2c_dw_runtime_configure(struct device *dev, u32_t config)
 {
 	struct i2c_dw_dev_config * const dw = dev->driver_data;
-	uint32_t	value = 0;
-	uint32_t	rc = 0;
+	u32_t	value = 0;
+	u32_t	rc = 0;
 
 	volatile struct i2c_dw_registers * const regs =
 		(struct i2c_dw_registers *)dw->base_address;
@@ -705,13 +705,13 @@ static int i2c_dw_initialize(struct device *port)
 static void i2c_config_0(struct device *port);
 
 static const struct i2c_dw_rom_config i2c_config_dw_0 = {
-#ifdef CONFIG_I2C_0_IRQ_DIRECT
+#ifdef CONFIG_I2C_DW_0_IRQ_DIRECT
 	.irq_num = I2C_DW_0_IRQ,
 #endif
 	.config_func = i2c_config_0,
 
 #ifdef CONFIG_GPIO_DW_0_IRQ_SHARED
-	.shared_irq_dev_name = CONFIG_I2C_0_IRQ_SHARED_NAME,
+	.shared_irq_dev_name = CONFIG_I2C_DW_0_IRQ_SHARED_NAME,
 #endif
 };
 
@@ -736,11 +736,11 @@ DEVICE_AND_API_INIT(i2c_0, CONFIG_I2C_0_NAME, &i2c_dw_initialize,
 
 static void i2c_config_0(struct device *port)
 {
-#if defined(CONFIG_I2C_0_IRQ_DIRECT)
+#if defined(CONFIG_I2C_DW_0_IRQ_DIRECT)
 	IRQ_CONNECT(I2C_DW_0_IRQ, CONFIG_I2C_0_IRQ_PRI,
 		    i2c_dw_isr, DEVICE_GET(i2c_0), I2C_DW_IRQ_FLAGS);
 	irq_enable(I2C_DW_0_IRQ);
-#elif defined(CONFIG_I2C_0_IRQ_SHARED)
+#elif defined(CONFIG_I2C_DW_0_IRQ_SHARED)
 	const struct i2c_dw_rom_config * const config =
 		port->config->config_info;
 	struct device *shared_irq_dev;

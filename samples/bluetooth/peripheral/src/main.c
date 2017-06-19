@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
@@ -20,7 +20,6 @@
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
 
-#include <gatt/gap.h>
 #include <gatt/hrs.h>
 #include <gatt/dis.h>
 #include <gatt/bas.h>
@@ -28,7 +27,6 @@
 
 #define DEVICE_NAME		CONFIG_BLUETOOTH_DEVICE_NAME
 #define DEVICE_NAME_LEN		(sizeof(DEVICE_NAME) - 1)
-#define HEART_RATE_APPEARANCE	0x0341
 
 /* Custom Service Variables */
 static struct bt_uuid_128 vnd_uuid = BT_UUID_INIT_128(
@@ -43,10 +41,10 @@ static struct bt_uuid_128 vnd_auth_uuid = BT_UUID_INIT_128(
 	0xf2, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
 	0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
 
-static uint8_t vnd_value[] = { 'V', 'e', 'n', 'd', 'o', 'r' };
+static u8_t vnd_value[] = { 'V', 'e', 'n', 'd', 'o', 'r' };
 
 static ssize_t read_vnd(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			void *buf, uint16_t len, uint16_t offset)
+			void *buf, u16_t len, u16_t offset)
 {
 	const char *value = attr->user_data;
 
@@ -55,10 +53,10 @@ static ssize_t read_vnd(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 }
 
 static ssize_t write_vnd(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			 const void *buf, uint16_t len, uint16_t offset,
-			 uint8_t flags)
+			 const void *buf, u16_t len, u16_t offset,
+			 u8_t flags)
 {
-	uint8_t *value = attr->user_data;
+	u8_t *value = attr->user_data;
 
 	if (offset + len > sizeof(vnd_value)) {
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
@@ -70,24 +68,24 @@ static ssize_t write_vnd(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 }
 
 static struct bt_gatt_ccc_cfg vnd_ccc_cfg[CONFIG_BLUETOOTH_MAX_PAIRED] = {};
-static uint8_t simulate_vnd;
-static uint8_t indicating;
+static u8_t simulate_vnd;
+static u8_t indicating;
 static struct bt_gatt_indicate_params ind_params;
 
-static void vnd_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
+static void vnd_ccc_cfg_changed(const struct bt_gatt_attr *attr, u16_t value)
 {
 	simulate_vnd = (value == BT_GATT_CCC_INDICATE) ? 1 : 0;
 }
 
 static void indicate_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			uint8_t err)
+			u8_t err)
 {
 	printk("Indication %s\n", err != 0 ? "fail" : "success");
 	indicating = 0;
 }
 
 #define MAX_DATA 74
-static uint8_t vnd_long_value[] = {
+static u8_t vnd_long_value[] = {
 		  'V', 'e', 'n', 'd', 'o', 'r', ' ', 'd', 'a', 't', 'a', '1',
 		  'V', 'e', 'n', 'd', 'o', 'r', ' ', 'd', 'a', 't', 'a', '2',
 		  'V', 'e', 'n', 'd', 'o', 'r', ' ', 'd', 'a', 't', 'a', '3',
@@ -98,7 +96,7 @@ static uint8_t vnd_long_value[] = {
 
 static ssize_t read_long_vnd(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr, void *buf,
-			     uint16_t len, uint16_t offset)
+			     u16_t len, u16_t offset)
 {
 	const char *value = attr->user_data;
 
@@ -108,9 +106,9 @@ static ssize_t read_long_vnd(struct bt_conn *conn,
 
 static ssize_t write_long_vnd(struct bt_conn *conn,
 			      const struct bt_gatt_attr *attr, const void *buf,
-			      uint16_t len, uint16_t offset, uint8_t flags)
+			      u16_t len, u16_t offset, u8_t flags)
 {
-	uint8_t *value = attr->user_data;
+	u8_t *value = attr->user_data;
 
 	if (flags & BT_GATT_WRITE_FLAG_PREPARE) {
 		return 0;
@@ -136,7 +134,7 @@ static struct bt_gatt_cep vnd_long_cep = {
 static int signed_value;
 
 static ssize_t read_signed(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			   void *buf, uint16_t len, uint16_t offset)
+			   void *buf, u16_t len, u16_t offset)
 {
 	const char *value = attr->user_data;
 
@@ -145,10 +143,10 @@ static ssize_t read_signed(struct bt_conn *conn, const struct bt_gatt_attr *attr
 }
 
 static ssize_t write_signed(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			    const void *buf, uint16_t len, uint16_t offset,
-			    uint8_t flags)
+			    const void *buf, u16_t len, u16_t offset,
+			    u8_t flags)
 {
-	uint8_t *value = attr->user_data;
+	u8_t *value = attr->user_data;
 
 	if (offset + len > sizeof(signed_value)) {
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
@@ -195,6 +193,8 @@ static struct bt_gatt_attr vnd_attrs[] = {
 			   read_signed, write_signed, &signed_value),
 };
 
+static struct bt_gatt_service vnd_svc = BT_GATT_SERVICE(vnd_attrs);
+
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA_BYTES(BT_DATA_UUID16_ALL,
@@ -208,7 +208,7 @@ static const struct bt_data sd[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
-static void connected(struct bt_conn *conn, uint8_t err)
+static void connected(struct bt_conn *conn, u8_t err)
 {
 	if (err) {
 		printk("Connection failed (err %u)\n", err);
@@ -217,7 +217,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void disconnected(struct bt_conn *conn, u8_t reason)
 {
 	printk("Disconnected (reason %u)\n", reason);
 }
@@ -236,12 +236,11 @@ static void bt_ready(int err)
 
 	printk("Bluetooth initialized\n");
 
-	gap_init(DEVICE_NAME, HEART_RATE_APPEARANCE);
 	hrs_init(0x01);
 	bas_init();
 	cts_init();
 	dis_init(CONFIG_SOC, "Manufacturer");
-	bt_gatt_register(vnd_attrs, ARRAY_SIZE(vnd_attrs));
+	bt_gatt_service_register(&vnd_svc);
 
 	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad),
 			      sd, ARRAY_SIZE(sd));
@@ -259,7 +258,7 @@ static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Passkey for %s: %u\n", addr, passkey);
+	printk("Passkey for %s: %06u\n", addr, passkey);
 }
 
 static void auth_cancel(struct bt_conn *conn)

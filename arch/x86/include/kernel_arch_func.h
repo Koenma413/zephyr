@@ -30,35 +30,12 @@ extern "C" {
  *
  * @return N/A
  */
-static inline void nanoArchInit(void)
+static inline void kernel_arch_init(void)
 {
-	extern void *__isr___SpuriousIntHandler;
-	extern void *_dummy_spurious_interrupt;
-	extern void *_dummy_exception_vector_stub;
 	extern char _interrupt_stack[CONFIG_ISR_STACK_SIZE];
 
-	extern void _exception_enter(void);
-
 	_kernel.nested = 0;
-
 	_kernel.irq_stack = _interrupt_stack + CONFIG_ISR_STACK_SIZE;
-	/*
-	 * Forces the inclusion of the spurious interrupt handlers. If a
-	 * reference isn't made then intconnect.o is never pulled in by the
-	 * linker.
-	 */
-
-	_dummy_spurious_interrupt = &__isr___SpuriousIntHandler;
-
-	/*
-	 * Forces the inclusion of the exception vector stub code. If a
-	 * reference isn't made then excstubs.o is never pulled in by the
-	 * linker.
-	 */
-
-	_dummy_exception_vector_stub = &_exception_enter;
-
-
 }
 
 /**
@@ -84,8 +61,8 @@ _set_thread_return_value(struct k_thread *thread, unsigned int value)
 
 extern void k_cpu_atomic_idle(unsigned int imask);
 
-extern void _MsrWrite(unsigned int msr, uint64_t msrData);
-extern uint64_t _MsrRead(unsigned int msr);
+extern void _MsrWrite(unsigned int msr, u64_t msrData);
+extern u64_t _MsrRead(unsigned int msr);
 
 /*
  * _IntLibInit() is called from the non-arch specific function,

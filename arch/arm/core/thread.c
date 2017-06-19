@@ -19,30 +19,11 @@
 #include <string.h>
 #endif /* CONFIG_INIT_STACKS */
 
-#if defined(CONFIG_THREAD_MONITOR)
-/*
- * Add a thread to the kernel's list of active threads.
- */
-static ALWAYS_INLINE void thread_monitor_init(struct tcs *tcs)
-{
-	unsigned int key;
-
-	key = irq_lock();
-	tcs->next_thread = _kernel.threads;
-	_kernel.threads = tcs;
-	irq_unlock(key);
-}
-#else
-#define thread_monitor_init(tcs) \
-	do {/* do nothing */     \
-	} while ((0))
-#endif /* CONFIG_THREAD_MONITOR */
-
 /**
  *
- * @brief Intialize a new thread from its stack space
+ * @brief Initialize a new thread from its stack space
  *
- * The control structure (TCS) is put at the lower address of the stack. An
+ * The control structure (thread) is put at the lower address of the stack. An
  * initial context, to be "restored" by __pendsv(), is put at the other end of
  * the stack, and thus reusable by the stack when not needed anymore.
  *
@@ -68,64 +49,52 @@ static ALWAYS_INLINE void thread_monitor_init(struct tcs *tcs)
  * @return N/A
  */
 
-void _new_thread(char *pStackMem, size_t stackSize,
+void _new_thread(struct k_thread *thread, char *pStackMem, size_t stackSize,
 		 _thread_entry_t pEntry,
 		 void *parameter1, void *parameter2, void *parameter3,
-		 int priority, unsigned options)
+		 int priority, unsigned int options)
 {
 	_ASSERT_VALID_PRIO(priority, pEntry);
 
-	__ASSERT(!((uint32_t)pStackMem & (STACK_ALIGN - 1)),
+	__ASSERT(!((u32_t)pStackMem & (STACK_ALIGN - 1)),
 		 "stack is not aligned properly\n"
 		 "%d-byte alignment required\n", STACK_ALIGN);
 
 	char *stackEnd = pStackMem + stackSize;
 	struct __esf *pInitCtx;
-	struct tcs *tcs = (struct tcs *) pStackMem;
 
-#ifdef CONFIG_INIT_STACKS
-	memset(pStackMem, 0xaa, stackSize);
-#endif
+	_new_thread_init(thread, pStackMem, stackSize, priority, options);
 
 	/* carve the thread entry struct from the "base" of the stack */
 
 	pInitCtx = (struct __esf *)(STACK_ROUND_DOWN(stackEnd) -
 				    sizeof(struct __esf));
 
-	pInitCtx->pc = ((uint32_t)_thread_entry) & 0xfffffffe;
-	pInitCtx->a1 = (uint32_t)pEntry;
-	pInitCtx->a2 = (uint32_t)parameter1;
-	pInitCtx->a3 = (uint32_t)parameter2;
-	pInitCtx->a4 = (uint32_t)parameter3;
+	pInitCtx->pc = ((u32_t)_thread_entry) & 0xfffffffe;
+	pInitCtx->a1 = (u32_t)pEntry;
+	pInitCtx->a2 = (u32_t)parameter1;
+	pInitCtx->a3 = (u32_t)parameter2;
+	pInitCtx->a4 = (u32_t)parameter3;
 	pInitCtx->xpsr =
 		0x01000000UL; /* clear all, thumb bit is 1, even if RO */
 
-	_init_thread_base(&tcs->base, priority, _THREAD_PRESTART, options);
-
-	/* static threads overwrite it afterwards with real value */
-	tcs->init_data = NULL;
-	tcs->fn_abort = NULL;
-
-#ifdef CONFIG_THREAD_CUSTOM_DATA
-	/* Initialize custom data field (value is opaque to kernel) */
-
-	tcs->custom_data = NULL;
-#endif
-
 #ifdef CONFIG_THREAD_MONITOR
 	/*
-	 * In debug mode tcs->entry give direct access to the thread entry
+	 * In debug mode thread->entry give direct access to the thread entry
 	 * and the corresponding parameters.
 	 */
-	tcs->entry = (struct __thread_entry *)(pInitCtx);
+	thread->entry = (struct __thread_entry *)(pInitCtx);
 #endif
 
-	tcs->callee_saved.psp = (uint32_t)pInitCtx;
-	tcs->arch.basepri = 0;
+	thread->callee_saved.psp = (u32_t)pInitCtx;
+	thread->arch.basepri = 0;
 
 	/* swap_return_value can contain garbage */
 
-	/* initial values in all other registers/TCS entries are irrelevant */
+	/*
+	 * initial values in all other registers/thread entries are
+	 * irrelevant.
+	 */
 
-	thread_monitor_init(tcs);
+	thread_monitor_init(thread);
 }

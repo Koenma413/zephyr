@@ -139,7 +139,7 @@ enum exit_codes {
 static int entropy_source(void *data, unsigned char *output, size_t len,
 			  size_t *olen)
 {
-	uint32_t seed;
+	u32_t seed;
 
 	ARG_UNUSED(data);
 
@@ -315,10 +315,12 @@ exit:
 }
 
 #define STACK_SIZE		8192
-uint8_t stack[STACK_SIZE];
+u8_t stack[STACK_SIZE];
+static struct k_thread tls_thread;
 
 void main(void)
 {
-	k_thread_spawn(stack, STACK_SIZE, (k_thread_entry_t) tls_client,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
+	k_thread_create(&tls_thread, stack, STACK_SIZE,
+			(k_thread_entry_t) tls_client,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }

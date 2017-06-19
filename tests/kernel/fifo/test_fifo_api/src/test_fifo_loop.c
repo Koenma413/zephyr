@@ -34,7 +34,8 @@
 
 static fdata_t data[LIST_LEN];
 static struct k_fifo fifo;
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 static struct k_sem end_sema;
 
 static void tfifo_put(struct k_fifo *pfifo)
@@ -53,7 +54,7 @@ static void tfifo_get(struct k_fifo *pfifo)
 	for (int i = 0; i < LIST_LEN; i++) {
 		/**TESTPOINT: fifo get*/
 		rx_data = k_fifo_get(pfifo, K_NO_WAIT);
-		assert_equal(rx_data, (void *)&data[i], NULL);
+		zassert_equal(rx_data, (void *)&data[i], NULL);
 	}
 }
 
@@ -81,7 +82,7 @@ static void tfifo_read_write(struct k_fifo *pfifo)
 {
 	k_sem_init(&end_sema, 0, 1);
 	/**TESTPOINT: thread-isr-thread data passing via fifo*/
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		tThread_entry, pfifo, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 0);
 

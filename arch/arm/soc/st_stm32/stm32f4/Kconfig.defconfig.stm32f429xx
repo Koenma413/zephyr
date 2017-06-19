@@ -5,20 +5,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-if SOC_STM32F429XX
+if SOC_STM32F429XI
 
 config SOC
 	string
 	default stm32f429xx
 
-config SRAM_SIZE
-	default 256
-
-config FLASH_SIZE
-	default 2048
-
 config NUM_IRQS
 	int
-	default 85
+	default 91
 
-endif # SOC_STM32F429XX
+endif # SOC_STM32F429XI

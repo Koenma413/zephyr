@@ -8,7 +8,6 @@
 #include <net/mqtt.h>
 
 #include <net/net_context.h>
-#include <net/nbuf.h>
 
 #include <misc/printk.h>
 #include <string.h>
@@ -21,6 +20,8 @@
 #endif
 
 #include "config.h"
+
+#define CONN_TRIES 20
 
 /* Container for some structures used by the MQTT publisher app. */
 struct mqtt_client_ctx {
@@ -68,7 +69,7 @@ static struct mqtt_client_ctx client_ctx;
 
 /* This routine sets some basic properties for the network context variable */
 static int network_setup(struct net_context **net_ctx, const char *local_addr,
-			 const char *server_addr, uint16_t server_port);
+			 const char *server_addr, u16_t server_port);
 
 /* The signature of this routine must match the connect callback declared at
  * the mqtt.h header.
@@ -121,7 +122,7 @@ static void disconnect_cb(struct mqtt_ctx *mqtt_ctx)
  * unknown pkt_id, this routine must return an error, for example -EINVAL or
  * any negative value.
  */
-static int publish_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_id,
+static int publish_cb(struct mqtt_ctx *mqtt_ctx, u16_t pkt_id,
 		      enum mqtt_packet type)
 {
 	struct mqtt_client_ctx *client_ctx;
@@ -161,7 +162,7 @@ static int publish_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_id,
  * The signature of this routine must match the malformed callback declared at
  * the mqtt.h header.
  */
-static void malformed_cb(struct mqtt_ctx *mqtt_ctx, uint16_t pkt_type)
+static void malformed_cb(struct mqtt_ctx *mqtt_ctx, u16_t pkt_type)
 {
 	printk("[%s:%d] pkt_type: %u\n", __func__, __LINE__, pkt_type);
 }
@@ -172,7 +173,7 @@ static char *get_mqtt_payload(enum mqtt_qos qos)
 	static char payload[30];
 
 	snprintk(payload, sizeof(payload), "{d:{temperature:%d}}",
-		 (uint8_t)sys_rand32_get());
+		 (u8_t)sys_rand32_get());
 #else
 	static char payload[] = "DOORS:OPEN_QoSx";
 
@@ -244,12 +245,18 @@ static void publisher(void)
 
 	/* The net_ctx variable must be ready BEFORE passing it to the MQTT API.
 	 */
-	rc = network_setup(&net_ctx, ZEPHYR_ADDR, SERVER_ADDR, SERVER_PORT);
-	PRINT_RESULT("network_setup", rc);
-	if (rc != 0) {
-		goto exit_app;
+	for (i = 0; i < CONN_TRIES; i++) {
+		rc = network_setup(&net_ctx, ZEPHYR_ADDR, SERVER_ADDR,
+				   SERVER_PORT);
+		if (!rc) {
+			goto connected;
+		}
 	}
 
+	PRINT_RESULT("network_setup", rc);
+	goto exit_app;
+
+connected:
 	/* Set everything to 0 and later just assign the required fields. */
 	memset(&client_ctx, 0x00, sizeof(client_ctx));
 
@@ -324,7 +331,7 @@ exit_app:
 	printk("\nBye!\n");
 }
 
-static int set_addr(struct sockaddr *sock_addr, const char *addr, uint16_t port)
+static int set_addr(struct sockaddr *sock_addr, const char *addr, u16_t port)
 {
 	void *ptr;
 	int rc;
@@ -352,13 +359,13 @@ static int set_addr(struct sockaddr *sock_addr, const char *addr, uint16_t port)
 static bool bt_connected;
 
 static
-void bt_connect_cb(struct bt_conn *conn, uint8_t err)
+void bt_connect_cb(struct bt_conn *conn, u8_t err)
 {
 	bt_connected = true;
 }
 
 static
-void bt_disconnect_cb(struct bt_conn *conn, uint8_t reason)
+void bt_disconnect_cb(struct bt_conn *conn, u8_t reason)
 {
 	bt_connected = false;
 	printk("bt disconnected (reason %u)\n", reason);
@@ -372,7 +379,7 @@ struct bt_conn_cb bt_conn_cb = {
 #endif
 
 static int network_setup(struct net_context **net_ctx, const char *local_addr,
-			 const char *server_addr, uint16_t server_port)
+			 const char *server_addr, u16_t server_port)
 {
 #ifdef CONFIG_NET_IPV6
 	socklen_t addr_len = sizeof(struct sockaddr_in6);
@@ -454,8 +461,7 @@ static int network_setup(struct net_context **net_ctx, const char *local_addr,
 	rc = net_context_connect(*net_ctx, &server_sock, addr_len, NULL,
 				 APP_SLEEP_MSECS, NULL);
 	if (rc) {
-		printk("net_context_connect error\n"
-		       "Is the server (broker) up and running?\n");
+		printk("net_context_connect error\n");
 		goto lb_exit;
 	}
 

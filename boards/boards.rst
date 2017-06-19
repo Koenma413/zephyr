@@ -3,6 +3,11 @@
 Supported Boards
 ################
 
+Zephyr project developers are continually adding board-specific support as
+documented below.
+
+To add support documentation for a new board, please use the template available
+under :file:`doc/templates/board.tmpl`
 
 X86 Boards
 **********
@@ -40,10 +45,11 @@ NIOS II Boards
 
    nios2/**/*
 
-A list of additional supported boards can be found on the `Zephyr project wiki`_.
+XTENSA Boards
+*************
 
-To add a new board, please use the template available under
-:file:`doc/templates/board.tmpl`
+.. toctree::
+   :maxdepth: 1
+   :glob:
 
-
-.. _Zephyr project wiki: https://wiki.zephyrproject.org/view/Supported_Boards
+   xtensa/**/*

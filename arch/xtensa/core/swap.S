@@ -7,7 +7,7 @@
  * @file
  * @brief kernel swapper code for Xtensa
  *
- * This module implements the _Swap() routine for the Xtensa architecture.
+ * This module implements the __swap() routine for the Xtensa architecture.
  */
 
 #include <xtensa_context.h>
@@ -15,11 +15,11 @@
 #include <offsets_short.h>
 
 	.extern _kernel
-/* unsigned int _Swap (unsigned int basepri); */
-	.globl  _Swap
-	.type   _Swap,@function
+/* unsigned int __swap (unsigned int basepri); */
+	.globl  __swap
+	.type   __swap,@function
 	.align  4
-_Swap:
+__swap:
 #ifdef __XTENSA_CALL0_ABI__
 	addi    sp,  sp, -XT_SOL_FRMSZ
 #else
@@ -61,7 +61,7 @@ _Swap:
 	s32i a3,  sp, XT_SOL_exit       /* 0 to flag as solicited frame */
 	s32i sp,  a4, THREAD_OFFSET(sp) /* current->arch.topOfStack := sp */
 	/*
-	 * Set _Swap()'s default return code to -EAGAIN. This eliminates the
+	 * Set __swap()'s default return code to -EAGAIN. This eliminates the
 	 * need for the timeout code to set it itself.
 	 */
 	movi a3, -11 /* a3 := -EAGAIN. TODO: Use a macro here insted of 11 */
@@ -70,12 +70,9 @@ _Swap:
 #if XCHAL_CP_NUM > 0
 	/* Clear CPENABLE, also in task's co-processor state save area. */
 	movi    a3,  0
-	/* a4 := current->arch.preempCoprocReg.cpStack */
-	l32i a4, a4, THREAD_OFFSET(cpStack)
+	/* a4 = _kernel->current */
 	wsr     a3,  CPENABLE
-	beqz    a4,  1f
-	s16i    a3,  a4, XT_CPENABLE        /* clear saved cpenable */
-1:
+	s16i    a3,  a4, THREAD_OFFSET(cpEnable) /* clear saved cpenable */
 #endif
 
 #ifdef CONFIG_KERNEL_EVENT_LOGGER_CONTEXT_SWITCH

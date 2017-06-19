@@ -11,8 +11,8 @@
 #include <board.h>
 
 typedef struct {
-	uint32_t val_low;
-	uint32_t val_high;
+	u32_t val_low;
+	u32_t val_high;
 } riscv_machine_timer_t;
 
 static volatile riscv_machine_timer_t *mtime =
@@ -29,7 +29,14 @@ static volatile riscv_machine_timer_t *mtimecmp =
  */
 static ALWAYS_INLINE void riscv_machine_rearm_timer(void)
 {
-	uint64_t rtc;
+	u64_t rtc;
+
+	/*
+	 * Disable timer interrupt while rearming the timer
+	 * to avoid generation of interrupts while setting
+	 * the mtimecmp->val_low register.
+	 */
+	irq_disable(RISCV_MACHINE_TIMER_IRQ);
 
 	/*
 	 * Following machine-mode timer implementation in QEMU, the actual
@@ -40,15 +47,18 @@ static ALWAYS_INLINE void riscv_machine_rearm_timer(void)
 	 * This also works for other implementations.
 	 */
 	rtc = mtime->val_low;
-	rtc |= ((uint64_t)mtime->val_high << 32);
+	rtc |= ((u64_t)mtime->val_high << 32);
 
 	/*
 	 * Rearm timer to generate an interrupt after
 	 * sys_clock_hw_cycles_per_tick
 	 */
 	rtc += sys_clock_hw_cycles_per_tick;
-	mtimecmp->val_low = (uint32_t)(rtc & 0xffffffff);
-	mtimecmp->val_high = (uint32_t)((rtc >> 32) & 0xffffffff);
+	mtimecmp->val_low = (u32_t)(rtc & 0xffffffff);
+	mtimecmp->val_high = (u32_t)((rtc >> 32) & 0xffffffff);
+
+	/* Enable timer interrupt */
+	irq_enable(RISCV_MACHINE_TIMER_IRQ);
 }
 
 static void riscv_machine_timer_irq_handler(void *unused)
@@ -72,8 +82,6 @@ int _sys_clock_driver_init(struct device *device)
 	IRQ_CONNECT(RISCV_MACHINE_TIMER_IRQ, 0,
 		    riscv_machine_timer_irq_handler, NULL, 0);
 
-	irq_enable(RISCV_MACHINE_TIMER_IRQ);
-
 	/* Initialize timer, just call riscv_machine_rearm_timer */
 	riscv_machine_rearm_timer();
 
@@ -89,7 +97,7 @@ int _sys_clock_driver_init(struct device *device)
  *
  * @return up counter of elapsed clock cycles
  */
-uint32_t _timer_cycle_get_32(void)
+u32_t _timer_cycle_get_32(void)
 {
 	/* We just want a cycle count so just post what's in the low 32
 	 * bits of the mtime real-time counter

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
-#include <nanokernel.h>
+#include <kernel.h>
+#include <zephyr/types.h>
 #include <system_timer.h>
 #include <xtensa_rtos.h>
 
@@ -39,6 +39,38 @@
 #define GET_TIMER_FIRE_TIME(void) XT_SR_CCOMPARE(R, XT_TIMER_INDEX)()
 #define SET_TIMER_FIRE_TIME(time) XT_SR_CCOMPARE(W, XT_TIMER_INDEX)(time)
 #define GET_TIMER_CURRENT_TIME(void) XT_RSR_CCOUNT()
+
+#define XTENSA_RSR(sr) \
+	({uint32_t v; \
+	 __asm__ volatile ("rsr." #sr " %0" : "=a"(v)); \
+	 v; })
+#define XTENSA_WSR(sr, v) \
+	({__asm__ volatile ("wsr." #sr " %0" :: "a"(v)); })
+
+#ifndef XT_RSR_CCOUNT
+#define XT_RSR_CCOUNT() XTENSA_RSR(ccount)
+#endif
+
+#ifndef XT_RSR_CCOMPARE0
+#define XT_RSR_CCOMPARE0() XTENSA_RSR(ccompare0)
+#endif
+#ifndef XT_RSR_CCOMPARE1
+#define XT_RSR_CCOMPARE1() XTENSA_RSR(ccompare1)
+#endif
+#ifndef XT_RSR_CCOMPARE2
+#define XT_RSR_CCOMPARE2() XTENSA_RSR(ccompare2)
+#endif
+
+#ifndef XT_WSR_CCOMPARE0
+#define XT_WSR_CCOMPARE0(v) XTENSA_WSR(ccompare0, v)
+#endif
+#ifndef XT_WSR_CCOMPARE1
+#define XT_WSR_CCOMPARE1(v) XTENSA_WSR(ccompare1, v)
+#endif
+#ifndef XT_WSR_CCOMPARE2
+#define XT_WSR_CCOMPARE2(v) XTENSA_WSR(ccompare2, v)
+#endif
+
 /* Value underwich, don't program next tick but trigger it immediately. */
 #define MIN_TIMER_PROG_DELAY 50
 #else /* Case of an external timer which is not emulated by internal timer */
@@ -61,12 +93,12 @@
 #define IDLE_NOT_TICKLESS 0 /* non-tickless idle mode */
 #define IDLE_TICKLESS 1     /* tickless idle  mode */
 
-extern int32_t _sys_idle_elapsed_ticks;
+extern s32_t _sys_idle_elapsed_ticks;
 
-static uint32_t __noinit cycles_per_tick;
-static uint32_t __noinit max_system_ticks;
-static uint32_t idle_original_ticks;
-static uint32_t __noinit max_load_value;
+static u32_t __noinit cycles_per_tick;
+static u32_t __noinit max_system_ticks;
+static u32_t idle_original_ticks;
+static u32_t __noinit max_load_value;
 static unsigned char timer_mode = TIMER_MODE_PERIODIC;
 static unsigned char idle_mode = IDLE_NOT_TICKLESS;
 
@@ -88,11 +120,11 @@ static ALWAYS_INLINE void tickless_idle_init(void)
  * @return N/A
  */
 
-void _timer_idle_enter(int32_t ticks)
+void _timer_idle_enter(s32_t ticks)
 {
-	uint32_t P; /* Programming (current) time */
-	uint32_t F; /* Idle timer fire time */
-	uint32_t f; /* Last programmed timer fire time */
+	u32_t P; /* Programming (current) time */
+	u32_t F; /* Idle timer fire time */
+	u32_t f; /* Last programmed timer fire time */
 
 	if ((ticks == K_FOREVER) || (ticks > max_system_ticks)) {
 		/*
@@ -146,11 +178,11 @@ void _timer_idle_enter(int32_t ticks)
  */
 void _timer_idle_exit(void)
 {
-	uint32_t C; /* Current time (time within this function execution) */
-	uint32_t F; /* Idle timer programmed fire time */
-	uint32_t s; /* Requested idle timer sleep time */
-	uint32_t e; /* elapsed "Cer time" */
-	uint32_t r; /*reamining time to the timer to expire */
+	u32_t C; /* Current time (time within this function execution) */
+	u32_t F; /* Idle timer programmed fire time */
+	u32_t s; /* Requested idle timer sleep time */
+	u32_t e; /* elapsed "Cer time" */
+	u32_t r; /*reamining time to the timer to expire */
 
 	if (timer_mode == TIMER_MODE_PERIODIC) {
 		/*
@@ -190,7 +222,7 @@ void _timer_idle_exit(void)
 	C = GET_TIMER_CURRENT_TIME();
 	r = F - C;
 	/*
-	 * Announce elapsed ticks to the microkernel. Note we are  guaranteed
+	 * Announce elapsed ticks to the kernel. Note we are  guaranteed
 	 * that the timer ISR will execute before the tick event is serviced,
 	 * so _sys_idle_elapsed_ticks is adjusted to account for it.
 	 */
@@ -264,7 +296,7 @@ void _xt_tick_divisor_init(void)
  * @brief System clock tick handler
  *
  * This routine handles the system clock periodic tick interrupt. It always
- * announces one tick by pushing a TICK_EVENT event onto the microkernel stack.
+ * announces one tick by pushing a TICK_EVENT event onto the kernel stack.
  *
  * @return N/A
  */
@@ -275,7 +307,7 @@ void _timer_int_handler(void *params)
 	extern void _sys_k_event_logger_interrupt(void);
 	_sys_k_event_logger_interrupt();
 #endif
-	/* Announce the tick event to the microkernel. */
+	/* Announce the tick event to the kernel. */
 	_sys_clock_final_tick_announce();
 }
 
@@ -314,8 +346,8 @@ int _sys_clock_driver_init(struct device *device)
 	 * for sure modify this code in order to initialize their HW.
 	 */
 	/* TODO: Implement this case: remove below code and write yours */
-	volatile uint32_t *p_mmio = (uint32_t *) 0xC0000000; /* start HW reg */
-	uint32_t interrupt = 0x00000000;
+	volatile u32_t *p_mmio = (u32_t *) 0xC0000000; /* start HW reg */
+	u32_t interrupt = 0x00000000;
 	/* Start the timer: Trigger the interrupt source drivers */
 	*p_mmio = 0xFFFFFFFF;
 	*p_mmio = interrupt;
@@ -345,7 +377,7 @@ int _sys_clock_driver_init(struct device *device)
  *
  * @return up counter of elapsed clock cycles
  */
-uint32_t _timer_cycle_get_32(void)
+u32_t _timer_cycle_get_32(void)
 {
 	return GET_TIMER_CURRENT_TIME();
 }

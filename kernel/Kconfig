@@ -111,7 +111,7 @@ config MAIN_STACK_SIZE
 	prompt "Size of stack for initialization and main thread"
 	default 1024
 	help
-	When the intitialization is complete, the thread executing it then
+	When the initialization is complete, the thread executing it then
 	executes the main() routine, so as to reuse the stack used by the
 	initialization, which would be wasted RAM otherwise.
 
@@ -121,7 +121,7 @@ config IDLE_STACK_SIZE
 	int
 	prompt "Size of stack for idle thread"
 	default 256
-	default 320 if ARC
+	default 320 if ARC || (ARM && CPU_HAS_FPU)
 	default 512 if RISCV32
 	default 1024 if XTENSA
 	help
@@ -138,6 +138,14 @@ config ISR_STACK_SIZE
 	This option specifies the size of the stack used by interrupt
 	service routines (ISRs), and during kernel initialization.
 
+config THREAD_STACK_INFO
+	bool
+	prompt "Thread stack info"
+	default n
+	help
+	This option allows each thread to store the thread stack info into
+	the k_thread data structure.
+
 config  THREAD_CUSTOM_DATA
 	bool
 	prompt "Thread custom data"
@@ -145,15 +153,6 @@ config  THREAD_CUSTOM_DATA
 	help
 	This option allows each thread to store 32 bits of custom data,
 	which can be accessed using the k_thread_custom_data_xxx() APIs.
-
-config NUM_DYNAMIC_TIMERS
-	int
-	prompt "Number of timers available for dynamic allocation"
-	default 0
-	depends on NANO_TIMERS
-	help
-	Number of timers available for dynamic allocation via the
-	k_timer_alloc()/k_timer_free() API.
 
 config ERRNO
 	bool
@@ -204,6 +203,16 @@ config INT_LATENCY_BENCHMARK
 	Tracking begins when int_latency_init() is invoked by an application.
 	The metrics are displayed (and a new sampling interval is started)
 	each time int_latency_show() is called thereafter.
+
+config EXECUTION_BENCHMARKING
+	bool
+	prompt "Timing metrics "
+	default n
+	help
+	This option enables the tracking of various times inside the kernel
+	the exact set of metrics being tracked is board-dependent.
+	All timing measurements are enabled for X86 and ARM based architectures.
+	In other architectures only a subset are enabled.
 
 config THREAD_MONITOR
 	bool
@@ -305,15 +314,6 @@ endmenu
 
 menu "Other Kernel Object Options"
 
-config SEMAPHORE_GROUPS
-	bool "Enable semaphore groups"
-	default y if LEGACY_KERNEL
-	help
-	This option enables support for semaphore groups. Threads that use
-	semaphore groups require more stack space. Disabling this option will
-	both decrease the footprint as well as improve the performance of
-	the k_sem_give() routine.
-
 config NUM_MBOX_ASYNC_MSGS
 	int "Maximum number of in-flight asynchronous mailbox messages"
 	default 10
@@ -352,7 +352,7 @@ config MEM_POOL_SPLIT_BEFORE_DEFRAG
 	block if an unused block of the required size is not available; only
 	if no such blocks exist will the memory pool try merging smaller unused
 	blocks. This policy attempts to limit the cost of performing automatic
-	partial defragmention of the memory pool, at the cost of fragmenting
+	partial defragmentation of the memory pool, at the cost of fragmenting
 	the memory pool's larger blocks.
 
 config MEM_POOL_DEFRAG_BEFORE_SPLIT
@@ -427,11 +427,6 @@ config SYS_CLOCK_TICKS_PER_SEC
 	can require a non-trivial extra amount of stack space (e.g. around 80
 	bytes on x86).
 
-	Using the legacy API also incurs an extra penalty, since when asking
-	for a timeout, a translation is made from ticks to milliseconds to call
-	the native kernel APIs, and then another translation is made back to
-	ticks, since the kernel is tick-based.
-
 config SYS_CLOCK_HW_CYCLES_PER_SEC
 	int "System clock's h/w timer frequency"
 	help
@@ -492,7 +487,7 @@ config KERNEL_INIT_PRIORITY_DEFAULT
 	prompt "Default init priority"
 	default 40
 	help
-	Defaut minimal init priority for each init level.
+	Default minimal init priority for each init level.
 
 config KERNEL_INIT_PRIORITY_DEVICE
 	int
@@ -531,45 +526,6 @@ config STACK_CANARIES
 
 	If stack canaries are not supported by the compiler, enabling this
 	option has no effect.
-endmenu
-
-menu "Legacy Kernel Options"
-
-config LEGACY_KERNEL
-	bool "Legacy Kernel Options"
-	default y
-	help
-	Enable legacy kernel features.
-
-config MDEF
-	bool
-	prompt "Use MDEF files for statically configured kernel objects"
-	default y if LEGACY_KERNEL
-	help
-	Using an MDEF file can help the startup time of the application since
-	the objects it lists are statically allocated and initialized, and may
-	also reduce code size if no subsystem uses the initialization routines.
-
-	Disabling this option can reduce the compilation time slightly.
-
-	In doubt, select 'y'.
-
-config  NANO_TIMEOUTS
-	bool
-	default y if LEGACY_KERNEL
-	depends on SYS_CLOCK_EXISTS
-	help
-	Only here for common (ie. non-unified kernel) code that rely on this.
-	Unified kernel uses SYS_CLOCK_EXISTS everywhere instead.
-
-config  NANO_TIMERS
-	bool
-	default y if LEGACY_KERNEL
-	depends on SYS_CLOCK_EXISTS
-	help
-	Only here for common (ie. non-unified kernel) code that rely on this.
-	Unified kernel uses SYS_CLOCK_EXISTS everywhere instead.
-
 endmenu
 
 source "kernel/Kconfig.event_logger"

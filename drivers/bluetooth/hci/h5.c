@@ -20,16 +20,20 @@
 #include <misc/printk.h>
 #include <string.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
-#include <bluetooth/log.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_driver.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
+#include "common/log.h"
 
 #include "../util.h"
 
 static BT_STACK_NOINIT(tx_stack, 256);
 static BT_STACK_NOINIT(rx_stack, 256);
+
+static struct k_thread tx_thread_data;
+static struct k_thread rx_thread_data;
 
 static struct k_delayed_work ack_work;
 static struct k_delayed_work retx_work;
@@ -42,7 +46,7 @@ static struct k_delayed_work retx_work;
 #define HCI_3WIRE_LINK_PKT	0x0f
 #define HCI_VENDOR_PKT		0xff
 
-static bool reliable_packet(uint8_t type)
+static bool reliable_packet(u8_t type)
 {
 	switch (type) {
 	case HCI_COMMAND_PKT:
@@ -87,11 +91,11 @@ static struct h5 {
 	struct k_fifo		rx_queue;
 	struct k_fifo		unack_queue;
 
-	uint8_t			tx_win;
-	uint8_t			tx_ack;
-	uint8_t			tx_seq;
+	u8_t			tx_win;
+	u8_t			tx_ack;
+	u8_t			tx_seq;
 
-	uint8_t			rx_ack;
+	u8_t			rx_ack;
 
 	enum {
 		UNINIT,
@@ -107,13 +111,13 @@ static struct h5 {
 	}			rx_state;
 } h5;
 
-static uint8_t unack_queue_len;
+static u8_t unack_queue_len;
 
-static const uint8_t sync_req[] = { 0x01, 0x7e };
-static const uint8_t sync_rsp[] = { 0x02, 0x7d };
+static const u8_t sync_req[] = { 0x01, 0x7e };
+static const u8_t sync_rsp[] = { 0x02, 0x7d };
 /* Third byte may change */
-static uint8_t conf_req[3] = { 0x03, 0xfc };
-static const uint8_t conf_rsp[] = { 0x04, 0x7b };
+static u8_t conf_req[3] = { 0x03, 0xfc };
+static const u8_t conf_rsp[] = { 0x04, 0x7b };
 
 /* H5 signal buffers pool */
 #define CONFIG_BLUETOOTH_MAX_SIG_LEN	3
@@ -135,7 +139,7 @@ static void h5_reset_rx(void)
 	h5.rx_state = START;
 }
 
-static int h5_unslip_byte(uint8_t *byte)
+static int h5_unslip_byte(u8_t *byte)
 {
 	int count;
 
@@ -164,8 +168,8 @@ static int h5_unslip_byte(uint8_t *byte)
 
 static void process_unack(void)
 {
-	uint8_t next_seq = h5.tx_seq;
-	uint8_t number_removed = unack_queue_len;
+	u8_t next_seq = h5.tx_seq;
+	u8_t number_removed = unack_queue_len;
 
 	if (!unack_queue_len) {
 		return;
@@ -211,7 +215,7 @@ static void process_unack(void)
 	}
 }
 
-static void h5_print_header(const uint8_t *hdr, const char *str)
+static void h5_print_header(const u8_t *hdr, const char *str)
 {
 	if (H5_HDR_RELIABLE(hdr)) {
 		BT_DBG("%s REL: seq %u ack %u crc %u type %u len %u",
@@ -226,7 +230,7 @@ static void h5_print_header(const uint8_t *hdr, const char *str)
 }
 
 #if defined(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
-static void hexdump(const char *str, const uint8_t *packet, size_t length)
+static void hexdump(const char *str, const u8_t *packet, size_t length)
 {
 	int n = 0;
 
@@ -260,7 +264,7 @@ static void hexdump(const char *str, const uint8_t *packet, size_t length)
 #define hexdump(str, packet, length)
 #endif
 
-static uint8_t h5_slip_byte(uint8_t byte)
+static u8_t h5_slip_byte(u8_t byte)
 {
 	switch (byte) {
 	case SLIP_DELIMITER:
@@ -277,9 +281,9 @@ static uint8_t h5_slip_byte(uint8_t byte)
 	}
 }
 
-static void h5_send(const uint8_t *payload, uint8_t type, int len)
+static void h5_send(const u8_t *payload, u8_t type, int len)
 {
-	uint8_t hdr[4];
+	u8_t hdr[4];
 	int i;
 
 	hexdump("<= ", payload, len);
@@ -338,7 +342,7 @@ static void retx_timeout(struct k_work *work)
 		/* Queue unack packets to the beginning of the queue */
 		while ((buf = net_buf_get(&h5.unack_queue, K_NO_WAIT))) {
 			/* include also packet type */
-			net_buf_push(buf, sizeof(uint8_t));
+			net_buf_push(buf, sizeof(u8_t));
 			net_buf_put(&h5.tx_queue, buf);
 			h5.tx_seq = (h5.tx_seq - 1) & 0x07;
 			unack_queue_len--;
@@ -360,11 +364,11 @@ static void ack_timeout(struct k_work *work)
 	h5_send(NULL, HCI_3WIRE_ACK_PKT, 0);
 
 	/* Analyze stacks */
-	stack_analyze("tx_stack", tx_stack, sizeof(tx_stack));
-	stack_analyze("rx_stack", rx_stack, sizeof(rx_stack));
+	STACK_ANALYZE("tx_stack", tx_stack);
+	STACK_ANALYZE("rx_stack", rx_stack);
 }
 
-static void h5_process_complete_packet(uint8_t *hdr)
+static void h5_process_complete_packet(u8_t *hdr)
 {
 	struct net_buf *buf;
 
@@ -402,7 +406,7 @@ static void h5_process_complete_packet(uint8_t *hdr)
 	}
 }
 
-static inline struct net_buf *get_evt_buf(uint8_t evt)
+static inline struct net_buf *get_evt_buf(u8_t evt)
 {
 	struct net_buf *buf;
 
@@ -412,12 +416,11 @@ static inline struct net_buf *get_evt_buf(uint8_t evt)
 		buf = bt_buf_get_cmd_complete(K_NO_WAIT);
 		break;
 	default:
-		buf = bt_buf_get_rx(K_NO_WAIT);
+		buf = bt_buf_get_rx(BT_BUF_EVT, K_NO_WAIT);
 		break;
 	}
 
 	if (buf) {
-		bt_buf_set_type(h5.rx_buf, BT_BUF_EVT);
 		net_buf_add_u8(h5.rx_buf, evt);
 	}
 
@@ -427,9 +430,9 @@ static inline struct net_buf *get_evt_buf(uint8_t evt)
 static void bt_uart_isr(struct device *unused)
 {
 	static int remaining;
-	uint8_t byte;
+	u8_t byte;
 	int ret;
-	static uint8_t hdr[4];
+	static u8_t hdr[4];
 
 	ARG_UNUSED(unused);
 
@@ -489,14 +492,14 @@ static void bt_uart_isr(struct device *unused)
 				h5.rx_state = PAYLOAD;
 				break;
 			case HCI_ACLDATA_PKT:
-				h5.rx_buf = bt_buf_get_rx(K_NO_WAIT);
+				h5.rx_buf = bt_buf_get_rx(BT_BUF_ACL_IN,
+							  K_NO_WAIT);
 				if (!h5.rx_buf) {
 					BT_WARN("No available data buffers");
 					h5_reset_rx();
 					continue;
 				}
 
-				bt_buf_set_type(h5.rx_buf, BT_BUF_ACL_IN);
 				h5.rx_state = PAYLOAD;
 				break;
 			case HCI_3WIRE_LINK_PKT:
@@ -570,14 +573,14 @@ static void bt_uart_isr(struct device *unused)
 	}
 }
 
-static uint8_t h5_get_type(struct net_buf *buf)
+static u8_t h5_get_type(struct net_buf *buf)
 {
 	return net_buf_pull_u8(buf);
 }
 
 static int h5_queue(struct net_buf *buf)
 {
-	uint8_t type;
+	u8_t type;
 
 	BT_DBG("buf %p type %u len %u", buf, bt_buf_get_type(buf), buf->len);
 
@@ -609,7 +612,7 @@ static void tx_thread(void)
 
 	while (true) {
 		struct net_buf *buf;
-		uint8_t type;
+		u8_t type;
 
 		BT_DBG("link_state %u", h5.link_state);
 
@@ -641,7 +644,7 @@ static void tx_thread(void)
 	}
 }
 
-static void h5_set_txwin(uint8_t *conf)
+static void h5_set_txwin(u8_t *conf)
 {
 	conf[2] = h5.tx_win & 0x07;
 }
@@ -714,12 +717,16 @@ static void h5_init(void)
 
 	/* TX thread */
 	k_fifo_init(&h5.tx_queue);
-	k_thread_spawn(tx_stack, sizeof(tx_stack), (k_thread_entry_t)tx_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&tx_thread_data, tx_stack,
+			K_THREAD_STACK_SIZEOF(tx_stack),
+			(k_thread_entry_t)tx_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	k_fifo_init(&h5.rx_queue);
-	k_thread_spawn(rx_stack, sizeof(rx_stack), (k_thread_entry_t)rx_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&rx_thread_data, rx_stack,
+			K_THREAD_STACK_SIZEOF(rx_stack),
+			(k_thread_entry_t)rx_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	/* Unack queue */
 	k_fifo_init(&h5.unack_queue);
@@ -747,7 +754,7 @@ static int h5_open(void)
 	return 0;
 }
 
-static struct bt_hci_driver drv = {
+static const struct bt_hci_driver drv = {
 	.name		= "H:5",
 	.bus		= BT_HCI_DRIVER_BUS_UART,
 	.open		= h5_open,

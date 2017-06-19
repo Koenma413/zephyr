@@ -39,15 +39,15 @@ struct i2c_nrf5_config {
 
 struct i2c_nrf5_data {
 	struct k_sem sem;
-	uint32_t rxd:1;
-	uint32_t txd:1;
-	uint32_t err:1;
-	uint32_t stopped:1;
+	u32_t rxd:1;
+	u32_t txd:1;
+	u32_t err:1;
+	u32_t stopped:1;
 	struct device *gpio;
 };
 
 
-static int i2c_nrf5_configure(struct device *dev, uint32_t dev_config_raw)
+static int i2c_nrf5_configure(struct device *dev, u32_t dev_config_raw)
 {
 	const struct i2c_nrf5_config *config = dev->config->config_info;
 	union dev_config dev_config = (union dev_config)dev_config_raw;
@@ -199,7 +199,7 @@ static int i2c_nrf5_write(struct device *dev,
 }
 
 static int i2c_nrf5_transfer(struct device *dev, struct i2c_msg *msgs,
-			     uint8_t num_msgs, uint16_t addr)
+			     u8_t num_msgs, u16_t addr)
 {
 	const struct i2c_nrf5_config *config = dev->config->config_info;
 	volatile NRF_TWI_Type *twi = config->base;
@@ -328,7 +328,10 @@ static const struct i2c_driver_api i2c_nrf5_driver_api = {
 	.transfer = i2c_nrf5_transfer,
 };
 
-#ifdef CONFIG_I2C_0
+/* i2c & spi instance with the same id (e.g. I2C_0 and SPI_0) can NOT be used
+ * at the same time on nRF5x chip family.
+ */
+#if defined(CONFIG_I2C_0) && !defined(CONFIG_SPI_0)
 static void i2c_nrf5_config_func_0(struct device *dev);
 
 static const struct i2c_nrf5_config i2c_nrf5_config_0 = {
@@ -351,9 +354,9 @@ static void i2c_nrf5_config_func_0(struct device *dev)
 
 	irq_enable(NRF5_IRQ_SPI0_TWI0_IRQn);
 }
-#endif /* CONFIG_I2C_0 */
+#endif /* CONFIG_I2C_0 && !CONFIG_SPI_0 */
 
-#ifdef CONFIG_I2C_1
+#if defined(CONFIG_I2C_1) && !defined(CONFIG_SPI_1)
 static void i2c_nrf5_config_func_1(struct device *dev);
 
 static const struct i2c_nrf5_config i2c_nrf5_config_1 = {
@@ -376,4 +379,4 @@ static void i2c_nrf5_config_func_1(struct device *dev)
 
 	irq_enable(NRF5_IRQ_SPI1_TWI1_IRQn);
 }
-#endif /* CONFIG_I2C_1 */
+#endif /* CONFIG_I2C_1 && !CONFIG_SPI_1 */

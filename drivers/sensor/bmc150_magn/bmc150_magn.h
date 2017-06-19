@@ -9,7 +9,7 @@
 #ifndef __SENSOR_BMC150_MAGN_H__
 #define __SENSOR_BMC150_MAGN_H__
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <i2c.h>
 #include <misc/util.h>
 
@@ -87,29 +87,29 @@
 
 struct bmc150_magn_config {
 	char *i2c_master_dev_name;
-	uint16_t i2c_slave_addr;
+	u16_t i2c_slave_addr;
 
 #if defined(CONFIG_BMC150_MAGN_TRIGGER_DRDY)
 	char *gpio_drdy_dev_name;
-	uint8_t gpio_drdy_int_pin;
+	u8_t gpio_drdy_int_pin;
 #endif
 };
 
 struct bmc150_magn_trim_regs {
-	int8_t x1;
-	int8_t y1;
-	uint16_t reserved1;
-	uint8_t reserved2;
-	int16_t z4;
-	int8_t x2;
-	int8_t y2;
-	uint16_t reserved3;
-	int16_t z2;
-	uint16_t z1;
-	uint16_t xyz1;
-	int16_t z3;
-	int8_t xy2;
-	uint8_t xy1;
+	s8_t x1;
+	s8_t y1;
+	u16_t reserved1;
+	u8_t reserved2;
+	s16_t z4;
+	s8_t x2;
+	s8_t y2;
+	u16_t reserved3;
+	s16_t z2;
+	u16_t z1;
+	u16_t xyz1;
+	s16_t z3;
+	s8_t xy2;
+	u8_t xy1;
 } __packed;
 
 struct bmc150_magn_data {
@@ -117,7 +117,9 @@ struct bmc150_magn_data {
 	struct k_sem sem;
 
 #if defined(CONFIG_BMC150_MAGN_TRIGGER)
-	char __stack thread_stack[CONFIG_BMC150_MAGN_TRIGGER_THREAD_STACK];
+	K_THREAD_STACK_MEMBER(thread_stack,
+			      CONFIG_BMC150_MAGN_TRIGGER_THREAD_STACK);
+	struct k_thread thread;
 #endif
 
 #if defined(CONFIG_BMC150_MAGN_TRIGGER_DRDY)

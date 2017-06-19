@@ -100,9 +100,9 @@
  * the bit description from above
  */
 #define PINMUX_MAX_REGISTERS	5
-static void _pinmux_defaults(uint32_t base)
+static void _pinmux_defaults(u32_t base)
 {
-	uint32_t mux_config[PINMUX_MAX_REGISTERS] = { 0, 0, 0, 0, 0};
+	u32_t mux_config[PINMUX_MAX_REGISTERS] = { 0, 0, 0, 0, 0};
 	int i = 0;
 
 	PIN_CONFIG(mux_config,  0, PINMUX_FUNC_B);
@@ -113,7 +113,7 @@ static void _pinmux_defaults(uint32_t base)
 	PIN_CONFIG(mux_config,  9, PINMUX_FUNC_C);
 	PIN_CONFIG(mux_config, 16, PINMUX_FUNC_C);
 	PIN_CONFIG(mux_config, 17, PINMUX_FUNC_C);
-	PIN_CONFIG(mux_config, 33, PINMUX_FUNC_B);
+	PIN_CONFIG(mux_config, 33, PINMUX_FUNC_A);
 	PIN_CONFIG(mux_config, 40, PINMUX_FUNC_B);
 	PIN_CONFIG(mux_config, 41, PINMUX_FUNC_B);
 	PIN_CONFIG(mux_config, 42, PINMUX_FUNC_B);

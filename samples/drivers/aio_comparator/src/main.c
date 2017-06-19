@@ -10,7 +10,7 @@
  * This is used to demo the DesignWare AIO/Comparator. The voltage input
  * pin is analog in A0 on circuit board, which maps to AIN[10] on chip.
  *
- * The comparion is using the internal 3.3V as reference voltage,
+ * The comparison is using the internal 3.3V as reference voltage,
  * so it needs a higher voltage to trigger comparator.
  *
  * To test:
@@ -25,7 +25,7 @@
  */
 
 #include <zephyr.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdio.h>
 #include <device.h>
 #include <aio_comparator.h>
@@ -34,7 +34,7 @@
 #define SLEEPTIME  5000
 
 struct cb_data_t {
-	uint8_t ain_idx;
+	u8_t ain_idx;
 	enum aio_cmp_ref ref;
 	enum aio_cmp_polarity pol;
 	char name[50];

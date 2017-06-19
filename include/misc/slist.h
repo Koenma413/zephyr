@@ -104,7 +104,7 @@ typedef struct _slist sys_slist_t;
  * @param __n The field name of sys_node_t within the container struct
  */
 #define SYS_SLIST_CONTAINER(__ln, __cn, __n) \
-	(__ln ? CONTAINER_OF(__ln, __typeof__(*__cn), __n) : NULL)
+	((__ln) ? CONTAINER_OF((__ln), __typeof__(*(__cn)), __n) : NULL)
 /*
  * @brief Provide the primitive to peek container of the list head
  *
@@ -116,6 +116,16 @@ typedef struct _slist sys_slist_t;
 	SYS_SLIST_CONTAINER(sys_slist_peek_head(__sl), __cn, __n)
 
 /*
+ * @brief Provide the primitive to peek container of the list tail
+ *
+ * @param __sl A pointer on a sys_slist_t to peek
+ * @param __cn Container struct type pointer
+ * @param __n The field name of sys_node_t within the container struct
+ */
+#define SYS_SLIST_PEEK_TAIL_CONTAINER(__sl, __cn, __n) \
+	SYS_SLIST_CONTAINER(sys_slist_peek_tail(__sl), __cn, __n)
+
+/*
  * @brief Provide the primitive to peek the next container
  *
  * @param __cn Container struct type pointer
@@ -123,11 +133,12 @@ typedef struct _slist sys_slist_t;
  */
 
 #define SYS_SLIST_PEEK_NEXT_CONTAINER(__cn, __n) \
-	SYS_SLIST_CONTAINER(sys_slist_peek_next(&(__cn->__n)), __cn, __n)
+	((__cn) ? SYS_SLIST_CONTAINER(sys_slist_peek_next(&((__cn)->__n)), \
+				      __cn, __n) : NULL)
 
 /**
  * @brief Provide the primitive to iterate on a list under a container
- * Note: the loop is unsafe and thus __cn should not be dettached
+ * Note: the loop is unsafe and thus __cn should not be detached
  *
  * User _MUST_ add the loop statement curly braces enclosing its own code:
  *
@@ -145,7 +156,7 @@ typedef struct _slist sys_slist_t;
 
 /**
  * @brief Provide the primitive to safely iterate on a list under a container
- * Note: __cn can be dettached, it will not break the loop.
+ * Note: __cn can be detached, it will not break the loop.
  *
  * User _MUST_ add the loop statement curly braces enclosing its own code:
  *
@@ -300,7 +311,7 @@ static inline void sys_slist_append_list(sys_slist_t *list,
 /**
  * @brief merge two slists, appending the second one to the first
  *
- * When the operation is completed, the original list is empty.
+ * When the operation is completed, the appending list is empty.
  *
  * @param list A pointer on the list to affect
  * @param list_to_append A pointer to the list to append.
@@ -310,7 +321,7 @@ static inline void sys_slist_merge_slist(sys_slist_t *list,
 {
 	sys_slist_append_list(list, list_to_append->head,
 				    list_to_append->tail);
-	sys_slist_init(list);
+	sys_slist_init(list_to_append);
 }
 
 /**
@@ -403,8 +414,10 @@ static inline void sys_slist_remove(sys_slist_t *list,
  *
  * @param list A pointer on the list to affect
  * @param node A pointer on the node to remove from the list
+ *
+ * @return true if node was removed
  */
-static inline void sys_slist_find_and_remove(sys_slist_t *list,
+static inline bool sys_slist_find_and_remove(sys_slist_t *list,
 					     sys_snode_t *node)
 {
 	sys_snode_t *prev = NULL;
@@ -413,11 +426,13 @@ static inline void sys_slist_find_and_remove(sys_slist_t *list,
 	SYS_SLIST_FOR_EACH_NODE(list, test) {
 		if (test == node) {
 			sys_slist_remove(list, prev, node);
-			break;
+			return true;
 		}
 
 		prev = test;
 	}
+
+	return false;
 }
 
 

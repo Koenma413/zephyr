@@ -23,14 +23,14 @@ struct net_stats net_stats;
 
 #define PRINT_STATISTICS_INTERVAL (30 * MSEC_PER_SEC)
 
-void net_print_statistics(void)
+static inline void stats(void)
 {
-	static int64_t next_print;
-	int64_t curr = k_uptime_get();
+	static s64_t next_print;
+	s64_t curr = k_uptime_get();
 
 	if (!next_print || (next_print < curr &&
 	    (!((curr - next_print) > PRINT_STATISTICS_INTERVAL)))) {
-		int64_t new_print;
+		s64_t new_print;
 
 #if defined(CONFIG_NET_STATISTICS_IPV6)
 		NET_INFO("IPv6 recv      %d\tsent\t%d\tdrop\t%d\tforwarded\t%d",
@@ -44,6 +44,12 @@ void net_print_statistics(void)
 			 GET_STAT(ipv6_nd.sent),
 			 GET_STAT(ipv6_nd.drop));
 #endif /* CONFIG_NET_STATISTICS_IPV6_ND */
+#if defined(CONFIG_NET_STATISTICS_MLD)
+		NET_INFO("IPv6 MLD recv  %d\tsent\t%d\tdrop\t%d",
+			 GET_STAT(ipv6_mld.recv),
+			 GET_STAT(ipv6_mld.sent),
+			 GET_STAT(ipv6_mld.drop));
+#endif /* CONFIG_NET_STATISTICS_MLD */
 #endif /* CONFIG_NET_STATISTICS_IPV6 */
 
 #if defined(CONFIG_NET_STATISTICS_IPV4)
@@ -80,7 +86,28 @@ void net_print_statistics(void)
 			 GET_STAT(udp.chkerr));
 #endif
 
-#if defined(CONFIG_NET_STATISTICS_RPL_STATS)
+#if defined(CONFIG_NET_STATISTICS_TCP)
+		NET_INFO("TCP bytes recv %u\tsent\t%d",
+			 GET_STAT(tcp.bytes.received),
+			 GET_STAT(tcp.bytes.sent));
+		NET_INFO("TCP seg recv   %d\tsent\t%d\tdrop\t%d",
+			 GET_STAT(tcp.recv),
+			 GET_STAT(tcp.sent),
+			 GET_STAT(tcp.drop));
+		NET_INFO("TCP seg resent %d\tchkerr\t%d\tackerr\t%d",
+			 GET_STAT(tcp.resent),
+			 GET_STAT(tcp.chkerr),
+			 GET_STAT(tcp.ackerr));
+		NET_INFO("TCP seg rsterr %d\trst\t%d\tre-xmit\t%d",
+			 GET_STAT(tcp.rsterr),
+			 GET_STAT(tcp.rst),
+			 GET_STAT(tcp.rexmit));
+		NET_INFO("TCP conn drop  %d\tconnrst\t%d",
+			 GET_STAT(tcp.conndrop),
+			 GET_STAT(tcp.connrst));
+#endif
+
+#if defined(CONFIG_NET_STATISTICS_RPL)
 		NET_INFO("RPL DIS recv   %d\tsent\t%d\tdrop\t%d",
 			 GET_STAT(rpl.dis.recv),
 			 GET_STAT(rpl.dis.sent),
@@ -112,7 +139,7 @@ void net_print_statistics(void)
 			 GET_STAT(rpl.loop_warnings));
 		NET_INFO("RPL r-repairs  %d",
 			 GET_STAT(rpl.root_repairs));
-#endif
+#endif /* CONFIG_NET_STATISTICS_RPL */
 
 		NET_INFO("Bytes received %u", GET_STAT(bytes.received));
 		NET_INFO("Bytes sent     %u", GET_STAT(bytes.sent));
@@ -129,11 +156,19 @@ void net_print_statistics(void)
 	}
 }
 
+void net_print_statistics(void)
+{
+	/* In order to make the info print lines shorter, use shorter
+	 * function name.
+	 */
+	stats();
+}
+
 #endif /* CONFIG_NET_STATISTICS_PERIODIC_OUTPUT */
 
 #if defined(CONFIG_NET_STATISTICS_USER_API)
 
-static int net_stats_get(uint32_t mgmt_request, struct net_if *iface,
+static int net_stats_get(u32_t mgmt_request, struct net_if *iface,
 			 void *data, size_t len)
 {
 	size_t len_chk = 0;

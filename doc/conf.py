@@ -127,6 +127,18 @@ todo_include_todos = False
 rst_epilog = """
 .. |codename| replace:: Zephyr Kernel
 .. |project| replace:: Zephyr Project
+.. |copy|   unicode:: U+000A9 .. COPYRIGHT SIGN
+   :ltrim:
+.. |trade|  unicode:: U+02122 .. TRADEMARK SIGN
+   :ltrim:
+.. |reg|    unicode:: U+000AE .. REGISTERED TRADEMARK SIGN
+   :ltrim:
+.. |deg|    unicode:: U+000B0 .. DEGREE SIGN
+   :ltrim:
+.. |plusminus|  unicode:: U+000B1 .. PLUS-MINUS SIGN
+   :rtrim:
+.. |micro|  unicode:: U+000B5 .. MICRO SIGN
+   :rtrim:
 """
 
 # -- Options for HTML output ----------------------------------------------
@@ -144,6 +156,11 @@ if tags.has('daily') or tags.has('release'):
     html_theme = 'zephyr-docs-theme'
     html_theme_path = ['./themes']
 
+
+if tags.has('release'):
+    docs_title = 'Docs / %s' %(version)
+else:
+    docs_title = 'Docs'
 
 # The name for this set of Sphinx documents.  If None, it defaults to
 # "<project> v<release> documentation".
@@ -323,11 +340,25 @@ breathe_projects = {
 }
 breathe_default_project = "Zephyr"
 
+# docs_title is used in the breadcrumb title in the zephyr docs theme
 html_context = {
     'show_license': html_show_license,
+    'docs_title': docs_title,
 }
 
 extlinks = {'jira': ('https://jira.zephyrproject.org/browse/%s', '')}
+
+# some configuration for linkcheck builder
+#   noticed that we're getting false-positive link errors on JIRA, I suspect
+#   because it's taking too long for the server to respond so bump up the
+#   timeout (default=5) and turn off anchor checks (so only a HEAD request is
+#   done - much faster) Leave the ignore commented in case we want to remove
+#   jira link checks later...
+
+linkcheck_timeout = 30
+linkcheck_workers = 10
+# linkcheck_ignore = [r'https://jira\.zephyrproject\.org/']
+linkcheck_anchors = False
 
 def setup(app):
    app.add_stylesheet("zephyr-custom.css")

@@ -14,7 +14,7 @@
 #include <kernel.h>
 
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 #include <kernel_structs.h>
 #include <misc/printk.h>
@@ -32,39 +32,6 @@ extern struct _static_thread_data _static_thread_data_list_end[];
 	     thread_data < _static_thread_data_list_end; \
 	     thread_data++)
 
-#if defined(CONFIG_LEGACY_KERNEL) && defined(CONFIG_FP_SHARING)
-static inline void _task_group_adjust(struct _static_thread_data *thread_data)
-{
-	/*
-	 * set thread options corresponding to legacy FPU and SSE task groups
-	 * so thread spawns properly; EXE and SYS task groups need no adjustment
-	 */
-	if (thread_data->init_groups & K_TASK_GROUP_FPU) {
-		thread_data->init_options |= K_FP_REGS;
-	}
-#ifdef CONFIG_SSE
-	if (thread_data->init_groups & K_TASK_GROUP_SSE) {
-		thread_data->init_options |= K_SSE_REGS;
-	}
-#endif /* CONFIG_SSE */
-}
-#else
-#define _task_group_adjust(thread_data) do { } while (0)
-#endif /* CONFIG_LEGACY_KERNEL && CONFIG_FP_SHARING */
-
-/* Legacy API */
-#if defined(CONFIG_LEGACY_KERNEL)
-int sys_execution_context_type_get(void)
-{
-	if (k_is_in_isr())
-		return NANO_CTX_ISR;
-
-	if (_current->base.prio < 0)
-		return NANO_CTX_FIBER;
-
-	return NANO_CTX_TASK;
-}
-#endif
 
 int k_is_in_isr(void)
 {
@@ -100,24 +67,32 @@ int _is_thread_essential(void)
 	return _current->base.user_options & K_ESSENTIAL;
 }
 
-void k_busy_wait(uint32_t usec_to_wait)
+void k_busy_wait(u32_t usec_to_wait)
 {
+#if defined(CONFIG_TICKLESS_KERNEL) && \
+	    !defined(CONFIG_BUSY_WAIT_USES_ALTERNATE_CLOCK)
+int saved_always_on = k_enable_sys_clock_always_on();
+#endif
 	/* use 64-bit math to prevent overflow when multiplying */
-	uint32_t cycles_to_wait = (uint32_t)(
-		(uint64_t)usec_to_wait *
-		(uint64_t)sys_clock_hw_cycles_per_sec /
-		(uint64_t)USEC_PER_SEC
+	u32_t cycles_to_wait = (u32_t)(
+		(u64_t)usec_to_wait *
+		(u64_t)sys_clock_hw_cycles_per_sec /
+		(u64_t)USEC_PER_SEC
 	);
-	uint32_t start_cycles = k_cycle_get_32();
+	u32_t start_cycles = k_cycle_get_32();
 
 	for (;;) {
-		uint32_t current_cycles = k_cycle_get_32();
+		u32_t current_cycles = k_cycle_get_32();
 
 		/* this handles the rollover on an unsigned 32-bit value */
 		if ((current_cycles - start_cycles) >= cycles_to_wait) {
 			break;
 		}
 	}
+#if defined(CONFIG_TICKLESS_KERNEL) && \
+	    !defined(CONFIG_BUSY_WAIT_USES_ALTERNATE_CLOCK)
+	_sys_clock_always_on = saved_always_on;
+#endif
 }
 
 #ifdef CONFIG_THREAD_CUSTOM_DATA
@@ -158,6 +133,43 @@ void _thread_monitor_exit(struct k_thread *thread)
 }
 #endif /* CONFIG_THREAD_MONITOR */
 
+#ifdef CONFIG_STACK_SENTINEL
+/* Check that the stack sentinel is still present
+ *
+ * The stack sentinel feature writes a magic value to the lowest 4 bytes of
+ * the thread's stack when the thread is initialized. This value gets checked
+ * in a few places:
+ *
+ * 1) In k_yield() if the current thread is not swapped out
+ * 2) After servicing a non-nested interrupt
+ * 3) In _Swap(), check the sentinel in the outgoing thread
+ * 4) When a thread returns from its entry function to cooperatively terminate
+ *
+ * Item 2 requires support in arch/ code.
+ *
+ * If the check fails, the thread will be terminated appropriately through
+ * the system fatal error handler.
+ */
+void _check_stack_sentinel(void)
+{
+	u32_t *stack;
+
+	if (_is_thread_prevented_from_running(_current)) {
+		/* Filter out threads that are dummy threads or already
+		 * marked for termination (_THREAD_DEAD)
+		 */
+		return;
+	}
+
+	stack = (u32_t *)_current->stack_info.start;
+	if (*stack != STACK_SENTINEL) {
+		/* Restore it so further checks don't trigger this same error */
+		*stack = STACK_SENTINEL;
+		_k_except_reason(_NANO_ERR_STACK_CHK_FAIL);
+	}
+}
+#endif
+
 /*
  * Common thread entry point function (used by all threads)
  *
@@ -173,10 +185,12 @@ FUNC_NORETURN void _thread_entry(void (*entry)(void *, void *, void *),
 {
 	entry(p1, p2, p3);
 
+#ifdef CONFIG_STACK_SENTINEL
+	_check_stack_sentinel();
+#endif
 #ifdef CONFIG_MULTITHREADING
 	if (_is_thread_essential()) {
-		_NanoFatalErrorHandler(_NANO_ERR_INVALID_TASK_EXIT,
-				       &_default_esf);
+		_k_except_reason(_NANO_ERR_INVALID_TASK_EXIT);
 	}
 
 	k_thread_abort(_current);
@@ -214,13 +228,13 @@ static void start_thread(struct k_thread *thread)
 #endif
 
 #ifdef CONFIG_MULTITHREADING
-static void schedule_new_thread(struct k_thread *thread, int32_t delay)
+static void schedule_new_thread(struct k_thread *thread, s32_t delay)
 {
 #ifdef CONFIG_SYS_CLOCK_EXISTS
 	if (delay == 0) {
 		start_thread(thread);
 	} else {
-		int32_t ticks = _TICK_ALIGN + _ms_to_ticks(delay);
+		s32_t ticks = _TICK_ALIGN + _ms_to_ticks(delay);
 		int key = irq_lock();
 
 		_add_thread_timeout(thread, NULL, ticks);
@@ -234,21 +248,32 @@ static void schedule_new_thread(struct k_thread *thread, int32_t delay)
 #endif
 
 #ifdef CONFIG_MULTITHREADING
+
+k_tid_t k_thread_create(struct k_thread *new_thread, char *stack,
+			size_t stack_size, void (*entry)(void *, void *, void*),
+			void *p1, void *p2, void *p3,
+			int prio, u32_t options, s32_t delay)
+{
+	__ASSERT(!_is_in_isr(), "Threads may not be created in ISRs");
+	_new_thread(new_thread, stack, stack_size, entry, p1, p2, p3, prio,
+		    options);
+
+	schedule_new_thread(new_thread, delay);
+	return new_thread;
+}
+
+
 k_tid_t k_thread_spawn(char *stack, size_t stack_size,
 			void (*entry)(void *, void *, void*),
 			void *p1, void *p2, void *p3,
-			int prio, uint32_t options, int32_t delay)
+			int prio, u32_t options, s32_t delay)
 {
-	__ASSERT(!_is_in_isr(), "");
-
 	struct k_thread *new_thread = (struct k_thread *)stack;
 
-	_new_thread(stack, stack_size, entry, p1, p2, p3, prio, options);
-
-	schedule_new_thread(new_thread, delay);
-
-	return new_thread;
+	return k_thread_create(new_thread, stack, stack_size, entry, p1, p2,
+			       p3, prio, options, delay);
 }
+
 #endif
 
 int k_thread_cancel(k_tid_t tid)
@@ -272,12 +297,12 @@ int k_thread_cancel(k_tid_t tid)
 }
 
 static inline int is_in_any_group(struct _static_thread_data *thread_data,
-				  uint32_t groups)
+				  u32_t groups)
 {
 	return !!(thread_data->init_groups & groups);
 }
 
-void _k_thread_group_op(uint32_t groups, void (*func)(struct k_thread *))
+void _k_thread_group_op(u32_t groups, void (*func)(struct k_thread *))
 {
 	unsigned int  key;
 
@@ -290,7 +315,7 @@ void _k_thread_group_op(uint32_t groups, void (*func)(struct k_thread *))
 	_FOREACH_STATIC_THREAD(thread_data) {
 		if (is_in_any_group(thread_data, groups)) {
 			key = irq_lock();
-			func(thread_data->thread);
+			func(thread_data->init_thread);
 			irq_unlock(key);
 		}
 	}
@@ -384,8 +409,8 @@ void _init_static_threads(void)
 	unsigned int  key;
 
 	_FOREACH_STATIC_THREAD(thread_data) {
-		_task_group_adjust(thread_data);
 		_new_thread(
+			thread_data->init_thread,
 			thread_data->init_stack,
 			thread_data->init_stack_size,
 			thread_data->init_entry,
@@ -395,14 +420,10 @@ void _init_static_threads(void)
 			thread_data->init_prio,
 			thread_data->init_options);
 
-		thread_data->thread->init_data = thread_data;
+		thread_data->init_thread->init_data = thread_data;
 	}
 
 	_sched_lock();
-#if defined(CONFIG_LEGACY_KERNEL)
-	/* Start all (legacy) threads that are part of the EXE task group */
-	_k_thread_group_op(K_TASK_GROUP_EXE, _k_thread_single_start);
-#endif
 
 	/*
 	 * Non-legacy static threads may be started immediately or after a
@@ -416,7 +437,7 @@ void _init_static_threads(void)
 	key = irq_lock();
 	_FOREACH_STATIC_THREAD(thread_data) {
 		if (thread_data->init_delay != K_FOREVER) {
-			schedule_new_thread(thread_data->thread,
+			schedule_new_thread(thread_data->init_thread,
 					    thread_data->init_delay);
 		}
 	}
@@ -426,12 +447,12 @@ void _init_static_threads(void)
 #endif
 
 void _init_thread_base(struct _thread_base *thread_base, int priority,
-		       uint32_t initial_state, unsigned int options)
+		       u32_t initial_state, unsigned int options)
 {
 	/* k_q_node is initialized upon first insertion in a list */
 
-	thread_base->user_options = (uint8_t)options;
-	thread_base->thread_state = (uint8_t)initial_state;
+	thread_base->user_options = (u8_t)options;
+	thread_base->thread_state = (u8_t)initial_state;
 
 	thread_base->prio = priority;
 
@@ -442,34 +463,24 @@ void _init_thread_base(struct _thread_base *thread_base, int priority,
 	_init_thread_timeout(thread_base);
 }
 
-uint32_t _k_thread_group_mask_get(struct k_thread *thread)
+u32_t _k_thread_group_mask_get(struct k_thread *thread)
 {
 	struct _static_thread_data *thread_data = thread->init_data;
 
 	return thread_data->init_groups;
 }
 
-void _k_thread_group_join(uint32_t groups, struct k_thread *thread)
+void _k_thread_group_join(u32_t groups, struct k_thread *thread)
 {
 	struct _static_thread_data *thread_data = thread->init_data;
 
 	thread_data->init_groups |= groups;
 }
 
-void _k_thread_group_leave(uint32_t groups, struct k_thread *thread)
+void _k_thread_group_leave(u32_t groups, struct k_thread *thread)
 {
 	struct _static_thread_data *thread_data = thread->init_data;
 
 	thread_data->init_groups &= groups;
 }
 
-/* legacy API */
-#if defined(CONFIG_LEGACY_KERNEL)
-void task_start(ktask_t task)
-{
-	int key = irq_lock();
-
-	_k_thread_single_start(task);
-	_reschedule_threads(key);
-}
-#endif

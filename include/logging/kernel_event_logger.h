@@ -18,11 +18,12 @@
 extern "C" {
 #endif
 
-/* pre-defined event types */
+/* predefined event types */
 
 #define KERNEL_EVENT_LOGGER_CONTEXT_SWITCH_EVENT_ID             0x0001
 #define KERNEL_EVENT_LOGGER_INTERRUPT_EVENT_ID                  0x0002
 #define KERNEL_EVENT_LOGGER_SLEEP_EVENT_ID                      0x0003
+#define KERNEL_EVENT_LOGGER_THREAD_EVENT_ID                     0x0004
 
 #ifndef _ASMLANGUAGE
 
@@ -33,14 +34,33 @@ extern int _sys_k_event_logger_mask;
 extern void _sys_k_event_logger_enter_sleep(void);
 extern void _sys_k_event_logger_exit_sleep(void);
 #else
-static inline void _sys_k_event_logger_enter_sleep(void) {};
-static inline void  _sys_k_event_logger_exit_sleep(void) {};
+static inline void _sys_k_event_logger_enter_sleep(void) {}
+static inline void _sys_k_event_logger_exit_sleep(void) {}
 #endif
 
 #ifdef CONFIG_KERNEL_EVENT_LOGGER_INTERRUPT
 extern void _sys_k_event_logger_interrupt(void);
 #else
-static inline void _sys_k_event_logger_interrupt(void) {};
+static inline void _sys_k_event_logger_interrupt(void) {}
+#endif
+
+#ifdef CONFIG_KERNEL_EVENT_LOGGER_THREAD
+#include <kernel.h>
+
+enum sys_k_event_logger_thread_event {
+	KERNEL_LOG_THREAD_EVENT_READYQ,
+	KERNEL_LOG_THREAD_EVENT_PEND,
+	KERNEL_LOG_THREAD_EVENT_EXIT,
+};
+
+extern void _sys_k_event_logger_thread_ready(struct k_thread *thread);
+extern void _sys_k_event_logger_thread_pend(struct k_thread *thread);
+extern void _sys_k_event_logger_thread_exit(struct k_thread *thread);
+#else
+static inline void _sys_k_event_logger_thread_create(void *thread) {}
+static inline void _sys_k_event_logger_thread_ready(void *thread) {}
+static inline void _sys_k_event_logger_thread_pend(void *thread) {}
+static inline void _sys_k_event_logger_thread_exit(void *thread) {}
 #endif
 
 /**
@@ -58,7 +78,7 @@ static inline void _sys_k_event_logger_interrupt(void) {};
  *
  * @return Timestamp value (application-defined).
  */
-typedef uint32_t (*sys_k_timer_func_t)(void);
+typedef u32_t (*sys_k_timer_func_t)(void);
 
 /**
  * @cond INTERNAL_HIDDEN
@@ -173,9 +193,9 @@ static inline int sys_k_must_log_event(int event_type)
  *
  * @return N/A
  */
-static inline void sys_k_event_logger_put(uint16_t event_id,
-					  uint32_t *event_data,
-					  uint8_t data_size)
+static inline void sys_k_event_logger_put(u16_t event_id,
+					  u32_t *event_data,
+					  u8_t data_size)
 {
 #ifdef CONFIG_KERNEL_EVENT_LOGGER
 	sys_event_logger_put(&sys_k_event_logger, event_id,
@@ -198,9 +218,9 @@ static inline void sys_k_event_logger_put(uint16_t event_id,
  * @return N/A
  */
 #ifdef CONFIG_KERNEL_EVENT_LOGGER
-extern void sys_k_event_logger_put_timed(uint16_t event_id);
+extern void sys_k_event_logger_put_timed(u16_t event_id);
 #else
-static inline void sys_k_event_logger_put_timed(uint16_t event_id)
+static inline void sys_k_event_logger_put_timed(u16_t event_id)
 {
 	ARG_UNUSED(event_id);
 };
@@ -225,8 +245,8 @@ static inline void sys_k_event_logger_put_timed(uint16_t event_id)
  *         the size of the event to be retrieved.
  */
 #ifdef CONFIG_KERNEL_EVENT_LOGGER
-static inline int sys_k_event_logger_get(uint16_t *event_id, uint8_t *dropped,
-				     uint32_t *event_data, uint8_t *data_size)
+static inline int sys_k_event_logger_get(u16_t *event_id, u8_t *dropped,
+				     u32_t *event_data, u8_t *data_size)
 {
 	return sys_event_logger_get(&sys_k_event_logger, event_id, dropped,
 				    event_data, data_size);
@@ -251,8 +271,8 @@ static inline int sys_k_event_logger_get(uint16_t *event_id, uint8_t *dropped,
  *         the size of the event to be retrieved.
  */
 #ifdef CONFIG_KERNEL_EVENT_LOGGER
-static inline int sys_k_event_logger_get_wait(uint16_t *event_id,
-		uint8_t *dropped, uint32_t *event_data, uint8_t *data_size)
+static inline int sys_k_event_logger_get_wait(u16_t *event_id,
+		u8_t *dropped, u32_t *event_data, u8_t *data_size)
 {
 	return sys_event_logger_get_wait(&sys_k_event_logger, event_id, dropped,
 					 event_data, data_size);
@@ -280,16 +300,16 @@ static inline int sys_k_event_logger_get_wait(uint16_t *event_id,
  * @retval -EMSGSIZE Buffer too small; @a data_size now indicates
  *         the size of the event to be retrieved.
  */
-#if defined(CONFIG_KERNEL_EVENT_LOGGER) && defined(CONFIG_NANO_TIMEOUTS)
-static inline int sys_k_event_logger_get_wait_timeout(uint16_t *event_id,
-			uint8_t *dropped, uint32_t *event_data,
-			uint8_t *data_size, uint32_t timeout)
+#if defined(CONFIG_KERNEL_EVENT_LOGGER)
+static inline int sys_k_event_logger_get_wait_timeout(u16_t *event_id,
+			u8_t *dropped, u32_t *event_data,
+			u8_t *data_size, u32_t timeout)
 {
 	return sys_event_logger_get_wait_timeout(&sys_k_event_logger, event_id,
 						 dropped, event_data,
 						 data_size, timeout);
 }
-#endif /* CONFIG_KERNEL_EVENT_LOGGER && CONFIG_NANO_TIMEOUTS */
+#endif /* CONFIG_KERNEL_EVENT_LOGGER */
 
 /**
  * @brief Register thread that retrieves kernel events.

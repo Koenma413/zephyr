@@ -14,7 +14,7 @@
 #include <kernel_structs.h>
 #include <debug/object_tracing_common.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <wait_q.h>
 #include <misc/dlist.h>
 #include <init.h>
@@ -37,7 +37,9 @@ struct k_pipe_async {
 extern struct k_pipe _k_pipe_list_start[];
 extern struct k_pipe _k_pipe_list_end[];
 
+#ifdef CONFIG_OBJECT_TRACING
 struct k_pipe *_trace_list_k_pipe;
+#endif	/* CONFIG_OBJECT_TRACING */
 
 #if (CONFIG_NUM_PIPE_ASYNC_MSGS > 0)
 
@@ -50,13 +52,13 @@ K_STACK_DEFINE(pipe_async_msgs, CONFIG_NUM_PIPE_ASYNC_MSGS);
 /* Allocate an asynchronous message descriptor */
 static void _pipe_async_alloc(struct k_pipe_async **async)
 {
-	k_stack_pop(&pipe_async_msgs, (uint32_t *)async, K_FOREVER);
+	k_stack_pop(&pipe_async_msgs, (u32_t *)async, K_FOREVER);
 }
 
 /* Free an asynchronous message descriptor */
 static void _pipe_async_free(struct k_pipe_async *async)
 {
-	k_stack_push(&pipe_async_msgs, (uint32_t)async);
+	k_stack_push(&pipe_async_msgs, (u32_t)async);
 }
 
 /* Finish an asynchronous operation */
@@ -103,7 +105,7 @@ static int init_pipes_module(struct device *dev)
 	for (int i = 0; i < CONFIG_NUM_PIPE_ASYNC_MSGS; i++) {
 		async_msg[i].thread.thread_state = _THREAD_DUMMY;
 		async_msg[i].thread.swap_data = &async_msg[i].desc;
-		k_stack_push(&pipe_async_msgs, (uint32_t)&async_msg[i]);
+		k_stack_push(&pipe_async_msgs, (u32_t)&async_msg[i]);
 	}
 #endif /* CONFIG_NUM_PIPE_ASYNC_MSGS > 0 */
 
@@ -265,7 +267,7 @@ static bool _pipe_xfer_prepare(sys_dlist_t      *xfer_list,
 			       size_t            pipe_space,
 			       size_t            bytes_to_xfer,
 			       size_t            min_xfer,
-			       int32_t           timeout)
+			       s32_t           timeout)
 {
 	sys_dnode_t      *node;
 	struct k_thread  *thread;
@@ -384,7 +386,7 @@ static void _pipe_thread_ready(struct k_thread *thread)
 int _k_pipe_put_internal(struct k_pipe *pipe, struct k_pipe_async *async_desc,
 			 unsigned char *data, size_t bytes_to_write,
 			 size_t *bytes_written, size_t min_xfer,
-			 int32_t timeout)
+			 s32_t timeout)
 {
 	struct k_thread    *reader;
 	struct k_pipe_desc *desc;
@@ -525,7 +527,7 @@ int _k_pipe_put_internal(struct k_pipe *pipe, struct k_pipe_async *async_desc,
 }
 
 int k_pipe_get(struct k_pipe *pipe, void *data, size_t bytes_to_read,
-	       size_t *bytes_read, size_t min_xfer, int32_t timeout)
+	       size_t *bytes_read, size_t min_xfer, s32_t timeout)
 {
 	struct k_thread    *writer;
 	struct k_pipe_desc *desc;
@@ -668,7 +670,7 @@ int k_pipe_get(struct k_pipe *pipe, void *data, size_t bytes_to_read,
 }
 
 int k_pipe_put(struct k_pipe *pipe, void *data, size_t bytes_to_write,
-	       size_t *bytes_written, size_t min_xfer, int32_t timeout)
+	       size_t *bytes_written, size_t min_xfer, s32_t timeout)
 {
 	__ASSERT(min_xfer <= bytes_to_write, "");
 	__ASSERT(bytes_written != NULL, "");
@@ -685,8 +687,6 @@ void k_pipe_block_put(struct k_pipe *pipe, struct k_mem_block *block,
 	struct k_pipe_async  *async_desc;
 	size_t                dummy_bytes_written;
 
-	ARG_UNUSED(bytes_to_write);
-
 	/* For simplicity, always allocate an asynchronous descriptor */
 	_pipe_async_alloc(&async_desc);
 
@@ -696,7 +696,7 @@ void k_pipe_block_put(struct k_pipe *pipe, struct k_mem_block *block,
 	async_desc->thread.prio = k_thread_priority_get(_current);
 
 	(void) _k_pipe_put_internal(pipe, async_desc, block->data,
-				    block->req_size, &dummy_bytes_written,
-				    block->req_size, K_FOREVER);
+				    bytes_to_write, &dummy_bytes_written,
+				    bytes_to_write, K_FOREVER);
 }
 #endif

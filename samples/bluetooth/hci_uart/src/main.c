@@ -23,13 +23,15 @@
 #include <net/buf.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
-#include <bluetooth/log.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/buf.h>
 #include <bluetooth/hci_raw.h>
 
+#include "common/log.h"
+
 static struct device *hci_uart_dev;
 static BT_STACK_NOINIT(tx_thread_stack, CONFIG_BLUETOOTH_HCI_TX_STACK_SIZE);
+static struct k_thread tx_thread_data;
 
 /* HCI command buffers */
 #define CMD_BUF_SIZE BT_BUF_RX_SIZE
@@ -65,7 +67,7 @@ static K_FIFO_DEFINE(tx_queue);
  */
 #define H4_DISCARD_LEN 33
 
-static int h4_read(struct device *uart, uint8_t *buf,
+static int h4_read(struct device *uart, u8_t *buf,
 		   size_t len, size_t min)
 {
 	int total = 0;
@@ -93,7 +95,7 @@ static int h4_read(struct device *uart, uint8_t *buf,
 
 static size_t h4_discard(struct device *uart, size_t len)
 {
-	uint8_t buf[H4_DISCARD_LEN];
+	u8_t buf[H4_DISCARD_LEN];
 
 	return uart_fifo_read(uart, buf, min(len, sizeof(buf)));
 }
@@ -167,7 +169,7 @@ static void bt_uart_isr(struct device *unused)
 
 		/* Beginning of a new packet */
 		if (!remaining) {
-			uint8_t type;
+			u8_t type;
 
 			/* Get packet type */
 			read = h4_read(hci_uart_dev, &type, sizeof(type), 0);
@@ -266,9 +268,9 @@ static int h4_send(struct net_buf *buf)
 }
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_ASSERT_HANDLER)
-void bt_controller_assert_handle(char *file, uint32_t line)
+void bt_controller_assert_handle(char *file, u32_t line)
 {
-	uint32_t len = 0, pos = 0;
+	u32_t len = 0, pos = 0;
 
 	/* Disable interrupts, this is unrecoverable */
 	(void)irq_lock();
@@ -317,7 +319,7 @@ static int hci_uart_init(struct device *unused)
 	SYS_LOG_DBG("");
 
 	hci_uart_dev =
-		device_get_binding(CONFIG_BLUETOOTH_UART_TO_HOST_DEV_NAME);
+		device_get_binding(CONFIG_BLUETOOTH_CONTROLLER_TO_HOST_UART_DEV_NAME);
 	if (!hci_uart_dev) {
 		return -EINVAL;
 	}
@@ -348,8 +350,9 @@ void main(void)
 	/* Spawn the TX thread and start feeding commands and data to the
 	 * controller
 	 */
-	k_thread_spawn(tx_thread_stack, sizeof(tx_thread_stack), tx_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&tx_thread_data, tx_thread_stack,
+			K_THREAD_STACK_SIZEOF(tx_thread_stack), tx_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	while (1) {
 		struct net_buf *buf;

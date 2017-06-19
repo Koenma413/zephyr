@@ -20,14 +20,14 @@ application. The capacity of the kernel event logger is also configurable.
 By default, it has a ring buffer that can hold up to 128 32-bit words
 of event information.
 
-The kernel event logger is capable of recording the following pre-defined
+The kernel event logger is capable of recording the following predefined
 event types:
 
 * Interrupts.
 * Context switching of threads.
 * Kernel sleep events (i.e. entering and exiting a low power state).
 
-The kernel event logger only records the pre-defined event types it has been
+The kernel event logger only records the predefined event types it has been
 configured to record. Each event type can be enabled independently.
 
 An application can also define and record custom event types.
@@ -69,8 +69,8 @@ An **interrupt event** has the following format:
 .. code-block:: c
 
     struct {
-        uint32_t timestamp;        /* time of interrupt */
-        uint32_t interrupt_id;     /* ID of interrupt */
+        u32_t timestamp;        /* time of interrupt */
+        u32_t interrupt_id;     /* ID of interrupt */
     };
 
 A **context-switch event** has the following format:
@@ -78,8 +78,8 @@ A **context-switch event** has the following format:
 .. code-block:: c
 
     struct {
-        uint32_t timestamp;        /* time of context switch */
-        uint32_t context_id;       /* ID of thread that was switched out */
+        u32_t timestamp;        /* time of context switch */
+        u32_t context_id;       /* ID of thread that was switched out */
     };
 
 A **sleep event** has the following format:
@@ -87,13 +87,13 @@ A **sleep event** has the following format:
 .. code-block:: c
 
     struct {
-        uint32_t sleep_timestamp;  /* time when CPU entered sleep mode */
-        uint32_t wake_timestamp;   /* time when CPU exited sleep mode */
-        uint32_t interrupt_id;     /* ID of interrupt that woke CPU */
+        u32_t sleep_timestamp;  /* time when CPU entered sleep mode */
+        u32_t wake_timestamp;   /* time when CPU exited sleep mode */
+        u32_t interrupt_id;     /* ID of interrupt that woke CPU */
     };
 
 A **custom event** must have a type ID that does not conflict with
-any existing pre-defined event type ID. The format of a custom event
+any existing predefined event type ID. The format of a custom event
 is application-defined, but must contain at least one 32-bit data word.
 A custom event may utilize a variable size, to allow different events
 of a single type to record differing amounts of information.
@@ -101,7 +101,7 @@ of a single type to record differing amounts of information.
 Timestamps
 ==========
 
-By default, the timestamp recorded with each pre-defined event is obtained from
+By default, the timestamp recorded with each predefined event is obtained from
 the kernel's :ref:`hardware clock <clocks_v2>`. This 32-bit clock counts up
 extremely rapidly, which means the timestamp value wraps around frequently.
 (For example, the Lakemont APIC timer for Quark SE wraps every 134 seconds.)
@@ -134,15 +134,13 @@ event.
 
 The following code illustrates how a thread can retrieve the events
 recorded by the kernel event logger.
-A sample application that shows how to collect kernel event data
-can also be found at :file:`samples/kernel_event_logger`.
 
 .. code-block:: c
 
-    uint16_t event_id;
-    uint8_t  dropped_count;
-    uint32_t data[3];
-    uint8_t  data_size;
+    u16_t event_id;
+    u8_t  dropped_count;
+    u32_t data[3];
+    u8_t  data_size;
 
     while(1) {
         /* retrieve an event */
@@ -157,13 +155,13 @@ can also be found at :file:`samples/kernel_event_logger`.
         if (res > 0) {
             /* process the event */
             switch (event_id) {
-            case KERNEL_EVENT_CONTEXT_SWITCH_EVENT_ID:
+            case KERNEL_EVENT_LOGGER_CONTEXT_SWITCH_EVENT_ID:
                 /* ... Process the context switch event ... */
                 break;
-            case KERNEL_EVENT_INTERRUPT_EVENT_ID:
+            case KERNEL_EVENT_LOGGER_INTERRUPT_EVENT_ID:
                 /* ... Process the interrupt event ... */
                 break;
-            case KERNEL_EVENT_SLEEP_EVENT_ID:
+            case KERNEL_EVENT_LOGGER_SLEEP_EVENT_ID:
                 /* ... Process the sleep event ... */
                 break;
             default:
@@ -178,7 +176,7 @@ Adding a Custom Event Type
 ==========================
 
 A custom event type must use an integer type ID that does not duplicate
-an existing type ID. The type IDs for the pre-defined events can be found
+an existing type ID. The type IDs for the predefined events can be found
 in :file:`include/logging/kernel_event_logger.h`. If dynamic recording of
 events is enabled, the event type ID must not exceed 32.
 
@@ -202,7 +200,7 @@ event consisting of two 32-bit words to the kernel event logger.
 
     /* record custom event only if recording is currently wanted */
     if (sys_k_must_log_event(MY_CUSTOM_EVENT_ID)) {
-        uint32_t data[2];
+        u32_t data[2];
 
         data[0] = custom_data_1;
         data[1] = custom_data_2;

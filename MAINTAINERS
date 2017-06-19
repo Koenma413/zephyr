@@ -113,10 +113,11 @@ M:	Johan Hedberg <johan.hedberg@intel.com>
 S:	Supported
 F:	boards/arm/arduino_101_ble/
 
-BOARDS/ARM - CC3200 LAUNCHXL
+BOARDS/ARM - CC32XX LAUNCHXL
 M:      Gil Pitney <gil.pitney@linaro.org>
 S:      Supported
 F:      boards/arm/cc3200_launchxl/
+F:      boards/arm/cc3220sf_launchxl/
 
 BOARDS/ARM - NXP FRDM-K64F
 M:	Maureen Helm <maureen.helm@nxp.com>
@@ -199,15 +200,16 @@ M:	Carles Cufi <carles.cufi@nordicsemi.no>
 S:	Supported
 F:	subsys/bluetooth/controller/
 
-CC3200 SDK
+CC32XX SDK
 M:      Gil Pitney <gil.pitney@linaro.org>
 S:      Supported
-F:      ext/hal/cc3200sdk/
+F:      ext/hal/ti/cc3200sdk/
+F:      ext/hal/ti/cc3220sdk/
 
 CC32XX SOC - TI SIMPLELINK
 M:      Gil Pitney <gil.pitney@linaro.org>
 S:      Supported
-F:      arch/arm/soc/ti_simplelink/
+F:      arch/arm/soc/ti_simplelink/cc32xx
 
 DOCUMENTATION
 M:	Kinder, David <david.b.kinder@intel.com>
@@ -264,8 +266,6 @@ M:	Andrew Boie <andrew.p.boie@intel.com>
 M:	Andy Ross <andrew.j.ross@intel.com>
 S:	Supported
 F:	kernel/
-F:	include/nanokernel.h
-F:	include/microkernel.h
 F:	include/misc/
 F:	include/toolchain/
 F:	include/atomic.h
@@ -286,7 +286,6 @@ F:	include/sys_io.h
 F:	include/toolchain.h
 F:	include/zephyr.h
 F:	include/kernel.h
-F:	include/legacy.h
 F:	tests/kernel/
 
 KNOWN ISSUES
@@ -337,7 +336,8 @@ F:	drivers/ieee802154/
 F:	drivers/slip/
 
 NETWORK APPLICATIONS
-M:	Flavio Santes <flavio.santes@intel.com>
+M:	Jukka Rissanen <jukka.rissanen@linux.intel.com>
+M:	Tomasz Bursztyka <tomasz.bursztyka@linux.intel.com>
 S:	Supported
 F:	subsys/net/lib/dns/
 F:	subsys/net/lib/http/
@@ -445,7 +445,6 @@ F:	drivers/clock_control/*stm32f4*
 
 TINYCRYPT
 M:	Constanza Heath <constanza.m.heath@intel.com>
-M:	Flavio Santes <flavio.santes@intel.com>
 S:	Supported
 F:	ext/lib/crypto/tinycrypt/
 F:	tests/crypto/
@@ -502,7 +501,7 @@ THE REST
 M:	Anas Nashif <anas.nashif@intel.com>
 M:	Kumar Gala <kumar.gala@linaro.org>
 L:	devel@lists.zephyrproject.com
-T:	git https://gerrit.zephyrproject.org/r/a/zephyr
+T:	git https://github.com/zephyrproject-rtos/zephyr
 S:	Buried alive in reporters
 F:	*
 F:	*/

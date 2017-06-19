@@ -3,6 +3,7 @@
  */
 
 /*
+ * Copyright (c) 2017 Nordic Semiconductor ASA
  * Copyright (c) 2015-2016 Intel Corporation
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -22,6 +23,7 @@
 #include <misc/util.h>
 #include <net/buf.h>
 #include <bluetooth/hci.h>
+#include <bluetooth/crypto.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,9 +63,9 @@ int bt_enable(bt_ready_cb_t cb);
   * bt_le_adv_start() function.
   */
 struct bt_data {
-	uint8_t type;
-	uint8_t data_len;
-	const uint8_t *data;
+	u8_t type;
+	u8_t data_len;
+	const u8_t *data;
 };
 
 /** @brief Helper to declare elements of bt_data arrays
@@ -79,7 +81,7 @@ struct bt_data {
 	{ \
 		.type = (_type), \
 		.data_len = (_data_len), \
-		.data = (const uint8_t *)(_data), \
+		.data = (const u8_t *)(_data), \
 	}
 
 /** @brief Helper to declare elements of bt_data arrays
@@ -91,8 +93,8 @@ struct bt_data {
  *  @param _bytes Variable number of single-byte parameters
  */
 #define BT_DATA_BYTES(_type, _bytes...) \
-	BT_DATA(_type, ((uint8_t []) { _bytes }), \
-		sizeof((uint8_t []) { _bytes }))
+	BT_DATA(_type, ((u8_t []) { _bytes }), \
+		sizeof((u8_t []) { _bytes }))
 
 /** Advertising options */
 enum {
@@ -108,15 +110,15 @@ enum {
 /** LE Advertising Parameters. */
 struct bt_le_adv_param {
 	/** Bit-field of advertising options */
-	uint8_t  options;
+	u8_t  options;
 
 	/** Minimum Advertising Interval (N * 0.625) */
-	uint16_t interval_min;
+	u16_t interval_min;
 
 	/** Maximum Advertising Interval (N * 0.625) */
-	uint16_t interval_max;
+	u16_t interval_max;
 
-	/** Optional pre-defined (random) own address. Currently
+	/** Optional predefined (random) own address. Currently
 	 *  the only permitted use of this is for NRPA with
 	 *  non-connectable advertising.
 	 */
@@ -177,26 +179,26 @@ int bt_le_adv_stop(void);
  *  @param addr Advertiser LE address and type.
  *  @param rssi Strength of advertiser signal.
  *  @param adv_type Type of advertising response from advertiser.
- *  @param data Buffer containig advertiser data.
+ *  @param data Buffer containing advertiser data.
  */
-typedef void bt_le_scan_cb_t(const bt_addr_le_t *addr, int8_t rssi,
-			     uint8_t adv_type, struct net_buf_simple *buf);
+typedef void bt_le_scan_cb_t(const bt_addr_le_t *addr, s8_t rssi,
+			     u8_t adv_type, struct net_buf_simple *buf);
 
 /** LE scan parameters */
 struct bt_le_scan_param {
 	/** Scan type (BT_HCI_LE_SCAN_ACTIVE or BT_HCI_LE_SCAN_PASSIVE) */
-	uint8_t  type;
+	u8_t  type;
 
 	/** Duplicate filtering (BT_HCI_LE_SCAN_FILTER_DUP_ENABLE or
 	 *  BT_HCI_LE_SCAN_FILTER_DUP_DISABLE)
 	 */
-	uint8_t  filter_dup;
+	u8_t  filter_dup;
 
 	/** Scan interval (N * 0.625 ms) */
-	uint16_t interval;
+	u16_t interval;
 
 	/** Scan window (N * 0.625 ms) */
-	uint16_t window;
+	u16_t window;
 };
 
 /** Helper to declare scan parameters inline
@@ -276,19 +278,19 @@ int bt_le_oob_get_local(struct bt_le_oob *oob);
 /** @brief BR/EDR discovery result structure */
 struct bt_br_discovery_result {
 	/** private */
-	uint8_t _priv[4];
+	u8_t _priv[4];
 
 	/** Remote device address */
 	bt_addr_t addr;
 
 	/** RSSI from inquiry */
-	int8_t rssi;
+	s8_t rssi;
 
 	/** Class of Device */
-	uint8_t cod[3];
+	u8_t cod[3];
 
 	/** Extended Inquiry Response */
-	uint8_t eir[240];
+	u8_t eir[240];
 };
 
 /** @typedef bt_br_discovery_cb_t
@@ -310,7 +312,7 @@ struct bt_br_discovery_param {
 	/** Maximum length of the discovery in units of 1.28 seconds.
 	 *  Valid range is 0x01 - 0x30.
 	 */
-	uint8_t length;
+	u8_t length;
 
 	/** True if limited discovery procedure is to be used. */
 	bool limited;
@@ -455,19 +457,6 @@ int bt_br_set_discoverable(bool enable);
  *  already set. Zero if done successfully.
  */
 int bt_br_set_connectable(bool enable);
-
-/** @brief Generate random data.
- *
- *  A random number generation helper which utilizes the Bluetooth
- *  controller's own RNG.
- *
- *  @param buf Buffer to insert the random data
- *  @param len Length of random data to generate
- *
- *  @return Zero on success or error code otherwise, positive in case
- *  of protocol error or negative (POSIX) in case of stack internal error
- */
-int bt_rand(void *buf, size_t len);
 
 /**
  * @}

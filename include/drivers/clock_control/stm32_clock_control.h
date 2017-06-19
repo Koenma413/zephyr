@@ -14,12 +14,6 @@
 /* common clock control device name for all STM32 chips */
 #define STM32_CLOCK_CONTROL_NAME "stm32-cc"
 
-#ifdef CONFIG_SOC_SERIES_STM32F1X
-#include "stm32f1_clock_control.h"
-#elif CONFIG_SOC_SERIES_STM32F4X
-#include "stm32f4_clock_control.h"
-#endif
-
 /* Bus */
 enum {
 	STM32_CLOCK_BUS_AHB1,
@@ -32,8 +26,8 @@ enum {
 };
 
 struct stm32_pclken {
-	uint32_t bus;
-	uint32_t enr;
+	u32_t bus;
+	u32_t enr;
 };
 
 #endif /* _STM32_CLOCK_CONTROL_H_ */

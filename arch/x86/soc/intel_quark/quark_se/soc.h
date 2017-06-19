@@ -13,7 +13,7 @@
 #ifndef __SOC_H_
 #define __SOC_H_
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <misc/util.h>
 #include <uart.h>
 
@@ -61,6 +61,24 @@
 #define PINMUX_BASE_ADDR		0xb0800900
 
 #define UART_IRQ_FLAGS (IOAPIC_LEVEL | IOAPIC_HIGH)
+
+#ifdef CONFIG_SPI_DW
+
+#define SPI_DW_PORT_0_REGS		0xB0001000
+#define SPI_DW_PORT_0_IRQ		2
+#define SPI_DW_PORT_0_INT_MASK		(SCSS_REGISTER_BASE + 0x454)
+
+#define SPI_DW_PORT_1_REGS		0xB0001400
+#define SPI_DW_PORT_1_IRQ		3
+#define SPI_DW_PORT_1_INT_MASK		(SCSS_REGISTER_BASE + 0x458)
+
+#define SPI_DW_PORT_2_REGS		0xB0001800
+#define SPI_DW_PORT_2_IRQ		4
+#define SPI_DW_PORT_2_INT_MASK		(SCSS_REGISTER_BASE + 0x45C)
+
+#define SPI_DW_IRQ_FLAGS		(IOAPIC_LEVEL | IOAPIC_HIGH)
+
+#endif /* CONFIG_SPI_DW */
 
 #endif /*  _ASMLANGUAGE */
 

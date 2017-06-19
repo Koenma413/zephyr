@@ -13,7 +13,7 @@
  * A task that owns a mutex is promoted to the priority level of the
  * highest-priority task attempting to lock the mutex.
  *
- * In addition, recusive locking capabilities and the use of a private mutex
+ * In addition, recursive locking capabilities and the use of a private mutex
  * are also tested.
  *
  * This module tests the following mutex routines:
@@ -79,7 +79,7 @@ void Task05(void)
 	if (rv != -EAGAIN) {
 		tcRC = TC_FAIL;
 		TC_ERROR("Failed to timeout on mutex 0x%x\n",
-				 (uint32_t)&Mutex4);
+				 (u32_t)&Mutex4);
 		return;
 	}
 }
@@ -110,7 +110,7 @@ void Task06(void)
 	rv = k_mutex_lock(&Mutex4, K_SECONDS(2));
 	if (rv != 0) {
 		tcRC = TC_FAIL;
-		TC_ERROR("Failed to take mutex 0x%x\n", (uint32_t)&Mutex4);
+		TC_ERROR("Failed to take mutex 0x%x\n", (u32_t)&Mutex4);
 		return;
 	}
 
@@ -142,7 +142,7 @@ void Task07(void)
 	if (rv != -EAGAIN) {
 		tcRC = TC_FAIL;
 		TC_ERROR("Failed to timeout on mutex 0x%x\n",
-			 (uint32_t)&Mutex3);
+			 (u32_t)&Mutex3);
 		return;
 	}
 
@@ -165,7 +165,7 @@ void Task08(void)
 	rv = k_mutex_lock(&Mutex2, K_FOREVER);
 	if (rv != 0) {
 		tcRC = TC_FAIL;
-		TC_ERROR("Failed to take mutex 0x%x\n", (uint32_t)&Mutex2);
+		TC_ERROR("Failed to take mutex 0x%x\n", (u32_t)&Mutex2);
 		return;
 	}
 
@@ -190,7 +190,7 @@ void Task09(void)
 		/* should not succeed. */
 		tcRC = TC_FAIL;
 		TC_ERROR("Failed to NOT take locked mutex 0x%x\n",
-			 (uint32_t)&Mutex1);
+			 (u32_t)&Mutex1);
 		return;
 	}
 
@@ -198,7 +198,7 @@ void Task09(void)
 	rv = k_mutex_lock(&Mutex1, K_FOREVER);
 	if (rv != 0) {
 		tcRC = TC_FAIL;
-		TC_ERROR("Failed to take mutex 0x%x\n", (uint32_t)&Mutex1);
+		TC_ERROR("Failed to take mutex 0x%x\n", (u32_t)&Mutex1);
 		return;
 	}
 
@@ -220,13 +220,14 @@ void Task11(void)
 	rv = k_mutex_lock(&Mutex3, K_FOREVER);
 	if (rv != 0) {
 		tcRC = TC_FAIL;
-		TC_ERROR("Failed to take mutex 0x%x\n", (uint32_t)&Mutex2);
+		TC_ERROR("Failed to take mutex 0x%x\n", (u32_t)&Mutex2);
 		return;
 	}
 	k_mutex_unlock(&Mutex3);
 }
 
-char __noinit __stack task12_stack_area[STACKSIZE];
+K_THREAD_STACK_DEFINE(task12_stack_area, STACKSIZE);
+struct k_thread task12_thread_data;
 extern void Task12(void);
 
 /**
@@ -263,7 +264,7 @@ void RegressionTask(void)
 		rv = k_mutex_lock(mutexes[i], K_NO_WAIT);
 		if (rv != 0) {
 			TC_ERROR("Failed to lock mutex 0x%x\n",
-				 (uint32_t)mutexes[i]);
+				 (u32_t)mutexes[i]);
 			tcRC = TC_FAIL;
 			goto errorReturn;
 		}
@@ -360,9 +361,9 @@ void RegressionTask(void)
 	}
 
 		/* Start thread */
-	k_thread_spawn(task12_stack_area, STACKSIZE,
-		       (k_thread_entry_t)Task12, NULL, NULL, NULL,
-		       K_PRIO_PREEMPT(12), 0, K_NO_WAIT);
+	k_thread_create(&task12_thread_data, task12_stack_area, STACKSIZE,
+			(k_thread_entry_t)Task12, NULL, NULL, NULL,
+			K_PRIO_PREEMPT(12), 0, K_NO_WAIT);
 	k_sleep(1);	/* Give Task12 a chance to block on the mutex */
 
 	k_mutex_unlock(&private_mutex);

@@ -6,12 +6,12 @@
 
 #ifndef __TEST_TIMER_H__
 #define __TEST_TIMER_H__
-#include <stdint.h>
+#include <zephyr/types.h>
 
 struct timer_data {
 	int expire_cnt;
 	int stop_cnt;
-	int64_t timestamp;
+	s64_t timestamp;
 };
 
 void test_timer_duration_period(void);

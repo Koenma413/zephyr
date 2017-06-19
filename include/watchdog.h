@@ -7,7 +7,7 @@
 #ifndef _WDT_H_
 #define _WDT_H_
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <device.h>
 #include <misc/util.h>
 
@@ -51,7 +51,7 @@ enum wdt_clock_timeout_cycles {
  * WDT configuration struct.
  */
 struct wdt_config {
-	uint32_t timeout;
+	u32_t timeout;
 	enum wdt_mode mode;
 	void (*interrupt_fn)(struct device *dev);
 };

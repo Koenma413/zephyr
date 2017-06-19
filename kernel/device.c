@@ -15,13 +15,6 @@ extern struct device __device_PRE_KERNEL_1_start[];
 extern struct device __device_PRE_KERNEL_2_start[];
 extern struct device __device_POST_KERNEL_start[];
 extern struct device __device_APPLICATION_start[];
-
-/* Deprecated */
-extern struct device __device_PRIMARY_start[];
-extern struct device __device_SECONDARY_start[];
-extern struct device __device_NANOKERNEL_start[];
-extern struct device __device_MICROKERNEL_start[];
-
 extern struct device __device_init_end[];
 
 static struct device *config_levels[] = {
@@ -29,21 +22,13 @@ static struct device *config_levels[] = {
 	__device_PRE_KERNEL_2_start,
 	__device_POST_KERNEL_start,
 	__device_APPLICATION_start,
-
-	/* Deprecated levels */
-	__device_PRIMARY_start,
-	__device_SECONDARY_start,
-	__device_NANOKERNEL_start,
-	__device_MICROKERNEL_start,
-
 	/* End marker */
 	__device_init_end,
 };
 
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-struct device_pm_ops device_pm_ops_nop = {device_pm_nop, device_pm_nop};
-extern uint32_t __device_busy_start[];
-extern uint32_t __device_busy_end[];
+extern u32_t __device_busy_start[];
+extern u32_t __device_busy_end[];
 #define DEVICE_BUSY_SIZE (__device_busy_end - __device_busy_start)
 #endif
 
@@ -62,7 +47,8 @@ void _sys_device_do_config_level(int level)
 {
 	struct device *info;
 
-	for (info = config_levels[level]; info < config_levels[level+1]; info++) {
+	for (info = config_levels[level]; info < config_levels[level+1];
+								info++) {
 		struct device_config *device = info->config;
 
 		device->init(info);
@@ -83,13 +69,8 @@ struct device *device_get_binding(const char *name)
 }
 
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-int device_pm_nop(struct device *unused_device, int unused_policy)
-{
-	return 0;
-}
-
 int device_pm_control_nop(struct device *unused_device,
-		       uint32_t unused_ctrl_command, void *unused_context)
+		       u32_t unused_ctrl_command, void *unused_context)
 {
 	return 0;
 }

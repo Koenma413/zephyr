@@ -15,7 +15,7 @@
 #include <device.h>
 #include <pwm.h>
 
-#if defined(CONFIG_SOC_STM32F401XE) || defined(CONFIG_SOC_STM32L476XX)
+#if defined(CONFIG_SOC_STM32F401XE) || defined(CONFIG_SOC_STM32L476XG)
 #define PWM_DRIVER CONFIG_PWM_STM32_2_DEV_NAME
 #define PWM_CHANNEL 1
 #elif CONFIG_SOC_STM32F103XB
@@ -24,6 +24,10 @@
 #elif defined(CONFIG_SOC_QUARK_SE_C1000) || defined(CONFIG_SOC_QUARK_D2000)
 #define PWM_DRIVER CONFIG_PWM_QMSI_DEV_NAME
 #define PWM_CHANNEL 0
+#elif defined(CONFIG_SOC_FAMILY_NRF5)
+#include <board.h>
+#define PWM_DRIVER CONFIG_PWM_NRF5_SW_0_DEV_NAME
+#define PWM_CHANNEL LED0_GPIO_PIN
 #else
 #error "Choose supported PWM driver"
 #endif
@@ -40,8 +44,8 @@
 void main(void)
 {
 	struct device *pwm_dev;
-	uint32_t pulse_width = 0;
-	uint8_t dir = 0;
+	u32_t pulse_width = 0;
+	u8_t dir = 0;
 
 	printk("PWM demo app-fade LED\n");
 

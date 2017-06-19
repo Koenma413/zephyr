@@ -15,7 +15,8 @@
 #include <device.h>
 #include <pwm.h>
 
-#if defined(CONFIG_SOC_STM32F401XE) || defined(CONFIG_SOC_STM32L476XX)
+#if defined(CONFIG_SOC_STM32F401XE) || defined(CONFIG_SOC_STM32F412ZG) || \
+	defined(CONFIG_SOC_STM32F413XH) || defined(CONFIG_SOC_STM32L476XG)
 #define PWM_DRIVER CONFIG_PWM_STM32_2_DEV_NAME
 #define PWM_CHANNEL 1
 #elif CONFIG_SOC_STM32F103XB
@@ -37,8 +38,8 @@
 void main(void)
 {
 	struct device *pwm_dev;
-	uint32_t period = MAX_PERIOD;
-	uint8_t dir = 0;
+	u32_t period = MAX_PERIOD;
+	u8_t dir = 0;
 
 	printk("PWM demo app-blink LED\n");
 

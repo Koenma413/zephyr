@@ -14,13 +14,12 @@
 #include <init.h>
 #include <device.h>
 #include <clock_control.h>
+#include <atomic.h>
 
 #include <misc/util.h>
 #include <misc/stack.h>
 #include <misc/byteorder.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
-#include <bluetooth/log.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <drivers/bluetooth/hci_driver.h>
@@ -29,188 +28,59 @@
 #include <drivers/clock_control/nrf5_clock_control.h>
 #endif
 
-#include <arch/arm/cortex_m/cmsis.h>
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
+#include "common/log.h"
 
-#include "util/config.h"
-#include "util/mayfly.h"
 #include "util/util.h"
-#include "util/mem.h"
-#include "hal/rand.h"
 #include "hal/ccm.h"
 #include "hal/radio.h"
-#include "hal/cntr.h"
-#include "hal/cpu.h"
-#include "ticker/ticker.h"
-#include "ll/pdu.h"
-#include "ll/ctrl.h"
-#include "ll/ctrl_internal.h"
-#include "ll/ll.h"
+#include "ll_sw/pdu.h"
+#include "ll_sw/ctrl.h"
+#include "ll.h"
 #include "hci_internal.h"
 
 #include "hal/debug.h"
 
-#define HCI_CMD		0x01
-#define HCI_ACL		0x02
-#define HCI_SCO		0x03
-#define HCI_EVT		0x04
-
-static uint8_t MALIGN(4) _rand_context[3 + 4 + 1];
-static uint8_t MALIGN(4) _ticker_nodes[RADIO_TICKER_NODES][TICKER_NODE_T_SIZE];
-static uint8_t MALIGN(4) _ticker_users[MAYFLY_CALLER_COUNT]
-						[TICKER_USER_T_SIZE];
-static uint8_t MALIGN(4) _ticker_user_ops[RADIO_TICKER_USER_OPS]
-						[TICKER_USER_OP_T_SIZE];
-static uint8_t MALIGN(4) _radio[LL_MEM_TOTAL];
+#define NODE_RX(_node) CONTAINER_OF(_node, struct radio_pdu_node_rx, \
+				    hdr.onion.node)
 
 static K_SEM_DEFINE(sem_prio_recv, 0, UINT_MAX);
 static K_FIFO_DEFINE(recv_fifo);
 
+struct k_thread prio_recv_thread_data;
 static BT_STACK_NOINIT(prio_recv_thread_stack,
 		       CONFIG_BLUETOOTH_CONTROLLER_RX_PRIO_STACK_SIZE);
+struct k_thread recv_thread_data;
 static BT_STACK_NOINIT(recv_thread_stack, CONFIG_BLUETOOTH_RX_STACK_SIZE);
 
-K_MUTEX_DEFINE(mutex_rand);
+#if defined(CONFIG_INIT_STACKS)
+static u32_t prio_ts;
+static u32_t rx_ts;
+#endif
 
-int bt_rand(void *buf, size_t len)
-{
-	while (len) {
-		k_mutex_lock(&mutex_rand, K_FOREVER);
-		len = rand_get(len, buf);
-		k_mutex_unlock(&mutex_rand);
-		if (len) {
-			cpu_sleep();
-		}
-	}
-
-	return 0;
-}
-
-void mayfly_enable_cb(uint8_t caller_id, uint8_t callee_id, uint8_t enable)
-{
-	(void)caller_id;
-
-	LL_ASSERT(callee_id == MAYFLY_CALL_ID_1);
-
-	if (enable) {
-		irq_enable(SWI4_IRQn);
-	} else {
-		irq_disable(SWI4_IRQn);
-	}
-}
-
-uint32_t mayfly_is_enabled(uint8_t caller_id, uint8_t callee_id)
-{
-	(void)caller_id;
-
-	if (callee_id == MAYFLY_CALL_ID_0) {
-		return irq_is_enabled(RTC0_IRQn);
-	} else if (callee_id == MAYFLY_CALL_ID_1) {
-		return irq_is_enabled(SWI4_IRQn);
-	}
-
-	LL_ASSERT(0);
-
-	return 0;
-}
-
-uint32_t mayfly_prio_is_equal(uint8_t caller_id, uint8_t callee_id)
-{
-	return (caller_id == callee_id) ||
-	       ((caller_id == MAYFLY_CALL_ID_0) &&
-		(callee_id == MAYFLY_CALL_ID_1)) ||
-	       ((caller_id == MAYFLY_CALL_ID_1) &&
-		(callee_id == MAYFLY_CALL_ID_0));
-}
-
-void mayfly_pend(uint8_t caller_id, uint8_t callee_id)
-{
-	(void)caller_id;
-
-	switch (callee_id) {
-	case MAYFLY_CALL_ID_0:
-		NVIC_SetPendingIRQ(RTC0_IRQn);
-		break;
-
-	case MAYFLY_CALL_ID_1:
-		NVIC_SetPendingIRQ(SWI4_IRQn);
-		break;
-
-	case MAYFLY_CALL_ID_PROGRAM:
-	default:
-		LL_ASSERT(0);
-		break;
-	}
-}
-
-void radio_active_callback(uint8_t active)
-{
-}
-
-void radio_event_callback(void)
-{
-	k_sem_give(&sem_prio_recv);
-}
-
-ISR_DIRECT_DECLARE(radio_nrf5_isr)
-{
-	isr_radio();
-
-	ISR_DIRECT_PM();
-	return 1;
-}
-
-static void rtc0_nrf5_isr(void *arg)
-{
-	uint32_t compare0, compare1;
-
-	/* store interested events */
-	compare0 = NRF_RTC0->EVENTS_COMPARE[0];
-	compare1 = NRF_RTC0->EVENTS_COMPARE[1];
-
-	/* On compare0 run ticker worker instance0 */
-	if (compare0) {
-		NRF_RTC0->EVENTS_COMPARE[0] = 0;
-
-		ticker_trigger(0);
-	}
-
-	/* On compare1 run ticker worker instance1 */
-	if (compare1) {
-		NRF_RTC0->EVENTS_COMPARE[1] = 0;
-
-		ticker_trigger(1);
-	}
-
-	mayfly_run(MAYFLY_CALL_ID_0);
-}
-
-static void rng_nrf5_isr(void *arg)
-{
-	isr_rand(arg);
-}
-
-static void swi4_nrf5_isr(void *arg)
-{
-	mayfly_run(MAYFLY_CALL_ID_1);
-}
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+static struct k_poll_signal hbuf_signal = K_POLL_SIGNAL_INITIALIZER();
+static sys_slist_t hbuf_pend;
+static s32_t hbuf_count;
+#endif
 
 static void prio_recv_thread(void *p1, void *p2, void *p3)
 {
 	while (1) {
 		struct radio_pdu_node_rx *node_rx;
-		struct net_buf *buf;
-		uint8_t num_cmplt;
-		uint16_t handle;
+		u8_t num_cmplt;
+		u16_t handle;
 
 		while ((num_cmplt = radio_rx_get(&node_rx, &handle))) {
+#if defined(CONFIG_BLUETOOTH_CONN)
+			struct net_buf *buf;
 
-			buf = bt_buf_get_rx(K_FOREVER);
-			bt_buf_set_type(buf, BT_BUF_EVT);
+			buf = bt_buf_get_rx(BT_BUF_EVT, K_FOREVER);
 			hci_num_cmplt_encode(buf, handle, num_cmplt);
 			BT_DBG("Num Complete: 0x%04x:%u", handle, num_cmplt);
 			bt_recv_prio(buf);
-
 			k_yield();
+#endif
 		}
 
 		if (node_rx) {
@@ -227,49 +97,220 @@ static void prio_recv_thread(void *p1, void *p2, void *p3)
 		k_sem_take(&sem_prio_recv, K_FOREVER);
 		BT_DBG("sem taken");
 
-		stack_analyze("prio recv thread stack", prio_recv_thread_stack,
-			      sizeof(prio_recv_thread_stack));
+#if defined(CONFIG_INIT_STACKS)
+		if (k_uptime_get_32() - prio_ts > K_SECONDS(5)) {
+			STACK_ANALYZE("prio recv thread stack",
+				      prio_recv_thread_stack);
+			prio_ts = k_uptime_get_32();
+		}
+#endif
 	}
 }
 
+static inline struct net_buf *encode_node(struct radio_pdu_node_rx *node_rx,
+					  s8_t class)
+{
+	struct net_buf *buf = NULL;
+
+	/* Check if we need to generate an HCI event or ACL data */
+	switch (class) {
+	case HCI_CLASS_EVT_DISCARDABLE:
+	case HCI_CLASS_EVT_REQUIRED:
+	case HCI_CLASS_EVT_CONNECTION:
+		if (class == HCI_CLASS_EVT_DISCARDABLE) {
+			buf = bt_buf_get_rx(BT_BUF_EVT, K_NO_WAIT);
+		} else {
+			buf = bt_buf_get_rx(BT_BUF_EVT, K_FOREVER);
+		}
+		if (buf) {
+			hci_evt_encode(node_rx, buf);
+		}
+		break;
+#if defined(CONFIG_BLUETOOTH_CONN)
+	case HCI_CLASS_ACL_DATA:
+		/* generate ACL data */
+		buf = bt_buf_get_rx(BT_BUF_ACL_IN, K_FOREVER);
+		hci_acl_encode(node_rx, buf);
+		break;
+#endif
+	default:
+		LL_ASSERT(0);
+		break;
+	}
+
+	radio_rx_fc_set(node_rx->hdr.handle, 0);
+	node_rx->hdr.onion.next = 0;
+	radio_rx_mem_release(&node_rx);
+
+	return buf;
+}
+
+static inline struct net_buf *process_node(struct radio_pdu_node_rx *node_rx)
+{
+	s8_t class = hci_get_class(node_rx);
+	struct net_buf *buf = NULL;
+
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+	if (hbuf_count != -1) {
+		bool pend = !sys_slist_is_empty(&hbuf_pend);
+
+		/* controller to host flow control enabled */
+		switch (class) {
+		case HCI_CLASS_EVT_DISCARDABLE:
+		case HCI_CLASS_EVT_REQUIRED:
+			break;
+		case HCI_CLASS_EVT_CONNECTION:
+			/* for conn-related events, only pend is relevant */
+			hbuf_count = 1;
+			/* fallthrough */
+		case HCI_CLASS_ACL_DATA:
+			if (pend || !hbuf_count) {
+				sys_slist_append(&hbuf_pend,
+						 &node_rx->hdr.onion.node);
+				BT_DBG("FC: Queuing item: %d", class);
+				return NULL;
+			}
+			break;
+		default:
+			LL_ASSERT(0);
+			break;
+		}
+	}
+#endif
+
+	/* process regular node from radio */
+	buf = encode_node(node_rx, class);
+
+	return buf;
+}
+
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+static inline struct net_buf *process_hbuf(void)
+{
+	/* shadow total count in case of preemption */
+	s32_t hbuf_total = hci_hbuf_total;
+	struct net_buf *buf = NULL;
+	int reset;
+
+	reset = atomic_test_and_clear_bit(&hci_state_mask, HCI_STATE_BIT_RESET);
+	if (reset) {
+		/* flush queue, no need to free, the LL has already done it */
+		sys_slist_init(&hbuf_pend);
+	}
+
+	if (hbuf_total > 0) {
+		struct radio_pdu_node_rx *node_rx = NULL;
+		s8_t class, next_class = -1;
+		sys_snode_t *node = NULL;
+
+		/* available host buffers */
+		hbuf_count = hbuf_total - (hci_hbuf_sent - hci_hbuf_acked);
+
+		/* host acked ACL packets, try to dequeue from hbuf */
+		node = sys_slist_peek_head(&hbuf_pend);
+		if (node) {
+			node_rx = NODE_RX(node);
+			class = hci_get_class(node_rx);
+			switch (class) {
+			case HCI_CLASS_EVT_CONNECTION:
+				BT_DBG("FC: dequeueing event");
+				node = sys_slist_get(&hbuf_pend);
+				break;
+			case HCI_CLASS_ACL_DATA:
+				if (hbuf_count) {
+					BT_DBG("FC: dequeueing ACL data");
+					node = sys_slist_get(&hbuf_pend);
+					hbuf_count--;
+				} else {
+					/* no buffers, HCI will signal */
+					node = NULL;
+				}
+				break;
+			case HCI_CLASS_EVT_DISCARDABLE:
+			case HCI_CLASS_EVT_REQUIRED:
+			default:
+				LL_ASSERT(0);
+				break;
+			}
+
+			if (node) {
+				struct radio_pdu_node_rx *next;
+				bool empty = true;
+
+				node_rx = NODE_RX(node);
+				node = sys_slist_peek_head(&hbuf_pend);
+				if (node) {
+					next = NODE_RX(node);
+					next_class = hci_get_class(next);
+				}
+				empty = sys_slist_is_empty(&hbuf_pend);
+
+				buf = encode_node(node_rx, class);
+				if (!empty && (class == HCI_CLASS_EVT_CONNECTION ||
+					       (class == HCI_CLASS_ACL_DATA &&
+						hbuf_count))) {
+					/* more to process, schedule an
+					 * iteration
+					 */
+					BT_DBG("FC: signalling");
+					k_poll_signal(&hbuf_signal, 0x0);
+				}
+			}
+		}
+	} else {
+		hbuf_count = -1;
+	}
+
+	return buf;
+}
+#endif
+
 static void recv_thread(void *p1, void *p2, void *p3)
 {
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+	/* @todo: check if the events structure really needs to be static */
+	static struct k_poll_event events[2] = {
+		K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_SIGNAL,
+						K_POLL_MODE_NOTIFY_ONLY,
+						&hbuf_signal, 0),
+		K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE,
+						K_POLL_MODE_NOTIFY_ONLY,
+						&recv_fifo, 0),
+	};
+#endif
+
 	while (1) {
-		struct radio_pdu_node_rx *node_rx;
-		struct pdu_data *pdu_data;
-		struct net_buf *buf;
+		struct radio_pdu_node_rx *node_rx = NULL;
+		struct net_buf *buf = NULL;
 
-		BT_DBG("RX node get");
-		node_rx = k_fifo_get(&recv_fifo, K_FOREVER);
-		BT_DBG("RX node dequeued");
+		BT_DBG("blocking");
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+		int err;
 
-		pdu_data = (void *)node_rx->pdu_data;
-		/* Check if we need to generate an HCI event or ACL
-		 * data
-		 */
-		if (node_rx->hdr.type != NODE_RX_TYPE_DC_PDU ||
-		    pdu_data->ll_id == PDU_DATA_LLID_CTRL) {
-			/* generate a (non-priority) HCI event */
-			if (hci_evt_is_discardable(node_rx)) {
-				buf = bt_buf_get_rx(K_NO_WAIT);
-			} else {
-				buf = bt_buf_get_rx(K_FOREVER);
-			}
-
-			if (buf) {
-				bt_buf_set_type(buf, BT_BUF_EVT);
-				hci_evt_encode(node_rx, buf);
-			}
-		} else {
-			/* generate ACL data */
-			buf = bt_buf_get_rx(K_FOREVER);
-			bt_buf_set_type(buf, BT_BUF_ACL_IN);
-			hci_acl_encode(node_rx, buf);
+		err = k_poll(events, 2, K_FOREVER);
+		LL_ASSERT(err == 0);
+		if (events[0].state == K_POLL_STATE_SIGNALED) {
+			events[0].signal->signaled = 0;
+		} else if (events[1].state ==
+			   K_POLL_STATE_FIFO_DATA_AVAILABLE) {
+			node_rx = k_fifo_get(events[1].fifo, 0);
 		}
 
-		radio_rx_fc_set(node_rx->hdr.handle, 0);
-		node_rx->hdr.onion.next = 0;
-		radio_rx_mem_release(&node_rx);
+		events[0].state = K_POLL_STATE_NOT_READY;
+		events[1].state = K_POLL_STATE_NOT_READY;
+
+		/* process host buffers first if any */
+		buf = process_hbuf();
+
+#else
+		node_rx = k_fifo_get(&recv_fifo, K_FOREVER);
+#endif
+		BT_DBG("unblocked");
+
+		if (node_rx && !buf) {
+			/* process regular node from radio */
+			buf = process_node(node_rx);
+		}
 
 		if (buf) {
 			if (buf->len) {
@@ -283,8 +324,12 @@ static void recv_thread(void *p1, void *p2, void *p3)
 
 		k_yield();
 
-		stack_analyze("recv thread stack", recv_thread_stack,
-			      sizeof(recv_thread_stack));
+#if defined(CONFIG_INIT_STACKS)
+		if (k_uptime_get_32() - rx_ts > K_SECONDS(5)) {
+			STACK_ANALYZE("recv thread stack", recv_thread_stack);
+			rx_ts = k_uptime_get_32();
+		}
+#endif
 	}
 }
 
@@ -293,19 +338,17 @@ static int cmd_handle(struct net_buf *buf)
 	struct net_buf *evt;
 
 	evt = hci_cmd_handle(buf);
-	if (!evt) {
-		return -EINVAL;
+	if (evt) {
+		BT_DBG("Replying with event of %u bytes", evt->len);
+		bt_recv_prio(evt);
 	}
-
-	BT_DBG("Replying with event of %u bytes", evt->len);
-	bt_recv_prio(evt);
 
 	return 0;
 }
 
 static int hci_driver_send(struct net_buf *buf)
 {
-	uint8_t type;
+	u8_t type;
 	int err;
 
 	BT_DBG("enter");
@@ -317,9 +360,11 @@ static int hci_driver_send(struct net_buf *buf)
 
 	type = bt_buf_get_type(buf);
 	switch (type) {
+#if defined(CONFIG_BLUETOOTH_CONN)
 	case BT_BUF_ACL_OUT:
 		err = hci_acl_handle(buf);
 		break;
+#endif
 	case BT_BUF_CMD:
 		err = cmd_handle(buf);
 		break;
@@ -339,86 +384,37 @@ static int hci_driver_send(struct net_buf *buf)
 
 static int hci_driver_open(void)
 {
-	struct device *clk_k32;
-	struct device *clk_m16;
-	uint32_t err;
+	u32_t err;
 
 	DEBUG_INIT();
 
-	/* TODO: bind and use RNG driver */
-	rand_init(_rand_context, sizeof(_rand_context));
-
-	clk_k32 = device_get_binding(CONFIG_CLOCK_CONTROL_NRF5_K32SRC_DRV_NAME);
-	if (!clk_k32) {
-		return -ENODEV;
-	}
-
-	clock_control_on(clk_k32, (void *)CLOCK_CONTROL_NRF5_K32SRC);
-
-	/* TODO: bind and use counter driver */
-	cntr_init();
-
-	mayfly_init();
-
-	_ticker_users[MAYFLY_CALL_ID_0][0] = RADIO_TICKER_USER_WORKER_OPS;
-	_ticker_users[MAYFLY_CALL_ID_1][0] = RADIO_TICKER_USER_JOB_OPS;
-	_ticker_users[MAYFLY_CALL_ID_2][0] = 0;
-	_ticker_users[MAYFLY_CALL_ID_PROGRAM][0] = RADIO_TICKER_USER_APP_OPS;
-
-	ticker_init(RADIO_TICKER_INSTANCE_ID_RADIO, RADIO_TICKER_NODES,
-		    &_ticker_nodes[0], MAYFLY_CALLER_COUNT, &_ticker_users[0],
-		    RADIO_TICKER_USER_OPS, &_ticker_user_ops[0]);
-
-	clk_m16 = device_get_binding(CONFIG_CLOCK_CONTROL_NRF5_M16SRC_DRV_NAME);
-	if (!clk_m16) {
-		return -ENODEV;
-	}
-
-	err = radio_init(clk_m16, CLOCK_CONTROL_NRF5_K32SRC_ACCURACY,
-			 RADIO_CONNECTION_CONTEXT_MAX,
-			 RADIO_PACKET_COUNT_RX_MAX,
-			 RADIO_PACKET_COUNT_TX_MAX,
-			 RADIO_LL_LENGTH_OCTETS_RX_MAX,
-			 RADIO_PACKET_TX_DATA_SIZE, &_radio[0], sizeof(_radio));
+	err = ll_init(&sem_prio_recv);
 	if (err) {
-		BT_ERR("Required RAM size: %d, supplied: %u.", err,
-		       sizeof(_radio));
-		return -ENOMEM;
+		BT_ERR("LL initialization failed: %u", err);
+		return err;
 	}
 
-	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_PUBLIC_ADDRESS)) {
-		uint64_t addr64 = CONFIG_BLUETOOTH_CONTROLLER_PUBLIC_ADDRESS;
-		uint8_t bdaddr[6];
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+	hci_init(&hbuf_signal);
+#else
+	hci_init(NULL);
+#endif
 
-		sys_put_le32(addr64 & 0xFFFFFFFF, &bdaddr[0]);
-		sys_put_le16((addr64 >> 32) & 0xFFFF, &bdaddr[4]);
+	k_thread_create(&prio_recv_thread_data, prio_recv_thread_stack,
+			K_THREAD_STACK_SIZEOF(prio_recv_thread_stack),
+			prio_recv_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(6), 0, K_NO_WAIT);
 
-		ll_address_set(0, bdaddr);
-	}
-
-	IRQ_DIRECT_CONNECT(NRF5_IRQ_RADIO_IRQn, 0, radio_nrf5_isr, 0);
-	IRQ_CONNECT(NRF5_IRQ_RTC0_IRQn, 0, rtc0_nrf5_isr, 0, 0);
-	IRQ_CONNECT(NRF5_IRQ_RNG_IRQn, 1, rng_nrf5_isr, 0, 0);
-	IRQ_CONNECT(NRF5_IRQ_SWI4_IRQn, 0, swi4_nrf5_isr, 0, 0);
-	irq_enable(NRF5_IRQ_RADIO_IRQn);
-	irq_enable(NRF5_IRQ_RTC0_IRQn);
-	irq_enable(NRF5_IRQ_RNG_IRQn);
-	irq_enable(NRF5_IRQ_SWI4_IRQn);
-
-	k_thread_spawn(prio_recv_thread_stack, sizeof(prio_recv_thread_stack),
-		       prio_recv_thread, NULL, NULL, NULL, K_PRIO_COOP(6), 0,
-		       K_NO_WAIT);
-
-	k_thread_spawn(recv_thread_stack, sizeof(recv_thread_stack),
-		       recv_thread, NULL, NULL, NULL, K_PRIO_COOP(7), 0,
-		       K_NO_WAIT);
+	k_thread_create(&recv_thread_data, recv_thread_stack,
+			K_THREAD_STACK_SIZEOF(recv_thread_stack), recv_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	BT_DBG("Success.");
 
 	return 0;
 }
 
-static struct bt_hci_driver drv = {
+static const struct bt_hci_driver drv = {
 	.name	= "Controller",
 	.bus	= BT_HCI_DRIVER_BUS_VIRTUAL,
 	.open	= hci_driver_open,

@@ -88,8 +88,18 @@ config USB_UART_CONSOLE
 	Enable this option to use the USB UART for console output. The output
 	can be viewed from the USB host via /dev/ttyACM* port. Note that console
 	inputs from the USB UART are not functional yet. Also since the USB
-	layer currently doesnt support multiple interfaces, this shouldnt be
+	layer currently doesn't support multiple interfaces, this shouldn't be
 	selected in conjunction with say USB Mass Storage.
+
+config USB_UART_DTR_WAIT
+	bool
+	prompt "Wait on DTR control signal"
+	default n
+	depends on USB_UART_CONSOLE
+	help
+	Enable this option to use flow control on the console. The uart console
+	waits until the DTR is asserted by the host.
+	Note: Disabling this might lead to missing console prints.
 
 config RAM_CONSOLE
 	bool
@@ -142,7 +152,7 @@ config IPM_CONSOLE_STACK_SIZE
 	depends on IPM_CONSOLE_RECEIVER
 	default 512
 	help
-	Eack instance of the IPM console receiver driver creates a worker
+	Each instance of the IPM console receiver driver creates a worker
 	thread to print out incoming messages from the remote CPU. Specify the
 	stack size for these threads here.
 

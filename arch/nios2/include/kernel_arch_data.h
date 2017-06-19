@@ -26,13 +26,14 @@ extern "C" {
 #endif
 
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <arch/cpu.h>
+#include <kernel_arch_thread.h>
 
 #ifndef _ASMLANGUAGE
 #include <kernel.h>
 #include <nano_internal.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <misc/util.h>
 #include <misc/dlist.h>
 #endif
@@ -45,52 +46,6 @@ extern "C" {
 #define STACK_ROUND_DOWN(x) ROUND_DOWN(x, STACK_ALIGN_SIZE)
 
 #ifndef _ASMLANGUAGE
-
-struct _caller_saved {
-	/*
-	 * Nothing here, the exception code puts all the caller-saved
-	 * registers onto the stack.
-	 */
-};
-
-typedef struct _caller_saved _caller_saved_t;
-
-struct _callee_saved {
-	/* General purpose callee-saved registers */
-	uint32_t r16;
-	uint32_t r17;
-	uint32_t r18;
-	uint32_t r19;
-	uint32_t r20;
-	uint32_t r21;
-	uint32_t r22;
-	uint32_t r23;
-
-	 /* Normally used for the frame pointer but also a general purpose
-	  * register if frame pointers omitted
-	  */
-	uint32_t r28;
-
-	/* Return address */
-	uint32_t ra;
-
-	/* Stack pointer */
-	uint32_t sp;
-
-	/* IRQ status before irq_lock() and call to _Swap() */
-	uint32_t key;
-
-	/* Return value of _Swap() */
-	uint32_t retval;
-};
-
-typedef struct _callee_saved _callee_saved_t;
-
-struct _thread_arch {
-	/* nothing for now */
-};
-
-typedef struct _thread_arch _thread_arch_t;
 
 struct _kernel_arch {
 	/* nothing for now */

@@ -21,10 +21,38 @@
 #include <uart.h>
 #include <init.h>
 #include "shared_mem.h"
+#include <mmustructs.h>
+
+
+#ifdef CONFIG_X86_MMU
+MMU_BOOT_REGION(CONFIG_PHYS_LOAD_ADDR, CONFIG_ROM_SIZE*1024, MMU_ENTRY_WRITE);
+
+MMU_BOOT_REGION(CONFIG_PHYS_RAM_ADDR, CONFIG_RAM_SIZE*1024, MMU_ENTRY_WRITE);
+
+/* loapic */
+MMU_BOOT_REGION(CONFIG_LOAPIC_BASE_ADDRESS, 4*1024, MMU_ENTRY_WRITE);
+
+/*ioapic */
+MMU_BOOT_REGION(CONFIG_IOAPIC_BASE_ADDRESS, 1024*1024, MMU_ENTRY_WRITE);
+
+/* peripherals */
+MMU_BOOT_REGION(0xB0000000, 128*1024, MMU_ENTRY_WRITE);
+
+/* SCSS system control subsystem */
+MMU_BOOT_REGION(0xB0800000, 16*1024, MMU_ENTRY_WRITE);
+
+/* DMA */
+MMU_BOOT_REGION(0xB0700000, 4*1024, MMU_ENTRY_WRITE);
+
+/* USB */
+MMU_BOOT_REGION(0xB0500000, 256*1024, MMU_ENTRY_WRITE);
+
+#endif /* CONFIG_X86_MMU */
+
 
 #ifdef CONFIG_ARC_INIT
 #define SCSS_REG_VAL(offset) \
-	(*((volatile uint32_t *)(SCSS_REGISTER_BASE+offset)))
+	(*((volatile u32_t *)(SCSS_REGISTER_BASE+offset)))
 
 #define SYS_LOG_LEVEL CONFIG_SYS_LOG_ARC_INIT_LEVEL
 #include <logging/sys_log.h>
@@ -40,7 +68,7 @@
 /* This function is also called at deep sleep resume. */
 int _arc_init(struct device *arg)
 {
-	uint32_t *reset_vector;
+	u32_t *reset_vector;
 
 	ARG_UNUSED(arg);
 
@@ -53,7 +81,7 @@ int _arc_init(struct device *arg)
 	/* Address of ARC side __reset stored in the first 4 bytes of arc.bin,
 	 * we read the value and stick it in shared_mem->arc_start which is
 	 * the beginning of the address space at 0xA8000000 */
-	reset_vector = (uint32_t *)RESET_VECTOR;
+	reset_vector = (u32_t *)RESET_VECTOR;
 	SYS_LOG_DBG("Reset vector address: %x", *reset_vector);
 	shared_data->arc_start = *reset_vector;
 	shared_data->flags = 0;

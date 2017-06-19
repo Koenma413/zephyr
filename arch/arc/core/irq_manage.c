@@ -21,7 +21,7 @@
 #include <arch/cpu.h>
 #include <misc/__assert.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <sw_isr_table.h>
 #include <irq.h>
 
@@ -74,7 +74,7 @@ void _arch_irq_disable(unsigned int irq)
  * @return N/A
  */
 
-void _irq_priority_set(unsigned int irq, unsigned int prio, uint32_t flags)
+void _irq_priority_set(unsigned int irq, unsigned int prio, u32_t flags)
 {
 	ARG_UNUSED(flags);
 

@@ -13,20 +13,18 @@
 #include <misc/byteorder.h>
 #include <misc/util.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_AVDTP)
-#include <bluetooth/log.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
 #include <bluetooth/avdtp.h>
 
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_AVDTP)
+#include "common/log.h"
+
 #include "hci_core.h"
 #include "conn_internal.h"
 #include "l2cap_internal.h"
 #include "avdtp_internal.h"
-
-/* TODO add config file*/
-#define CONFIG_BLUETOOTH_AVDTP_CONN CONFIG_BLUETOOTH_MAX_CONN
 
 #define AVDTP_MSG_POISTION 0x00
 #define AVDTP_PKT_POSITION 0x02
@@ -50,9 +48,9 @@ static struct bt_avdtp_seid_lsep *lseps;
 #define AVDTP_TIMEOUT K_SECONDS(6)
 
 static const struct {
-	uint8_t sig_id;
+	u8_t sig_id;
 	void (*func)(struct bt_avdtp *session, struct net_buf *buf,
-		     uint8_t msg_type);
+		     u8_t msg_type);
 } handler[] = {
 };
 
@@ -81,12 +79,12 @@ static int avdtp_send(struct bt_avdtp *session,
 	return result;
 }
 
-static struct net_buf *avdtp_create_pdu(uint8_t msg_type,
-					uint8_t pkt_type,
-					uint8_t sig_id)
+static struct net_buf *avdtp_create_pdu(u8_t msg_type,
+					u8_t pkt_type,
+					u8_t sig_id)
 {
 	struct net_buf *buf;
-	static uint8_t tid;
+	static u8_t tid;
 	struct bt_avdtp_single_sig_hdr *hdr;
 
 	BT_DBG("");
@@ -139,7 +137,7 @@ void bt_avdtp_l2cap_disconnected(struct bt_l2cap_chan *chan)
 	/* Clear the Pending req if set*/
 }
 
-void bt_avdtp_l2cap_encrypt_changed(struct bt_l2cap_chan *chan, uint8_t status)
+void bt_avdtp_l2cap_encrypt_changed(struct bt_l2cap_chan *chan, u8_t status)
 {
 	BT_DBG("");
 }
@@ -148,7 +146,7 @@ void bt_avdtp_l2cap_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 {
 	struct bt_avdtp_single_sig_hdr *hdr = (void *)buf->data;
 	struct bt_avdtp *session = AVDTP_CHAN(chan);
-	uint8_t i, msgtype, sigid, tid;
+	u8_t i, msgtype, sigid, tid;
 
 	if (buf->len < sizeof(*hdr)) {
 		BT_ERR("Recvd Wrong AVDTP Header");
@@ -162,10 +160,6 @@ void bt_avdtp_l2cap_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	BT_DBG("msg_type[0x%02x] sig_id[0x%02x] tid[0x%02x]",
 		msgtype, sigid, tid);
 	net_buf_pull(buf, sizeof(*hdr));
-
-	if (msgtype > BT_AVDTP_REJECT) {
-		return;
-	}
 
 	/* validate if there is an outstanding resp expected*/
 	if (msgtype != BT_AVDTP_CMD) {
@@ -259,12 +253,12 @@ int bt_avdtp_register(struct bt_avdtp_event_cb *cb)
 	return 0;
 }
 
-int bt_avdtp_register_sep(uint8_t media_type, uint8_t role,
+int bt_avdtp_register_sep(u8_t media_type, u8_t role,
 			  struct bt_avdtp_seid_lsep *lsep)
 {
 	BT_DBG("");
 
-	static uint8_t bt_avdtp_seid = BT_AVDTP_MIN_SEID;
+	static u8_t bt_avdtp_seid = BT_AVDTP_MIN_SEID;
 
 	if (!lsep) {
 		return -EIO;

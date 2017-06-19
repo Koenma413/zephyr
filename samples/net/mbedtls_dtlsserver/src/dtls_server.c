@@ -63,9 +63,9 @@ const unsigned char ecjpake_pw[ECJPAKE_PW_SIZE] = "passwd";
 #endif
 
 struct dtls_timing_context {
-	uint32_t snapshot;
-	uint32_t int_ms;
-	uint32_t fin_ms;
+	u32_t snapshot;
+	u32_t int_ms;
+	u32_t fin_ms;
 };
 
 static void my_debug(void *ctx, int level,
@@ -86,7 +86,7 @@ static void my_debug(void *ctx, int level,
 	mbedtls_printf("%s:%04d: |%d| %s", basename, line, level, str);
 }
 
-void dtls_timing_set_delay(void *data, uint32_t int_ms, uint32_t fin_ms)
+void dtls_timing_set_delay(void *data, u32_t int_ms, u32_t fin_ms)
 {
 	struct dtls_timing_context *ctx = (struct dtls_timing_context *)data;
 
@@ -123,7 +123,7 @@ int dtls_timing_get_delay(void *data)
 static int entropy_source(void *data, unsigned char *output, size_t len,
 			  size_t *olen)
 {
-	uint32_t seed;
+	u32_t seed;
 
 	ARG_UNUSED(data);
 
@@ -362,16 +362,17 @@ exit:
 }
 
 #define STACK_SIZE		8192
-uint8_t stack[STACK_SIZE];
+u8_t stack[STACK_SIZE];
+static struct k_thread dtls_thread;
 
 static inline int init_app(void)
 {
 #if defined(CONFIG_NET_IPV6)
-#if defined(CONFIG_NET_SAMPLES_MY_IPV6_ADDR)
-	if (net_addr_pton(AF_INET6, CONFIG_NET_SAMPLES_MY_IPV6_ADDR,
+#if defined(CONFIG_NET_APP_MY_IPV6_ADDR)
+	if (net_addr_pton(AF_INET6, CONFIG_NET_APP_MY_IPV6_ADDR,
 			  &server_addr) < 0) {
 		mbedtls_printf("Invalid IPv6 address %s",
-			       CONFIG_NET_SAMPLES_MY_IPV6_ADDR);
+			       CONFIG_NET_APP_MY_IPV6_ADDR);
 	}
 #endif
 	if (!net_if_ipv6_addr_add(net_if_get_default(), &server_addr,
@@ -382,11 +383,11 @@ static inline int init_app(void)
 	net_if_ipv6_maddr_add(net_if_get_default(), &mcast_addr);
 
 #else
-#if defined(CONFIG_NET_SAMPLES_MY_IPV4_ADDR)
-	if (net_addr_pton(AF_INET, CONFIG_NET_SAMPLES_MY_IPV4_ADDR,
+#if defined(CONFIG_NET_APP_MY_IPV4_ADDR)
+	if (net_addr_pton(AF_INET, CONFIG_NET_APP_MY_IPV4_ADDR,
 			  &server_addr) < 0) {
 		mbedtls_printf("Invalid IPv4 address %s",
-			       CONFIG_NET_SAMPLES_MY_IPV4_ADDR);
+			       CONFIG_NET_APP_MY_IPV4_ADDR);
 	}
 #endif
 
@@ -405,7 +406,7 @@ void main(void)
 		return;
 	}
 
-	k_thread_spawn(stack, STACK_SIZE, (k_thread_entry_t) dtls_server,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
-
+	k_thread_create(&dtls_thread, stack, STACK_SIZE,
+			(k_thread_entry_t) dtls_server,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }

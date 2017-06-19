@@ -40,6 +40,38 @@ config NET_IPV6_MAX_NEIGHBORS
 	help
 	The value depends on your network needs.
 
+config NET_IPV6_FRAGMENT
+	bool "Support IPv6 fragmentation"
+	default n
+	help
+	IPv6 fragmentation is disabled by default. This saves memory and
+	should not cause issues normally as we support anyway the minimum
+	length IPv6 packets (1280 bytes). If you enable fragmentation
+	support, please increase amount of RX data buffers so that larger
+	than 1280 byte packets can be received.
+
+config NET_IPV6_FRAGMENT_MAX_COUNT
+	int "How many packets to reassemble at a time"
+	range 1 16
+	default 1
+	depends on NET_IPV6_FRAGMENT
+	help
+	How many fragmented IPv6 packets can be waiting reassembly
+	simultaneously. Each fragment count might use up to 1280 bytes
+	of memory so you need to plan this and increase the network buffer
+	count.
+
+config NET_IPV6_FRAGMENT_TIMEOUT
+	int "How long to wait the fragments to receive"
+	range 1 60
+	default 5
+	depends on NET_IPV6_FRAGMENT
+	help
+	How long to wait for IPv6 fragment to arrive before the reassembly
+	will timeout. RFC 2460 chapter 4.5 tells to wait for 60 seconds but
+	this might be too long in memory constrained devices. This value
+	is in seconds.
+
 config NET_IPV6_MLD
 	bool "Multicast Listener Discovery support"
 	default y
@@ -48,8 +80,16 @@ config NET_IPV6_MLD
 	be active. Currently we support only MLDv2. See RFC 3810 for
 	details.
 
+config NET_IPV6_NBR_CACHE
+	bool "Neighbor cache"
+	default y
+	help
+	The value depends on your network needs. Neighbor cache should
+	normally be active.
+
 config NET_IPV6_ND
 	bool "Activate neighbor discovery"
+	depends on NET_IPV6_NBR_CACHE
 	default y
 	help
 	The value depends on your network needs. ND should normally
@@ -57,7 +97,7 @@ config NET_IPV6_ND
 
 config NET_IPV6_DAD
 	bool "Activate duplicate address detection"
-	depends on NET_IPV6_ND
+	depends on NET_IPV6_NBR_CACHE
 	default y
 	help
 	The value depends on your network needs. DAD should normally
@@ -91,7 +131,7 @@ config NET_MAX_6LO_CONTEXTS
 	range 1 16
 	help
 	6lowpan context options table size. The value depends on your
-	network and memory connsuption. More size occupies more memory.
+	network and memory consumption. More 6CO options uses more memory.
 
 config NET_DEBUG_6LO
 	bool "Enable 6lowpan debug"
@@ -112,10 +152,10 @@ config NET_DEBUG_ICMPV6
 	Enables ICMPv6 code part to output debug messages
 
 config NET_DEBUG_IPV6_NBR_CACHE
-	bool "Debug IPv6 neighbour cache"
+	bool "Debug IPv6 neighbor cache"
 	default n
 	help
-	Enables Neighbour Cache code part to output debug messages
+	Enables Neighbor Cache code to output debug messages
 
 endif # NET_LOG
 

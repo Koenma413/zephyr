@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
 #include <misc/printk.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 #include <ztest.h>
 
@@ -61,8 +61,8 @@ static struct k_sem wait_data;
 #define WAIT_TIME 250
 
 struct net_if_test {
-	uint8_t idx;
-	uint8_t mac_addr[sizeof(struct net_eth_addr)];
+	u8_t idx;
+	u8_t mac_addr[sizeof(struct net_eth_addr)];
 	struct net_linkaddr ll_addr;
 };
 
@@ -71,17 +71,17 @@ static int net_iface_dev_init(struct device *dev)
 	return 0;
 }
 
-static uint8_t *net_iface_get_mac(struct device *dev)
+static u8_t *net_iface_get_mac(struct device *dev)
 {
 	struct net_if_test *data = dev->driver_data;
 
-	if (data->mac_addr[0] == 0x00) {
-		/* 10-00-00-00-00 to 10-00-00-00-FF Documentation RFC7042 */
-		data->mac_addr[0] = 0x10;
+	if (data->mac_addr[2] == 0x00) {
+		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
+		data->mac_addr[0] = 0x00;
 		data->mac_addr[1] = 0x00;
-		data->mac_addr[2] = 0x00;
+		data->mac_addr[2] = 0x5E;
 		data->mac_addr[3] = 0x00;
-		data->mac_addr[4] = 0x00;
+		data->mac_addr[4] = 0x53;
 		data->mac_addr[5] = sys_rand32_get();
 	}
 
@@ -93,15 +93,15 @@ static uint8_t *net_iface_get_mac(struct device *dev)
 
 static void net_iface_init(struct net_if *iface)
 {
-	uint8_t *mac = net_iface_get_mac(net_if_get_device(iface));
+	u8_t *mac = net_iface_get_mac(net_if_get_device(iface));
 
 	net_if_set_link_addr(iface, mac, sizeof(struct net_eth_addr),
 			     NET_LINK_ETHERNET);
 }
 
-static int sender_iface(struct net_if *iface, struct net_buf *buf)
+static int sender_iface(struct net_if *iface, struct net_pkt *pkt)
 {
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		DBG("No data to send!\n");
 		return -ENODATA;
 	}
@@ -112,9 +112,9 @@ static int sender_iface(struct net_if *iface, struct net_buf *buf)
 		DBG("Sending at iface %d %p\n", net_if_get_by_iface(iface),
 		    iface);
 
-		if (net_nbuf_iface(buf) != iface) {
+		if (net_pkt_iface(pkt) != iface) {
 			DBG("Invalid interface %p, expecting %p\n",
-				 net_nbuf_iface(buf), iface);
+				 net_pkt_iface(pkt), iface);
 			test_failed = true;
 		}
 
@@ -125,7 +125,7 @@ static int sender_iface(struct net_if *iface, struct net_buf *buf)
 		}
 	}
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	k_sem_give(&wait_data);
 
@@ -198,29 +198,29 @@ static void iface_setup(void)
 	((struct net_if_test *)iface3->dev->driver_data)->idx = 2;
 
 	idx = net_if_get_by_iface(iface1);
-	assert_equal(idx, 0, "Invalid index iface1");
+	zassert_equal(idx, 0, "Invalid index iface1");
 
 	idx = net_if_get_by_iface(iface2);
-	assert_equal(idx, 1, "Invalid index iface2");
+	zassert_equal(idx, 1, "Invalid index iface2");
 
 	idx = net_if_get_by_iface(iface3);
-	assert_equal(idx, 2, "Invalid index iface3");
+	zassert_equal(idx, 2, "Invalid index iface3");
 
 	DBG("Interfaces: [%d] iface1 %p, [%d] iface2 %p, [%d] iface3 %p\n",
 	    net_if_get_by_iface(iface1), iface1,
 	    net_if_get_by_iface(iface2), iface2,
 	    net_if_get_by_iface(iface3), iface3);
 
-	assert_not_null(iface1, "Interface 1");
-	assert_not_null(iface2, "Interface 2");
-	assert_not_null(iface3, "Interface 3");
+	zassert_not_null(iface1, "Interface 1");
+	zassert_not_null(iface2, "Interface 2");
+	zassert_not_null(iface3, "Interface 3");
 
 	ifaddr = net_if_ipv6_addr_add(iface1, &my_addr1,
 				      NET_ADDR_MANUAL, 0);
 	if (!ifaddr) {
 		DBG("Cannot add IPv6 address %s\n",
 		       net_sprint_ipv6_addr(&my_addr1));
-		assert_not_null(ifaddr, "addr1");
+		zassert_not_null(ifaddr, "addr1");
 	}
 
 	/* For testing purposes we need to set the adddresses preferred */
@@ -231,7 +231,7 @@ static void iface_setup(void)
 	if (!ifaddr) {
 		DBG("Cannot add IPv6 address %s\n",
 		       net_sprint_ipv6_addr(&ll_addr));
-		assert_not_null(ifaddr, "ll_addr");
+		zassert_not_null(ifaddr, "ll_addr");
 	}
 
 	ifaddr->addr_state = NET_ADDR_PREFERRED;
@@ -241,7 +241,7 @@ static void iface_setup(void)
 	if (!ifaddr) {
 		DBG("Cannot add IPv6 address %s\n",
 		       net_sprint_ipv6_addr(&my_addr2));
-		assert_not_null(ifaddr, "addr2");
+		zassert_not_null(ifaddr, "addr2");
 	}
 
 	ifaddr->addr_state = NET_ADDR_PREFERRED;
@@ -251,7 +251,7 @@ static void iface_setup(void)
 	if (!ifaddr) {
 		DBG("Cannot add IPv6 address %s\n",
 		       net_sprint_ipv6_addr(&my_addr3));
-		assert_not_null(ifaddr, "addr3");
+		zassert_not_null(ifaddr, "addr3");
 	}
 
 	ifaddr->addr_state = NET_ADDR_PREFERRED;
@@ -262,7 +262,7 @@ static void iface_setup(void)
 	if (!maddr) {
 		DBG("Cannot add multicast IPv6 address %s\n",
 		       net_sprint_ipv6_addr(&in6addr_mcast));
-		assert_not_null(maddr, "mcast");
+		zassert_not_null(maddr, "mcast");
 	}
 
 	net_if_up(iface1);
@@ -280,18 +280,18 @@ static void iface_setup(void)
 
 static bool send_iface(struct net_if *iface, int val, bool expect_fail)
 {
-	static uint8_t data[] = { 't', 'e', 's', 't', '\0' };
-	struct net_buf *buf;
+	static u8_t data[] = { 't', 'e', 's', 't', '\0' };
+	struct net_pkt *pkt;
 	int ret;
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
-	net_nbuf_set_iface(buf, iface);
+	pkt = net_pkt_get_reserve_tx(0, K_FOREVER);
+	net_pkt_set_iface(pkt, iface);
 
-	net_nbuf_append(buf, sizeof(data), data, K_FOREVER);
+	net_pkt_append_all(pkt, sizeof(data), data, K_FOREVER);
 
-	ret = net_send_data(buf);
+	ret = net_send_data(pkt);
 	if (!expect_fail && ret < 0) {
-		DBG("Cannot send test buffer (%d)\n", ret);
+		DBG("Cannot send test packet (%d)\n", ret);
 		return false;
 	}
 
@@ -311,7 +311,7 @@ static void send_iface1(void)
 
 	ret = send_iface(iface1, 1, false);
 
-	assert_true(ret, "iface 1");
+	zassert_true(ret, "iface 1");
 }
 
 static void send_iface2(void)
@@ -322,7 +322,7 @@ static void send_iface2(void)
 
 	ret = send_iface(iface2, 2, false);
 
-	assert_true(ret, "iface 2");
+	zassert_true(ret, "iface 2");
 }
 
 static void send_iface3(void)
@@ -333,7 +333,7 @@ static void send_iface3(void)
 
 	ret = send_iface(iface3, 3, false);
 
-	assert_true(ret, "iface 3");
+	zassert_true(ret, "iface 3");
 }
 
 static void send_iface1_down(void)
@@ -346,7 +346,7 @@ static void send_iface1_down(void)
 
 	ret = send_iface(iface1, 1, true);
 
-	assert_true(ret, "iface 1 down");
+	zassert_true(ret, "iface 1 down");
 }
 
 static void send_iface1_up(void)
@@ -359,7 +359,7 @@ static void send_iface1_up(void)
 
 	ret = send_iface(iface1, 1, false);
 
-	assert_true(ret, "iface 1 up again");
+	zassert_true(ret, "iface 1 up again");
 }
 
 void test_main(void)

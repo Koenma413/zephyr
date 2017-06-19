@@ -28,9 +28,9 @@
 
 /**
  * @file
- * @brief standard USB packet stuctures and defines
+ * @brief standard USB packet structures and defines
  *
- * This file contains stuctures and defines of the standard USB packets
+ * This file contains structures and defines of the standard USB packets
  */
 
 #ifndef _USBSTRUCT_H_
@@ -85,8 +85,8 @@
 
 /** USB descriptor header */
 struct usb_desc_header {
-	uint8_t bLength;               /**< descriptor length */
-	uint8_t bDescriptorType;       /**< descriptor type */
+	u8_t bLength;               /**< descriptor length */
+	u8_t bDescriptorType;       /**< descriptor type */
 };
 
 #define DESC_DEVICE                 1

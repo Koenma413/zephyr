@@ -12,7 +12,7 @@
 #include <kernel_structs.h>
 #include <debug/object_tracing_common.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <string.h>
 #include <wait_q.h>
 #include <misc/dlist.h>
@@ -36,13 +36,13 @@ K_STACK_DEFINE(async_msg_free, CONFIG_NUM_MBOX_ASYNC_MSGS);
 /* allocate an asynchronous message descriptor */
 static inline void _mbox_async_alloc(struct k_mbox_async **async)
 {
-	k_stack_pop(&async_msg_free, (uint32_t *)async, K_FOREVER);
+	k_stack_pop(&async_msg_free, (u32_t *)async, K_FOREVER);
 }
 
 /* free an asynchronous message descriptor */
 static inline void _mbox_async_free(struct k_mbox_async *async)
 {
-	k_stack_push(&async_msg_free, (uint32_t)async);
+	k_stack_push(&async_msg_free, (u32_t)async);
 }
 
 #endif /* CONFIG_NUM_MBOX_ASYNC_MSGS > 0 */
@@ -50,7 +50,9 @@ static inline void _mbox_async_free(struct k_mbox_async *async)
 extern struct k_mbox _k_mbox_list_start[];
 extern struct k_mbox _k_mbox_list_end[];
 
+#ifdef CONFIG_OBJECT_TRACING
 struct k_mbox *_trace_list_k_mbox;
+#endif	/* CONFIG_OBJECT_TRACING */
 
 #if (CONFIG_NUM_MBOX_ASYNC_MSGS > 0) || \
 	defined(CONFIG_OBJECT_TRACING)
@@ -79,7 +81,7 @@ static int init_mbox_module(struct device *dev)
 
 	for (i = 0; i < CONFIG_NUM_MBOX_ASYNC_MSGS; i++) {
 		_init_thread_base(&async_msg[i].thread, 0, _THREAD_DUMMY, 0);
-		k_stack_push(&async_msg_free, (uint32_t)&async_msg[i]);
+		k_stack_push(&async_msg_free, (u32_t)&async_msg[i]);
 	}
 #endif /* CONFIG_NUM_MBOX_ASYNC_MSGS > 0 */
 
@@ -122,7 +124,7 @@ void k_mbox_init(struct k_mbox *mbox_ptr)
 static int _mbox_message_match(struct k_mbox_msg *tx_msg,
 			       struct k_mbox_msg *rx_msg)
 {
-	uint32_t temp_info;
+	u32_t temp_info;
 
 	if (((tx_msg->tx_target_thread == (k_tid_t)K_ANY) ||
 	     (tx_msg->tx_target_thread == rx_msg->tx_target_thread)) &&
@@ -147,8 +149,8 @@ static int _mbox_message_match(struct k_mbox_msg *tx_msg,
 		rx_msg->tx_data = tx_msg->tx_data;
 		rx_msg->tx_block = tx_msg->tx_block;
 		if (rx_msg->tx_data != NULL) {
-			rx_msg->tx_block.pool_id = NULL;
-		} else if (rx_msg->tx_block.pool_id != NULL) {
+			rx_msg->tx_block.data = NULL;
+		} else if (rx_msg->tx_block.data != NULL) {
 			rx_msg->tx_data = rx_msg->tx_block.data;
 		}
 
@@ -183,9 +185,9 @@ static void _mbox_message_dispose(struct k_mbox_msg *rx_msg)
 	}
 
 	/* release sender's memory pool block */
-	if (rx_msg->tx_block.pool_id != NULL) {
+	if (rx_msg->tx_block.data != NULL) {
 		k_mem_pool_free(&rx_msg->tx_block);
-		rx_msg->tx_block.pool_id = NULL;
+		rx_msg->tx_block.data = NULL;
 	}
 
 	/* recover sender info */
@@ -235,7 +237,7 @@ static void _mbox_message_dispose(struct k_mbox_msg *rx_msg)
  * @return 0 if successful, -ENOMSG if failed immediately, -EAGAIN if timed out
  */
 static int _mbox_message_put(struct k_mbox *mbox, struct k_mbox_msg *tx_msg,
-			     int32_t timeout)
+			     s32_t timeout)
 {
 	struct k_thread *sending_thread;
 	struct k_thread *receiving_thread;
@@ -312,7 +314,7 @@ static int _mbox_message_put(struct k_mbox *mbox, struct k_mbox_msg *tx_msg,
 	return _Swap(key);
 }
 
-int k_mbox_put(struct k_mbox *mbox, struct k_mbox_msg *tx_msg, int32_t timeout)
+int k_mbox_put(struct k_mbox *mbox, struct k_mbox_msg *tx_msg, s32_t timeout)
 {
 	/* configure things for a synchronous send, then send the message */
 	tx_msg->_syncing_thread = _current;
@@ -359,7 +361,7 @@ void k_mbox_data_get(struct k_mbox_msg *rx_msg, void *buffer)
 }
 
 int k_mbox_data_block_get(struct k_mbox_msg *rx_msg, struct k_mem_pool *pool,
-			  struct k_mem_block *block, int32_t timeout)
+			  struct k_mem_block *block, s32_t timeout)
 {
 	int result;
 
@@ -371,10 +373,10 @@ int k_mbox_data_block_get(struct k_mbox_msg *rx_msg, struct k_mem_pool *pool,
 	}
 
 	/* handle case where data is already in a memory pool block */
-	if (rx_msg->tx_block.pool_id != NULL) {
+	if (rx_msg->tx_block.data != NULL) {
 		/* give ownership of the block to receiver */
 		*block = rx_msg->tx_block;
-		rx_msg->tx_block.pool_id = NULL;
+		rx_msg->tx_block.data = NULL;
 
 		/* now dispose of message */
 		_mbox_message_dispose(rx_msg);
@@ -424,7 +426,7 @@ static int _mbox_message_data_check(struct k_mbox_msg *rx_msg, void *buffer)
 }
 
 int k_mbox_get(struct k_mbox *mbox, struct k_mbox_msg *rx_msg, void *buffer,
-	       int32_t timeout)
+	       s32_t timeout)
 {
 	struct k_thread *sending_thread;
 	struct k_mbox_msg *tx_msg;
@@ -477,95 +479,3 @@ int k_mbox_get(struct k_mbox *mbox, struct k_mbox_msg *rx_msg, void *buffer,
 	return result;
 }
 
-/* Legacy APIs */
-#if defined(CONFIG_LEGACY_KERNEL)
-int task_mbox_put(kmbox_t mbox, kpriority_t prio, struct k_msg *msg,
-		  int32_t timeout)
-{
-	struct k_mbox_msg *tx_msg = (struct k_mbox_msg *)msg;
-	kpriority_t curr_prio;
-	unsigned int key;
-	int result;
-
-	/* handle old-style request to send an empty message */
-	if (tx_msg->size == 0) {
-		tx_msg->tx_block.pool_id = NULL;
-	}
-
-	/* handle sending message of current thread priority */
-	curr_prio = _current->base.prio;
-	if (prio == curr_prio) {
-		return _error_to_rc(k_mbox_put(mbox, tx_msg,
-					       _ticks_to_ms(timeout)));
-	}
-
-	/* handle sending message of a different thread priority */
-	key = irq_lock();
-	_thread_priority_set(_current, prio);
-	_reschedule_threads(key);
-
-	result = _error_to_rc(k_mbox_put(mbox, tx_msg, _ticks_to_ms(timeout)));
-
-	key = irq_lock();
-	_thread_priority_set(_current, curr_prio);
-	_reschedule_threads(key);
-
-	return result;
-}
-
-void task_mbox_block_put(kmbox_t mbox, kpriority_t prio, struct k_msg *msg,
-			 ksem_t sema)
-{
-	struct k_mbox_msg *tx_msg = (struct k_mbox_msg *)msg;
-	kpriority_t curr_prio;
-	unsigned int key;
-
-	/* handle sending message of current thread priority */
-	curr_prio = _current->base.prio;
-	if (prio == curr_prio) {
-		k_mbox_async_put(mbox, tx_msg, sema);
-		return;
-	}
-
-	/* handle sending message of a different thread priority */
-	key = irq_lock();
-	_thread_priority_set(_current, prio);
-	_reschedule_threads(key);
-
-	k_mbox_async_put(mbox, tx_msg, sema);
-
-	key = irq_lock();
-	_thread_priority_set(_current, curr_prio);
-	_reschedule_threads(key);
-}
-
-int task_mbox_get(kmbox_t mbox, struct k_msg *msg, int32_t timeout)
-{
-	struct k_mbox_msg *rx_msg = (struct k_mbox_msg *)msg;
-
-	return _error_to_rc(k_mbox_get(mbox, rx_msg, rx_msg->_rx_data,
-				       _ticks_to_ms(timeout)));
-}
-
-void task_mbox_data_get(struct k_msg *msg)
-{
-	struct k_mbox_msg *rx_msg = (struct k_mbox_msg *)msg;
-
-	/* handle old-style request to discard message data */
-	if (rx_msg->size == 0) {
-		rx_msg->_rx_data = NULL;
-	}
-
-	k_mbox_data_get(rx_msg, rx_msg->_rx_data);
-}
-
-int task_mbox_data_block_get(struct k_msg *msg, struct k_block *block,
-			     kmemory_pool_t pool_id, int32_t timeout)
-{
-	struct k_mbox_msg *rx_msg = (struct k_mbox_msg *)msg;
-
-	return _error_to_rc(k_mbox_data_block_get(rx_msg, pool_id, block,
-						  _ticks_to_ms(timeout)));
-}
-
-#endif

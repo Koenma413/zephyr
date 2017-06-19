@@ -11,14 +11,17 @@
  */
 
 #include <zephyr.h>
+#include <stdlib.h>
 #include <shell/shell.h>
 
 #include <net/net_if.h>
+#include <net/dns_resolve.h>
 #include <misc/printk.h>
 
 #include "route.h"
 #include "icmpv6.h"
 #include "icmpv4.h"
+#include "connection.h"
 
 #if defined(CONFIG_NET_TCP)
 #include "tcp.h"
@@ -26,6 +29,10 @@
 
 #if defined(CONFIG_NET_IPV6)
 #include "ipv6.h"
+#endif
+
+#if defined(CONFIG_HTTP)
+#include <net/http.h>
 #endif
 
 #include "net_shell.h"
@@ -168,10 +175,11 @@ static void iface_cb(struct net_if *iface, void *user_data)
 		       router->is_infinite ? " infinite" : "");
 	}
 
-	printk("IPv6 hop limit           : %d\n", iface->hop_limit);
-	printk("IPv6 base reachable time : %d\n", iface->base_reachable_time);
-	printk("IPv6 reachable time      : %d\n", iface->reachable_time);
-	printk("IPv6 retransmit timer    : %d\n", iface->retrans_timer);
+	printk("IPv6 hop limit           : %d\n", iface->ipv6.hop_limit);
+	printk("IPv6 base reachable time : %d\n",
+	       iface->ipv6.base_reachable_time);
+	printk("IPv6 reachable time      : %d\n", iface->ipv6.reachable_time);
+	printk("IPv6 retransmit timer    : %d\n", iface->ipv6.retrans_timer);
 #endif /* CONFIG_NET_IPV6 */
 
 #if defined(CONFIG_NET_IPV4)
@@ -308,7 +316,7 @@ static void route_mcast_cb(struct net_route_entry_mcast *entry,
 	printk("========================================================\n");
 
 	printk("IPv6 group : %s\n", net_sprint_ipv6_addr(&entry->group));
-	printk("Lifetime   : %lu\n", entry->lifetime);
+	printk("Lifetime   : %u\n", entry->lifetime);
 }
 
 static void iface_per_mcast_route_cb(struct net_if *iface, void *user_data)
@@ -333,6 +341,12 @@ static inline void net_shell_print_statistics(void)
 	       GET_STAT(ipv6_nd.sent),
 	       GET_STAT(ipv6_nd.drop));
 #endif /* CONFIG_NET_IPV6_ND */
+#if defined(CONFIG_NET_STATISTICS_MLD)
+	printk("IPv6 MLD recv  %d\tsent\t%d\tdrop\t%d\n",
+	       GET_STAT(ipv6_mld.recv),
+	       GET_STAT(ipv6_mld.sent),
+	       GET_STAT(ipv6_mld.drop));
+#endif /* CONFIG_NET_STATISTICS_MLD */
 #endif /* CONFIG_NET_IPV6 */
 
 #if defined(CONFIG_NET_IPV4)
@@ -369,7 +383,28 @@ static inline void net_shell_print_statistics(void)
 	       GET_STAT(udp.chkerr));
 #endif
 
-#if defined(CONFIG_NET_RPL_STATS)
+#if defined(CONFIG_NET_STATISTICS_TCP)
+	printk("TCP bytes recv %u\tsent\t%d\n",
+	       GET_STAT(tcp.bytes.received),
+	       GET_STAT(tcp.bytes.sent));
+	printk("TCP seg recv   %d\tsent\t%d\tdrop\t%d\n",
+	       GET_STAT(tcp.recv),
+	       GET_STAT(tcp.sent),
+	       GET_STAT(tcp.drop));
+	printk("TCP seg resent %d\tchkerr\t%d\tackerr\t%d\n",
+	       GET_STAT(tcp.resent),
+	       GET_STAT(tcp.chkerr),
+	       GET_STAT(tcp.ackerr));
+	printk("TCP seg rsterr %d\trst\t%d\tre-xmit\t%d\n",
+	       GET_STAT(tcp.rsterr),
+	       GET_STAT(tcp.rst),
+	       GET_STAT(tcp.rexmit));
+	printk("TCP conn drop  %d\tconnrst\t%d\n",
+	       GET_STAT(tcp.conndrop),
+	       GET_STAT(tcp.connrst));
+#endif
+
+#if defined(CONFIG_NET_STATISTICS_RPL)
 	printk("RPL DIS recv   %d\tsent\t%d\tdrop\t%d\n",
 	       GET_STAT(rpl.dis.recv),
 	       GET_STAT(rpl.dis.sent),
@@ -409,6 +444,42 @@ static inline void net_shell_print_statistics(void)
 }
 #endif /* CONFIG_NET_STATISTICS */
 
+static void get_addresses(struct net_context *context,
+			  char addr_local[], int local_len,
+			  char addr_remote[], int remote_len)
+{
+#if defined(CONFIG_NET_IPV6)
+	if (context->local.family == AF_INET6) {
+		snprintk(addr_local, local_len, "[%s]:%u",
+			 net_sprint_ipv6_addr(
+				 net_sin6_ptr(&context->local)->sin6_addr),
+			 ntohs(net_sin6_ptr(&context->local)->sin6_port));
+		snprintk(addr_remote, remote_len, "[%s]:%u",
+			 net_sprint_ipv6_addr(
+				 &net_sin6(&context->remote)->sin6_addr),
+			 ntohs(net_sin6(&context->remote)->sin6_port));
+	} else
+#endif
+#if defined(CONFIG_NET_IPV4)
+	if (context->local.family == AF_INET) {
+		snprintk(addr_local, local_len, "%s:%d",
+			 net_sprint_ipv4_addr(
+				 net_sin_ptr(&context->local)->sin_addr),
+			 ntohs(net_sin_ptr(&context->local)->sin_port));
+		snprintk(addr_remote, remote_len, "%s:%d",
+			 net_sprint_ipv4_addr(
+				 &net_sin(&context->remote)->sin_addr),
+			 ntohs(net_sin(&context->remote)->sin_port));
+	} else
+#endif
+	if (context->local.family == AF_UNSPEC) {
+		snprintk(addr_local, local_len, "AF_UNSPEC");
+	} else {
+		snprintk(addr_local, local_len, "AF_UNK(%d)",
+			 context->local.family);
+	}
+}
+
 static void context_cb(struct net_context *context, void *user_data)
 {
 #if defined(CONFIG_NET_IPV6) && !defined(CONFIG_NET_IPV4)
@@ -420,70 +491,141 @@ static void context_cb(struct net_context *context, void *user_data)
 #endif
 
 	int *count = user_data;
-	char addr_str[ADDR_LEN];
+	/* +7 for []:port */
+	char addr_local[ADDR_LEN + 7];
+	char addr_remote[ADDR_LEN + 7] = "";
 
-	if (context->local.family == AF_INET6) {
-		snprintk(addr_str, ADDR_LEN, "%s",
-			 net_sprint_ipv6_addr(
-				 net_sin6_ptr(&context->local)->sin6_addr));
+	get_addresses(context, addr_local, sizeof(addr_local),
+		      addr_remote, sizeof(addr_remote));
 
-		printk("%p\t%16s\t%16s\t%p\t%c%c%c\n", context, addr_str,
-		       net_sprint_ipv6_addr(
-			       &net_sin6(&context->remote)->sin6_addr),
-		       net_context_get_iface(context),
-		       net_context_get_family(context) == AF_INET6 ? '6' : '4',
-		       net_context_get_type(context) == SOCK_DGRAM ? 'D' : 'S',
-		       net_context_get_ip_proto(context) == IPPROTO_UDP ?
-		       'U' : 'T');
+	printk("[%2d] %p\t%p    %c%c%c   %16s\t%16s\n",
+	       (*count) + 1, context,
+	       net_context_get_iface(context),
+	       net_context_get_family(context) == AF_INET6 ? '6' : '4',
+	       net_context_get_type(context) == SOCK_DGRAM ? 'D' : 'S',
+	       net_context_get_ip_proto(context) == IPPROTO_UDP ?
+							     'U' : 'T',
+	       addr_local, addr_remote);
 
-		(*count)++;
-
-		return;
-	}
-
-	if (context->local.family == AF_INET) {
-		snprintk(addr_str, ADDR_LEN, "%s",
-			 net_sprint_ipv4_addr(
-				 net_sin_ptr(&context->local)->sin_addr));
-
-		printk("%p\t%16s\t%16s\t%p\t%c%c%c\n", context, addr_str,
-		       net_sprint_ipv4_addr(
-			       &net_sin(&context->remote)->sin_addr),
-		       net_context_get_iface(context),
-		       net_context_get_family(context) == AF_INET6 ? '6' : '4',
-		       net_context_get_type(context) == SOCK_DGRAM ? 'D' : 'S',
-		       net_context_get_ip_proto(context) == IPPROTO_UDP ?
-		       'U' : 'T');
-
-		(*count)++;
-
-		return;
-	}
-
-	if (context->local.family != AF_UNSPEC) {
-		printk("Invalid address family (%d) for context %p\n",
-		       context->local.family, context);
-	}
+	(*count)++;
 }
+
+#if defined(CONFIG_NET_DEBUG_CONN)
+static void conn_handler_cb(struct net_conn *conn, void *user_data)
+{
+#if defined(CONFIG_NET_IPV6) && !defined(CONFIG_NET_IPV4)
+#define ADDR_LEN NET_IPV6_ADDR_LEN
+#elif defined(CONFIG_NET_IPV4) && !defined(CONFIG_NET_IPV6)
+#define ADDR_LEN NET_IPV4_ADDR_LEN
+#else
+#define ADDR_LEN NET_IPV6_ADDR_LEN
+#endif
+
+	int *count = user_data;
+	/* +7 for []:port */
+	char addr_local[ADDR_LEN + 7];
+	char addr_remote[ADDR_LEN + 7] = "";
+
+#if defined(CONFIG_NET_IPV6)
+	if (conn->local_addr.family == AF_INET6) {
+		snprintk(addr_local, sizeof(addr_local), "[%s]:%u",
+			 net_sprint_ipv6_addr(
+				 &net_sin6(&conn->local_addr)->sin6_addr),
+			 ntohs(net_sin6(&conn->local_addr)->sin6_port));
+		snprintk(addr_remote, sizeof(addr_remote), "[%s]:%u",
+			 net_sprint_ipv6_addr(
+				 &net_sin6(&conn->remote_addr)->sin6_addr),
+			 ntohs(net_sin6(&conn->remote_addr)->sin6_port));
+	} else
+#endif
+#if defined(CONFIG_NET_IPV4)
+	if (conn->local_addr.family == AF_INET) {
+		snprintk(addr_local, sizeof(addr_local), "%s:%d",
+			 net_sprint_ipv4_addr(
+				 &net_sin(&conn->local_addr)->sin_addr),
+			 ntohs(net_sin(&conn->local_addr)->sin_port));
+		snprintk(addr_remote, sizeof(addr_remote), "%s:%d",
+			 net_sprint_ipv4_addr(
+				 &net_sin(&conn->remote_addr)->sin_addr),
+			 ntohs(net_sin(&conn->remote_addr)->sin_port));
+	} else
+#endif
+	if (conn->local_addr.family == AF_UNSPEC) {
+		snprintk(addr_local, sizeof(addr_local), "AF_UNSPEC");
+	} else {
+		snprintk(addr_local, sizeof(addr_local), "AF_UNK(%d)",
+			 conn->local_addr.family);
+	}
+
+	printk("[%2d] %p %p\t%s\t%16s\t%16s\n",
+	       (*count) + 1, conn, conn->cb, net_proto2str(conn->proto),
+	       addr_local, addr_remote);
+
+	(*count)++;
+}
+#endif /* CONFIG_NET_DEBUG_CONN */
 
 #if defined(CONFIG_NET_TCP)
 static void tcp_cb(struct net_tcp *tcp, void *user_data)
 {
 	int *count = user_data;
-	uint16_t recv_mss = net_tcp_get_recv_mss(tcp);
+	u16_t recv_mss = net_tcp_get_recv_mss(tcp);
 
-	printk("%p\t%12s\t%10u%10u%11u%11u%5u\n",
-	       tcp, net_tcp_state_str(net_tcp_get_state(tcp)),
+	printk("%p    %5u     %5u %10u %10u %5u   %s\n",
+	       tcp,
 	       ntohs(net_sin6_ptr(&tcp->context->local)->sin6_port),
 	       ntohs(net_sin6(&tcp->context->remote)->sin6_port),
-	       tcp->send_seq, tcp->send_ack, recv_mss);
+	       tcp->send_seq, tcp->send_ack, recv_mss,
+	       net_tcp_state_str(net_tcp_get_state(tcp)));
 
 	(*count)++;
 }
 #endif
 
-#if defined(CONFIG_NET_DEBUG_NET_BUF)
-static void allocs_cb(struct net_buf *buf,
+#if defined(CONFIG_NET_IPV6_FRAGMENT)
+static void ipv6_frag_cb(struct net_ipv6_reassembly *reass,
+			 void *user_data)
+{
+	int *count = user_data;
+	char src[ADDR_LEN];
+	int i;
+
+	if (!*count) {
+		printk("\nIPv6 reassembly Id         Remain Src             \tDst\n");
+	}
+
+	snprintk(src, ADDR_LEN, "%s", net_sprint_ipv6_addr(&reass->src));
+
+	printk("%p      0x%08x  %5d %16s\t%16s\n",
+	       reass, reass->id, k_delayed_work_remaining_get(&reass->timer),
+	       src, net_sprint_ipv6_addr(&reass->dst));
+
+	for (i = 0; i < NET_IPV6_FRAGMENTS_MAX_PKT; i++) {
+		if (reass->pkt[i]) {
+			struct net_buf *frag = reass->pkt[i]->frags;
+
+			printk("[%d] pkt %p->", i, reass->pkt[i]);
+
+			while (frag) {
+				printk("%p", frag);
+
+				frag = frag->frags;
+				if (frag) {
+					printk("->");
+				}
+			}
+
+			printk("\n");
+		}
+	}
+
+	(*count)++;
+}
+#endif /* CONFIG_NET_IPV6_FRAGMENT */
+
+#if defined(CONFIG_NET_DEBUG_NET_PKT)
+static void allocs_cb(struct net_pkt *pkt,
+		      struct net_buf *buf,
 		      const char *func_alloc,
 		      int line_alloc,
 		      const char *func_free,
@@ -503,47 +645,67 @@ static void allocs_cb(struct net_buf *buf,
 		}
 	}
 
+	if (buf) {
+		goto buf;
+	}
+
 	if (func_alloc) {
 		if (in_use) {
+			printk("%p/%d\t%5s\t%5s\t%s():%d\n", pkt, pkt->ref,
+			       str, net_pkt_slab2str(pkt->slab), func_alloc,
+			       line_alloc);
+		} else {
+			printk("%p\t%5s\t%5s\t%s():%d -> %s():%d\n", pkt,
+			       str, net_pkt_slab2str(pkt->slab), func_alloc,
+			       line_alloc, func_free, line_free);
+		}
+	}
+
+	return;
+buf:
+	if (func_alloc) {
+		struct net_buf_pool *pool = net_buf_pool_get(buf->pool_id);
+
+		if (in_use) {
 			printk("%p/%d\t%5s\t%5s\t%s():%d\n", buf, buf->ref,
-			       str, net_nbuf_pool2str(buf->pool), func_alloc,
+			       str, net_pkt_pool2str(pool), func_alloc,
 			       line_alloc);
 		} else {
 			printk("%p\t%5s\t%5s\t%s():%d -> %s():%d\n", buf,
-			       str, net_nbuf_pool2str(buf->pool), func_alloc,
+			       str, net_pkt_pool2str(pool), func_alloc,
 			       line_alloc, func_free, line_free);
 		}
 	}
 }
-#endif /* CONFIG_NET_DEBUG_NET_BUF */
+#endif /* CONFIG_NET_DEBUG_NET_PKT */
 
 /* Put the actual shell commands after this */
 
-static int shell_cmd_allocs(int argc, char *argv[])
+int net_shell_cmd_allocs(int argc, char *argv[])
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-#if defined(CONFIG_NET_DEBUG_NET_BUF)
-	printk("Network buffer allocations\n\n");
-	printk("net_buf\t\tStatus\tPool\tFunction alloc -> freed\n");
-	net_nbuf_allocs_foreach(allocs_cb, NULL);
+#if defined(CONFIG_NET_DEBUG_NET_PKT)
+	printk("Network memory allocations\n\n");
+	printk("memory\t\tStatus\tPool\tFunction alloc -> freed\n");
+	net_pkt_allocs_foreach(allocs_cb, NULL);
 #else
-	printk("Enable CONFIG_NET_DEBUG_NET_BUF to see allocations.\n");
-#endif /* CONFIG_NET_DEBUG_NET_BUF */
+	printk("Enable CONFIG_NET_DEBUG_NET_PKT to see allocations.\n");
+#endif /* CONFIG_NET_DEBUG_NET_PKT */
 
 	return 0;
 }
 
-static int shell_cmd_conn(int argc, char *argv[])
+int net_shell_cmd_conn(int argc, char *argv[])
 {
 	int count = 0;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	printk("Context   \tLocal           \tRemote          \tIface     \t"
-	       "Flags\n");
+	printk("     Context   \tIface         Flags "
+	       "Local           \tRemote\n");
 
 	net_context_foreach(context_cb, &count);
 
@@ -551,9 +713,22 @@ static int shell_cmd_conn(int argc, char *argv[])
 		printk("No connections\n");
 	}
 
+#if defined(CONFIG_NET_DEBUG_CONN)
+	printk("\n     Handler    Callback  \tProto\t"
+	       "Local           \tRemote\n");
+
+	count = 0;
+
+	net_conn_foreach(conn_handler_cb, &count);
+
+	if (count == 0) {
+		printk("No connection handlers found.\n");
+	}
+#endif
+
 #if defined(CONFIG_NET_TCP)
-	printk("\nTCP       \tState    \tSrc port  Dst port  "
-	       "Send-Seq   Send-Ack   MSS\n");
+	printk("\nTCP        Src port  Dst port   Send-Seq   Send-Ack  MSS    "
+	       "State\n");
 
 	count = 0;
 
@@ -564,10 +739,289 @@ static int shell_cmd_conn(int argc, char *argv[])
 	}
 #endif
 
+#if defined(CONFIG_NET_IPV6_FRAGMENT)
+	count = 0;
+
+	net_ipv6_frag_foreach(ipv6_frag_cb, &count);
+
+	/* Do not print anything if no fragments are pending atm */
+#endif
+
 	return 0;
 }
 
-static int shell_cmd_iface(int argc, char *argv[])
+#if defined(CONFIG_DNS_RESOLVER)
+static void dns_result_cb(enum dns_resolve_status status,
+			  struct dns_addrinfo *info,
+			  void *user_data)
+{
+	bool *first = user_data;
+
+	if (status == DNS_EAI_CANCELED) {
+		printk("\nTimeout while resolving name.\n");
+		*first = false;
+		return;
+	}
+
+	if (status == DNS_EAI_INPROGRESS && info) {
+		char addr[NET_IPV6_ADDR_LEN];
+
+		if (*first) {
+			printk("\n");
+			*first = false;
+		}
+
+		if (info->ai_family == AF_INET) {
+			net_addr_ntop(AF_INET,
+				      &net_sin(&info->ai_addr)->sin_addr,
+				      addr, NET_IPV4_ADDR_LEN);
+		} else if (info->ai_family == AF_INET6) {
+			net_addr_ntop(AF_INET6,
+				      &net_sin6(&info->ai_addr)->sin6_addr,
+				      addr, NET_IPV6_ADDR_LEN);
+		} else {
+			strncpy(addr, "Invalid protocol family",
+				sizeof(addr));
+		}
+
+		printk("\t%s\n", addr);
+		return;
+	}
+
+	if (status == DNS_EAI_ALLDONE) {
+		printk("All results received\n");
+		*first = false;
+		return;
+	}
+
+	if (status == DNS_EAI_FAIL) {
+		printk("No such name found.\n");
+		*first = false;
+		return;
+	}
+
+	printk("Unhandled status %d received\n", status);
+}
+
+static void print_dns_info(struct dns_resolve_context *ctx)
+{
+	int i;
+
+	printk("DNS servers:\n");
+
+	for (i = 0; i < CONFIG_DNS_RESOLVER_MAX_SERVERS; i++) {
+		if (ctx->servers[i].dns_server.family == AF_INET) {
+			printk("\t%s:%u\n",
+			       net_sprint_ipv4_addr(
+				       &net_sin(&ctx->servers[i].dns_server)->
+				       sin_addr),
+			       ntohs(net_sin(&ctx->servers[i].
+					     dns_server)->sin_port));
+		} else if (ctx->servers[i].dns_server.family == AF_INET6) {
+			printk("\t[%s]:%u\n",
+			       net_sprint_ipv6_addr(
+				       &net_sin6(&ctx->servers[i].dns_server)->
+				       sin6_addr),
+			       ntohs(net_sin6(&ctx->servers[i].
+					     dns_server)->sin6_port));
+		}
+	}
+
+	printk("Pending queries:\n");
+
+	for (i = 0; i < CONFIG_DNS_NUM_CONCUR_QUERIES; i++) {
+		s32_t remaining;
+
+		if (!ctx->queries[i].cb) {
+			continue;
+		}
+
+		remaining =
+			k_delayed_work_remaining_get(&ctx->queries[i].timer);
+
+		if (ctx->queries[i].query_type == DNS_QUERY_TYPE_A) {
+			printk("\tIPv4[%u]: %s remaining %d\n",
+			       ctx->queries[i].id,
+			       ctx->queries[i].query,
+			       remaining);
+		} else if (ctx->queries[i].query_type == DNS_QUERY_TYPE_AAAA) {
+			printk("\tIPv6[%u]: %s remaining %d\n",
+			       ctx->queries[i].id,
+			       ctx->queries[i].query,
+			       remaining);
+		}
+	}
+}
+#endif
+
+int net_shell_cmd_dns(int argc, char *argv[])
+{
+#if defined(CONFIG_DNS_RESOLVER)
+#define DNS_TIMEOUT 2000 /* ms */
+
+	struct dns_resolve_context *ctx;
+	enum dns_query_type qtype = DNS_QUERY_TYPE_A;
+	char *host, *type = NULL;
+	bool first = true;
+	int arg = 1;
+	int ret, i;
+
+	if (!argv[arg]) {
+		/* DNS status */
+		ctx = dns_resolve_get_default();
+		if (!ctx) {
+			printk("No default DNS context found.\n");
+			return 0;
+		}
+
+		print_dns_info(ctx);
+		return 0;
+	}
+
+	if (strcmp(argv[arg], "cancel") == 0) {
+		ctx = dns_resolve_get_default();
+		if (!ctx) {
+			printk("No default DNS context found.\n");
+			return 0;
+		}
+
+		for (ret = 0, i = 0; i < CONFIG_DNS_NUM_CONCUR_QUERIES; i++) {
+			if (!ctx->queries[i].cb) {
+				continue;
+			}
+
+			if (!dns_resolve_cancel(ctx, ctx->queries[i].id)) {
+				ret++;
+			}
+		}
+
+		if (ret) {
+			printk("Cancelled %d pending requests.\n", ret);
+		} else {
+			printk("No pending DNS requests.\n");
+		}
+
+		return 0;
+	}
+
+	host = argv[arg++];
+
+	if (argv[arg]) {
+		type = argv[arg];
+	}
+
+	if (type) {
+		if (strcmp(type, "A") == 0) {
+			qtype = DNS_QUERY_TYPE_A;
+			printk("IPv4 address type\n");
+		} else if (strcmp(type, "AAAA") == 0) {
+			qtype = DNS_QUERY_TYPE_AAAA;
+			printk("IPv6 address type\n");
+		} else {
+			printk("Unknown query type, specify either "
+			       "A or AAAA\n");
+			return 0;
+		}
+	}
+
+	ret = dns_get_addr_info(host, qtype, NULL, dns_result_cb, &first,
+				DNS_TIMEOUT);
+	if (ret < 0) {
+		printk("Cannot resolve '%s' (%d)\n", host, ret);
+	} else {
+		printk("Query for '%s' sent.\n", host);
+	}
+
+#else
+	printk("DNS resolver not supported.\n");
+#endif
+	return 0;
+}
+
+#if defined(CONFIG_NET_DEBUG_HTTP_CONN) && defined(CONFIG_HTTP_SERVER)
+#define MAX_HTTP_OUTPUT_LEN 64
+
+static char *http_str_output(char *output, int outlen, const char *str, int len)
+{
+	if (len > outlen) {
+		len = outlen;
+	}
+
+	if (len == 0) {
+		memset(output, 0, outlen);
+	} else {
+		memcpy(output, str, len);
+		output[len] = '\0';
+	}
+
+	return output;
+}
+
+static void http_server_cb(struct http_server_ctx *entry,
+			   void *user_data)
+{
+	int *count = user_data;
+	static char output[MAX_HTTP_OUTPUT_LEN];
+
+	/* +7 for []:port */
+	char addr_local[ADDR_LEN + 7];
+	char addr_remote[ADDR_LEN + 7] = "";
+
+	get_addresses(entry->req.net_ctx, addr_local, sizeof(addr_local),
+		      addr_remote, sizeof(addr_remote));
+
+	if (*count == 0) {
+		printk("        HTTP ctx    Local           \t"
+		       "Remote          \tURL\n");
+	}
+
+	(*count)++;
+
+	printk("[%2d] %c%c %p  %16s\t%16s\t%s\n",
+	       *count, entry->enabled ? 'E' : 'D',
+	       entry->is_https ? 'S' : ' ',
+	       entry, addr_local, addr_remote,
+	       http_str_output(output, sizeof(output) - 1,
+			       entry->req.url, entry->req.url_len));
+}
+#endif /* CONFIG_NET_DEBUG_HTTP_CONN && CONFIG_HTTP_SERVER */
+
+int net_shell_cmd_http(int argc, char *argv[])
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+#if defined(CONFIG_NET_DEBUG_HTTP_CONN) && defined(CONFIG_HTTP_SERVER)
+	static int count;
+	int arg = 1;
+
+	count = 0;
+
+	/* Turn off monitoring if it was enabled */
+	http_server_conn_monitor(NULL, NULL);
+
+	if (strcmp(argv[0], "http")) {
+		arg++;
+	}
+
+	if (argv[arg]) {
+		if (strcmp(argv[arg], "monitor") == 0) {
+			printk("Activating HTTP monitor. Type \"net http\" "
+			       "to disable HTTP connection monitoring.\n");
+			http_server_conn_monitor(http_server_cb, &count);
+		}
+	} else {
+		http_server_conn_foreach(http_server_cb, &count);
+	}
+#else
+	printk("Enable CONFIG_NET_DEBUG_HTTP_CONN and CONFIG_HTTP_SERVER "
+	       "to get HTTP server connection information\n");
+#endif
+
+	return 0;
+}
+
+int net_shell_cmd_iface(int argc, char *argv[])
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -580,20 +1034,26 @@ static int shell_cmd_iface(int argc, char *argv[])
 struct ctx_info {
 	int pos;
 	bool are_external_pools;
-	struct net_buf_pool *tx_pools[CONFIG_NET_MAX_CONTEXTS];
+	struct k_mem_slab *tx_slabs[CONFIG_NET_MAX_CONTEXTS];
 	struct net_buf_pool *data_pools[CONFIG_NET_MAX_CONTEXTS];
 };
 
-#if defined(CONFIG_NET_CONTEXT_NBUF_POOL)
-static bool pool_found_already(struct ctx_info *info,
-			       struct net_buf_pool *pool)
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+static bool slab_pool_found_already(struct ctx_info *info,
+				    struct k_mem_slab *slab,
+				    struct net_buf_pool *pool)
 {
 	int i;
 
 	for (i = 0; i < CONFIG_NET_MAX_CONTEXTS; i++) {
-		if (info->tx_pools[i] == pool ||
-		    info->data_pools[i] == pool) {
-			return true;
+		if (slab) {
+			if (info->tx_slabs[i] == slab) {
+				return true;
+			}
+		} else {
+			if (info->data_pools[i] == pool) {
+				return true;
+			}
 		}
 	}
 
@@ -603,40 +1063,41 @@ static bool pool_found_already(struct ctx_info *info,
 
 static void context_info(struct net_context *context, void *user_data)
 {
-#if defined(CONFIG_NET_CONTEXT_NBUF_POOL)
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
 	struct ctx_info *info = user_data;
+	struct k_mem_slab *slab;
 	struct net_buf_pool *pool;
 
 	if (!net_context_is_used(context)) {
 		return;
 	}
 
-	if (context->tx_pool) {
-		pool = context->tx_pool();
+	if (context->tx_slab) {
+		slab = context->tx_slab();
 
-		if (pool_found_already(info, pool)) {
+		if (slab_pool_found_already(info, slab, NULL)) {
 			return;
 		}
 
-#if defined(CONFIG_NET_DEBUG_NET_BUF)
-		printk("ETX (%s)\t%d\t%d\t%d\t%p\n",
-		       pool->name, pool->pool_size, pool->buf_count,
-		       pool->avail_count, pool);
+#if defined(CONFIG_NET_DEBUG_NET_PKT)
+		printk("ETX\t%zu\t%u\t%u\t%p\n",
+		       slab->num_blocks * slab->block_size,
+		       slab->num_blocks, k_mem_slab_num_free_get(slab), slab);
 #else
-		printk("ETX     \t%d\t%p\n", pool->buf_count, pool);
+		printk("ETX     \t%d\t%p\n", slab->num_blocks, slab);
 #endif
 		info->are_external_pools = true;
-		info->tx_pools[info->pos] = pool;
+		info->tx_slabs[info->pos] = slab;
 	}
 
 	if (context->data_pool) {
 		pool = context->data_pool();
 
-		if (pool_found_already(info, pool)) {
+		if (slab_pool_found_already(info, NULL, pool)) {
 			return;
 		}
 
-#if defined(CONFIG_NET_DEBUG_NET_BUF)
+#if defined(CONFIG_NET_DEBUG_NET_PKT)
 		printk("EDATA (%s)\t%d\t%d\t%d\t%p\n",
 		       pool->name, pool->pool_size, pool->buf_count,
 		       pool->avail_count, pool);
@@ -648,30 +1109,33 @@ static void context_info(struct net_context *context, void *user_data)
 	}
 
 	info->pos++;
-#endif /* CONFIG_NET_CONTEXT_NBUF_POOL */
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
 }
 
-static int shell_cmd_mem(int argc, char *argv[])
+int net_shell_cmd_mem(int argc, char *argv[])
 {
-	struct net_buf_pool *tx, *rx, *rx_data, *tx_data;
+	struct k_mem_slab *rx, *tx;
+	struct net_buf_pool *rx_data, *tx_data;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	net_nbuf_get_info(&rx, &tx, &rx_data, &tx_data);
+	net_pkt_get_info(&rx, &tx, &rx_data, &tx_data);
 
-	printk("Fragment length %d bytes\n", CONFIG_NET_NBUF_DATA_SIZE);
+	printk("Fragment length %d bytes\n", CONFIG_NET_BUF_DATA_SIZE);
 
 	printk("Network buffer pools:\n");
 
-#if defined(CONFIG_NET_DEBUG_NET_BUF)
+#if defined(CONFIG_NET_DEBUG_NET_PKT)
 	printk("Name\t\t\tSize\tCount\tAvail\tAddress\n");
 
-	printk("RX (%s)\t\t%d\t%d\t%d\t%p\n",
-	       rx->name, rx->pool_size, rx->buf_count, rx->avail_count, rx);
+	printk("RX\t\t%zu\t%d\t%u\t%p\n",
+	       rx->num_blocks * rx->block_size,
+	       rx->num_blocks, k_mem_slab_num_free_get(rx), rx);
 
-	printk("TX (%s)\t\t%d\t%d\t%d\t%p\n",
-	       tx->name, tx->pool_size, tx->buf_count, tx->avail_count, tx);
+	printk("TX\t\t%zu\t%d\t%u\t%p\n",
+	       tx->num_blocks * tx->block_size,
+	       tx->num_blocks, k_mem_slab_num_free_get(tx), tx);
 
 	printk("RX DATA (%s)\t%d\t%d\t%d\t%p\n",
 	       rx_data->name, rx_data->pool_size, rx_data->buf_count,
@@ -683,13 +1147,13 @@ static int shell_cmd_mem(int argc, char *argv[])
 #else
 	printk("Name    \tCount\tAddress\n");
 
-	printk("RX      \t%d\t%p\n", rx->buf_count, rx);
-	printk("TX      \t%d\t%p\n", tx->buf_count, tx);
+	printk("RX      \t%d\t%p\n", rx->num_blocks, rx);
+	printk("TX      \t%d\t%p\n", tx->num_blocks, tx);
 	printk("RX DATA \t%d\t%p\n", rx_data->buf_count, rx_data);
 	printk("TX DATA \t%d\t%p\n", tx_data->buf_count, tx_data);
-#endif /* CONFIG_NET_DEBUG_NET_BUF */
+#endif /* CONFIG_NET_DEBUG_NET_PKT */
 
-	if (IS_ENABLED(CONFIG_NET_CONTEXT_NBUF_POOL)) {
+	if (IS_ENABLED(CONFIG_NET_CONTEXT_NET_PKT_POOL)) {
 		struct ctx_info info;
 
 		memset(&info, 0, sizeof(info));
@@ -704,36 +1168,29 @@ static int shell_cmd_mem(int argc, char *argv[])
 }
 
 #if defined(CONFIG_NET_IPV6)
-static inline const char *nbrstate2str(enum net_nbr_state state)
-{
-	switch (state) {
-	case NET_NBR_INCOMPLETE:
-		return "incomplete";
-	case NET_NBR_REACHABLE:
-		return "reachable";
-	case NET_NBR_STALE:
-		return "stale";
-	case NET_NBR_DELAY:
-		return "delay";
-	case NET_NBR_PROBE:
-		return "probe";
-	}
-
-	return "<invalid state>";
-}
-
 static void nbr_cb(struct net_nbr *nbr, void *user_data)
 {
 	int *count = user_data;
 
+	if (*count == 0) {
+		printk("     Neighbor   Flags   Interface  State\t"
+		       "Remain\tLink              Address\n");
+	}
+
 	(*count)++;
 
-	printk("[%d] %d/%d/%d/%d %10s iface %p ll %s addr %s\n",
-	       *count, nbr->ref, net_ipv6_nbr_data(nbr)->ns_count,
+	printk("[%2d] %p %d/%d/%d/%d %p %9s\t%6d\t%17s %s\n",
+	       *count, nbr, nbr->ref, net_ipv6_nbr_data(nbr)->ns_count,
 	       net_ipv6_nbr_data(nbr)->is_router,
 	       net_ipv6_nbr_data(nbr)->link_metric,
-	       nbrstate2str(net_ipv6_nbr_data(nbr)->state),
 	       nbr->iface,
+	       net_ipv6_nbr_state2str(net_ipv6_nbr_data(nbr)->state),
+#if defined(CONFIG_NET_IPV6_ND)
+	       k_delayed_work_remaining_get(
+		       &net_ipv6_nbr_data(nbr)->reachable),
+#else
+	       0,
+#endif
 	       nbr->idx == NET_NBR_LLADDR_UNKNOWN ? "?" :
 	       net_sprint_ll_addr(
 		       net_nbr_get_lladdr(nbr->idx)->addr,
@@ -742,13 +1199,40 @@ static void nbr_cb(struct net_nbr *nbr, void *user_data)
 }
 #endif
 
-static int shell_cmd_nbr(int argc, char *argv[])
+int net_shell_cmd_nbr(int argc, char *argv[])
 {
 #if defined(CONFIG_NET_IPV6)
 	int count = 0;
+	int arg = 1;
 
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
+	if (argv[arg]) {
+		struct in6_addr addr;
+		int ret;
+
+		if (strcmp(argv[arg], "rm")) {
+			printk("Unknown command '%s'\n", argv[arg]);
+			return 0;
+		}
+
+		if (!argv[++arg]) {
+			printk("Neighbor IPv6 address missing.\n");
+			return 0;
+		}
+
+		ret = net_addr_pton(AF_INET6, argv[arg], &addr);
+		if (ret < 0) {
+			printk("Cannot parse '%s'\n", argv[arg]);
+			return 0;
+		}
+
+		if (!net_ipv6_nbr_rm(net_if_get_default(), &addr)) {
+			printk("Cannot remove neighbor %s\n",
+			       net_sprint_ipv6_addr(&addr));
+		} else {
+			printk("Neighbor %s removed.\n",
+			       net_sprint_ipv6_addr(&addr));
+		}
+	}
 
 	net_ipv6_nbr_foreach(nbr_cb, &count);
 
@@ -762,14 +1246,131 @@ static int shell_cmd_nbr(int argc, char *argv[])
 	return 0;
 }
 
-static int shell_cmd_ping(int argc, char *argv[])
-{
+#if defined(CONFIG_NET_IPV6) || defined(CONFIG_NET_IPV4)
+
+K_SEM_DEFINE(ping_timeout, 0, 1);
+
 #if defined(CONFIG_NET_IPV6)
+
+static enum net_verdict _handle_ipv6_echo_reply(struct net_pkt *pkt);
+
+static struct net_icmpv6_handler ping6_handler = {
+	.type = NET_ICMPV6_ECHO_REPLY,
+	.code = 0,
+	.handler = _handle_ipv6_echo_reply,
+};
+
+static inline void _remove_ipv6_ping_handler(void)
+{
+	net_icmpv6_unregister_handler(&ping6_handler);
+}
+
+static enum net_verdict _handle_ipv6_echo_reply(struct net_pkt *pkt)
+{
+	char addr[NET_IPV6_ADDR_LEN];
+
+	snprintk(addr, sizeof(addr), "%s",
+		 net_sprint_ipv6_addr(&NET_IPV6_HDR(pkt)->dst));
+
+	printk("Received echo reply from %s to %s\n",
+	       net_sprint_ipv6_addr(&NET_IPV6_HDR(pkt)->src), addr);
+
+	k_sem_give(&ping_timeout);
+	_remove_ipv6_ping_handler();
+
+	return NET_OK;
+}
+
+static int _ping_ipv6(char *host)
+{
 	struct in6_addr ipv6_target;
-#endif
+	int ret;
+
+	if (net_addr_pton(AF_INET6, host, &ipv6_target) < 0) {
+		return -EINVAL;
+	}
+
+	net_icmpv6_register_handler(&ping6_handler);
+
+	ret = net_icmpv6_send_echo_request(net_if_get_default(),
+					   &ipv6_target,
+					   sys_rand32_get(),
+					   sys_rand32_get());
+	if (ret) {
+		_remove_ipv6_ping_handler();
+	} else {
+		printk("Sent a ping to %s\n", host);
+	}
+
+	return ret;
+}
+#else
+#define _ping_ipv6(...) -EINVAL
+#define _remove_ipv6_ping_handler()
+#endif /* CONFIG_NET_IPV6 */
+
 #if defined(CONFIG_NET_IPV4)
+
+static enum net_verdict _handle_ipv4_echo_reply(struct net_pkt *pkt);
+
+static struct net_icmpv4_handler ping4_handler = {
+	.type = NET_ICMPV4_ECHO_REPLY,
+	.code = 0,
+	.handler = _handle_ipv4_echo_reply,
+};
+
+static inline void _remove_ipv4_ping_handler(void)
+{
+	net_icmpv4_unregister_handler(&ping4_handler);
+}
+
+static enum net_verdict _handle_ipv4_echo_reply(struct net_pkt *pkt)
+{
+	char addr[NET_IPV4_ADDR_LEN];
+
+	snprintk(addr, sizeof(addr), "%s",
+		 net_sprint_ipv4_addr(&NET_IPV4_HDR(pkt)->dst));
+
+	printk("Received echo reply from %s to %s\n",
+	       net_sprint_ipv4_addr(&NET_IPV4_HDR(pkt)->src), addr);
+
+	k_sem_give(&ping_timeout);
+	_remove_ipv4_ping_handler();
+
+	return NET_OK;
+}
+
+static int _ping_ipv4(char *host)
+{
 	struct in_addr ipv4_target;
-#endif
+	int ret;
+
+	if (net_addr_pton(AF_INET, host, &ipv4_target) < 0) {
+		return -EINVAL;
+	}
+
+	net_icmpv4_register_handler(&ping4_handler);
+
+	ret = net_icmpv4_send_echo_request(net_if_get_default(),
+					   &ipv4_target,
+					   sys_rand32_get(),
+					   sys_rand32_get());
+	if (ret) {
+		_remove_ipv4_ping_handler();
+	} else {
+		printk("Sent a ping to %s\n", host);
+	}
+
+	return ret;
+}
+#else
+#define _ping_ipv4(...) -EINVAL
+#define _remove_ipv4_ping_handler()
+#endif /* CONFIG_NET_IPV4 */
+#endif /* CONFIG_NET_IPV6 || CONFIG_NET_IPV4 */
+
+int net_shell_cmd_ping(int argc, char *argv[])
+{
 	char *host;
 	int ret;
 
@@ -781,71 +1382,37 @@ static int shell_cmd_ping(int argc, char *argv[])
 		host = argv[2];
 	}
 
-#if defined(CONFIG_NET_IPV6) && !defined(CONFIG_NET_IPV4)
-	ret = net_addr_pton(AF_INET6, host, &ipv6_target);
-	if (ret < 0) {
-		printk("Invalid IPv6 address\n");
-		return 0;
-	}
-
-	ret = net_icmpv6_send_echo_request(net_if_get_default(),
-					   &ipv6_target,
-					   sys_rand32_get(),
-					   sys_rand32_get());
-	if (ret < 0) {
+	ret = _ping_ipv6(host);
+	if (!ret) {
+		goto wait_reply;
+	} else if (ret == -EIO) {
 		printk("Cannot send IPv6 ping\n");
-	}
-#endif
-
-#if defined(CONFIG_NET_IPV4) && !defined(CONFIG_NET_IPV6)
-	ret = net_addr_pton(AF_INET, host, &ipv4_target);
-	if (ret < 0) {
-		printk("Invalid IPv4 address\n");
 		return 0;
 	}
 
-	ret = net_icmpv4_send_echo_request(net_if_get_default(),
-					   &ipv4_target,
-					   sys_rand32_get(),
-					   sys_rand32_get());
-	if (ret < 0) {
-		printk("Cannot send IPv4 ping\n");
-	}
-#endif
-
-#if defined(CONFIG_NET_IPV6) && defined(CONFIG_NET_IPV4)
-	ret = net_addr_pton(AF_INET6, host, &ipv6_target);
-	if (ret < 0) {
-		ret = net_addr_pton(AF_INET, host, &ipv4_target);
-		if (ret < 0) {
-			printk("Invalid IP address\n");
-			return 0;
-		}
-
-		ret = net_icmpv4_send_echo_request(net_if_get_default(),
-						   &ipv4_target,
-						   sys_rand32_get(),
-						   sys_rand32_get());
-		if (ret < 0) {
+	ret = _ping_ipv4(host);
+	if (ret) {
+		if (ret == -EIO) {
 			printk("Cannot send IPv4 ping\n");
+		} else if (ret == -EINVAL) {
+			printk("Invalid IP address\n");
 		}
 
 		return 0;
-	} else {
-		ret = net_icmpv6_send_echo_request(net_if_get_default(),
-						   &ipv6_target,
-						   sys_rand32_get(),
-						   sys_rand32_get());
-		if (ret < 0) {
-			printk("Cannot send IPv6 ping\n");
-		}
 	}
-#endif
+
+wait_reply:
+	ret = k_sem_take(&ping_timeout, K_SECONDS(2));
+	if (ret == -EAGAIN) {
+		printk("Ping timeout\n");
+		_remove_ipv6_ping_handler();
+		_remove_ipv4_ping_handler();
+	}
 
 	return 0;
 }
 
-static int shell_cmd_route(int argc, char *argv[])
+int net_shell_cmd_route(int argc, char *argv[])
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -868,10 +1435,10 @@ extern char _main_stack[];
 extern char _interrupt_stack[];
 #endif
 
-static int shell_cmd_stacks(int argc, char *argv[])
+int net_shell_cmd_stacks(int argc, char *argv[])
 {
 #if defined(CONFIG_INIT_STACKS)
-	unsigned int stack_offset, pcnt, unused;
+	unsigned int pcnt, unused;
 #endif
 	struct net_stack_info *info;
 
@@ -880,42 +1447,42 @@ static int shell_cmd_stacks(int argc, char *argv[])
 
 	for (info = __net_stack_start; info != __net_stack_end; info++) {
 		net_analyze_stack_get_values(info->stack, info->size,
-					     &stack_offset, &pcnt, &unused);
+					     &pcnt, &unused);
 
 #if defined(CONFIG_INIT_STACKS)
 		printk("%s [%s] stack size %zu/%zu bytes unused %u usage"
 		       " %zu/%zu (%u %%)\n",
 		       info->pretty_name, info->name, info->orig_size,
-		       info->size + stack_offset, unused,
+		       info->size, unused,
 		       info->size - unused, info->size, pcnt);
 #else
-		printk("%s [%s] stack size %u usage not available\n",
+		printk("%s [%s] stack size %zu usage not available\n",
 		       info->pretty_name, info->name, info->orig_size);
 #endif
 	}
 
 #if defined(CONFIG_INIT_STACKS)
 	net_analyze_stack_get_values(_main_stack, CONFIG_MAIN_STACK_SIZE,
-				     &stack_offset, &pcnt, &unused);
+				     &pcnt, &unused);
 	printk("%s [%s] stack size %d/%d bytes unused %u usage"
 	       " %d/%d (%u %%)\n",
 	       "main", "_main_stack", CONFIG_MAIN_STACK_SIZE,
-	       CONFIG_MAIN_STACK_SIZE + stack_offset, unused,
+	       CONFIG_MAIN_STACK_SIZE, unused,
 	       CONFIG_MAIN_STACK_SIZE - unused, CONFIG_MAIN_STACK_SIZE, pcnt);
 
 	net_analyze_stack_get_values(_interrupt_stack, CONFIG_ISR_STACK_SIZE,
-				     &stack_offset, &pcnt, &unused);
+				     &pcnt, &unused);
 	printk("%s [%s] stack size %d/%d bytes unused %u usage"
 	       " %d/%d (%u %%)\n",
 	       "ISR", "_interrupt_stack", CONFIG_ISR_STACK_SIZE,
-	       CONFIG_ISR_STACK_SIZE + stack_offset, unused,
+	       CONFIG_ISR_STACK_SIZE, unused,
 	       CONFIG_ISR_STACK_SIZE - unused, CONFIG_ISR_STACK_SIZE, pcnt);
 #endif
 
 	return 0;
 }
 
-static int shell_cmd_stats(int argc, char *argv[])
+int net_shell_cmd_stats(int argc, char *argv[])
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -929,40 +1496,317 @@ static int shell_cmd_stats(int argc, char *argv[])
 	return 0;
 }
 
-static int shell_cmd_help(int argc, char *argv[])
-{
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
+#if defined(CONFIG_NET_TCP)
+static struct net_context *tcp_ctx;
 
-	/* Keep the commands in alphabetical order */
-	printk("net allocs\n\tPrint network buffer allocations\n");
-	printk("net conn\n\tPrint information about network connections\n");
-	printk("net iface\n\tPrint information about network interfaces\n");
-	printk("net mem\n\tPrint network buffer information\n");
-	printk("net nbr\n\tPrint neighbor information\n");
-	printk("net ping <host>\n\tPing a network host\n");
-	printk("net route\n\tShow network routes\n");
-	printk("net stacks\n\tShow network stacks information\n");
-	printk("net stats\n\tShow network statistics\n");
+#define TCP_CONNECT_TIMEOUT K_SECONDS(5) /* ms */
+#define TCP_TIMEOUT K_SECONDS(2) /* ms */
+
+static void tcp_connected(struct net_context *context,
+			  int status,
+			  void *user_data)
+{
+	if (status < 0) {
+		printk("TCP connection failed (%d)\n", status);
+
+		net_context_put(context);
+
+		tcp_ctx = NULL;
+	} else {
+		printk("TCP connected\n");
+	}
+}
+
+#if defined(CONFIG_NET_IPV6)
+static void get_my_ipv6_addr(struct net_if *iface,
+			     struct sockaddr *myaddr)
+{
+	const struct in6_addr *my6addr;
+
+	my6addr = net_if_ipv6_select_src_addr(net_if_get_default(),
+					      &net_sin6(myaddr)->sin6_addr);
+
+	memcpy(&net_sin6(myaddr)->sin6_addr, my6addr, sizeof(struct in6_addr));
+
+	net_sin6(myaddr)->sin6_port = 0; /* let the IP stack to select */
+}
+#endif
+
+#if defined(CONFIG_NET_IPV4)
+static void get_my_ipv4_addr(struct net_if *iface,
+			     struct sockaddr *myaddr)
+{
+	/* Just take the first IPv4 address of an interface. */
+	memcpy(&net_sin(myaddr)->sin_addr,
+	       &iface->ipv4.unicast[0].address.in_addr,
+	       sizeof(struct in_addr));
+
+	net_sin(myaddr)->sin_port = 0; /* let the IP stack to select */
+}
+#endif
+
+static void print_connect_info(int family,
+			       struct sockaddr *myaddr,
+			       struct sockaddr *addr)
+{
+	switch (family) {
+	case AF_INET:
+#if defined(CONFIG_NET_IPV4)
+		printk("Connecting from %s:%u ",
+		       net_sprint_ipv4_addr(&net_sin(myaddr)->sin_addr),
+		       ntohs(net_sin(myaddr)->sin_port));
+		printk("to %s:%u\n",
+		       net_sprint_ipv4_addr(&net_sin(addr)->sin_addr),
+		       ntohs(net_sin(addr)->sin_port));
+#else
+		printk("IPv4 not supported\n");
+#endif
+		break;
+
+	case AF_INET6:
+#if defined(CONFIG_NET_IPV6)
+		printk("Connecting from [%s]:%u ",
+		       net_sprint_ipv6_addr(&net_sin6(myaddr)->sin6_addr),
+		       ntohs(net_sin6(myaddr)->sin6_port));
+		printk("to [%s]:%u\n",
+		       net_sprint_ipv6_addr(&net_sin6(addr)->sin6_addr),
+		       ntohs(net_sin6(addr)->sin6_port));
+#else
+		printk("IPv6 not supported\n");
+#endif
+		break;
+
+	default:
+		printk("Unknown protocol family (%d)\n", family);
+		break;
+	}
+}
+
+static int tcp_connect(char *host, u16_t port, struct net_context **ctx)
+{
+	struct sockaddr addr;
+	struct sockaddr myaddr;
+	int addrlen;
+	int family;
+	int ret;
+
+#if defined(CONFIG_NET_IPV6) && !defined(CONFIG_NET_IPV4)
+	ret = net_addr_pton(AF_INET6, host, &net_sin6(&addr)->sin6_addr);
+	if (ret < 0) {
+		printk("Invalid IPv6 address\n");
+		return 0;
+	}
+
+	net_sin6(&addr)->sin6_port = htons(port);
+	addrlen = sizeof(struct sockaddr_in6);
+	get_my_ipv6_addr(net_if_get_default(), &myaddr);
+	family = addr.family = myaddr.family = AF_INET6;
+#endif
+
+#if defined(CONFIG_NET_IPV4) && !defined(CONFIG_NET_IPV6)
+	ret = net_addr_pton(AF_INET, host, &net_sin(&addr)->sin_addr);
+	if (ret < 0) {
+		printk("Invalid IPv4 address\n");
+		return 0;
+	}
+
+	get_my_ipv4_addr(net_if_get_default(), &myaddr);
+	net_sin(&addr)->sin_port = htons(port);
+	addrlen = sizeof(struct sockaddr_in);
+	family = addr.family = myaddr.family = AF_INET;
+#endif
+
+#if defined(CONFIG_NET_IPV6) && defined(CONFIG_NET_IPV4)
+	ret = net_addr_pton(AF_INET6, host, &net_sin6(&addr)->sin6_addr);
+	if (ret < 0) {
+		ret = net_addr_pton(AF_INET, host, &net_sin(&addr)->sin_addr);
+		if (ret < 0) {
+			printk("Invalid IP address\n");
+			return 0;
+		}
+
+		net_sin(&addr)->sin_port = htons(port);
+		addrlen = sizeof(struct sockaddr_in);
+		get_my_ipv4_addr(net_if_get_default(), &myaddr);
+		family = addr.family = myaddr.family = AF_INET;
+	} else {
+		net_sin6(&addr)->sin6_port = htons(port);
+		addrlen = sizeof(struct sockaddr_in6);
+		get_my_ipv6_addr(net_if_get_default(), &myaddr);
+		family = addr.family = myaddr.family = AF_INET6;
+	}
+#endif
+
+	print_connect_info(family, &myaddr, &addr);
+
+	ret = net_context_get(family, SOCK_STREAM, IPPROTO_TCP, ctx);
+	if (ret < 0) {
+		printk("Cannot get TCP context (%d)\n", ret);
+		return ret;
+	}
+
+	ret = net_context_bind(*ctx, &myaddr, addrlen);
+	if (ret < 0) {
+		printk("Cannot bind TCP (%d)\n", ret);
+		return ret;
+	}
+
+	return net_context_connect(*ctx, &addr, addrlen, tcp_connected,
+				   K_NO_WAIT, NULL);
+}
+
+static void tcp_sent_cb(struct net_context *context,
+			int status,
+			void *token,
+			void *user_data)
+{
+	printk("Message sent\n");
+}
+#endif
+
+int net_shell_cmd_tcp(int argc, char *argv[])
+{
+#if defined(CONFIG_NET_TCP)
+	int arg = 1;
+	int ret;
+
+	if (argv[arg]) {
+		if (!strcmp(argv[arg], "connect")) {
+			/* tcp connect <ip> port */
+			char *ip;
+			u16_t port;
+
+			if (tcp_ctx && net_context_is_used(tcp_ctx)) {
+				printk("Already connected\n");
+				return 0;
+			}
+
+			if (!argv[++arg]) {
+				printk("Peer IP address missing.\n");
+				return 0;
+			}
+
+			ip = argv[arg];
+
+			if (!argv[++arg]) {
+				printk("Peer port missing.\n");
+				return 0;
+			}
+
+			port = strtol(argv[arg], NULL, 10);
+
+			return tcp_connect(ip, port, &tcp_ctx);
+		}
+
+		if (!strcmp(argv[arg], "send")) {
+			/* tcp send <data> */
+			struct net_pkt *pkt;
+
+			if (!tcp_ctx || !net_context_is_used(tcp_ctx)) {
+				printk("Not connected\n");
+				return 0;
+			}
+
+			if (!argv[++arg]) {
+				printk("No data to send.\n");
+				return 0;
+			}
+
+			pkt = net_pkt_get_tx(tcp_ctx, TCP_TIMEOUT);
+			if (!pkt) {
+				printk("Out of pkts, msg cannot be sent.\n");
+				return 0;
+			}
+
+			ret = net_pkt_append_all(pkt, strlen(argv[arg]),
+					      argv[arg], TCP_TIMEOUT);
+			if (!ret) {
+				printk("Cannot build msg (out of pkts)\n");
+				net_pkt_unref(pkt);
+				return 0;
+			}
+
+			ret = net_context_send(pkt, tcp_sent_cb, TCP_TIMEOUT,
+					       NULL, NULL);
+			if (ret < 0) {
+				printk("Cannot send msg (%d)\n", ret);
+				net_pkt_unref(pkt);
+				return 0;
+			}
+
+			return 0;
+		}
+
+		if (!strcmp(argv[arg], "close")) {
+			/* tcp close */
+			if (!tcp_ctx || !net_context_is_used(tcp_ctx)) {
+				printk("Not connected\n");
+				return 0;
+			}
+
+			ret = net_context_put(tcp_ctx);
+			if (ret < 0) {
+				printk("Cannot close the connection (%d)\n",
+				       ret);
+				return 0;
+			}
+
+			printk("Connection closed.\n");
+			tcp_ctx = NULL;
+
+			return 0;
+		}
+
+		printk("Unknown command '%s'\n", argv[arg]);
+		goto usage;
+	} else {
+		printk("Invalid command.\n");
+	usage:
+		printk("Usage:\n");
+		printk("\ttcp connect <ipaddr> port\n");
+		printk("\ttcp send <data>\n");
+		printk("\ttcp close\n");
+	}
+#else
+	printk("TCP not enabled.\n");
+#endif /* CONFIG_NET_TCP */
+
 	return 0;
 }
 
 static struct shell_cmd net_commands[] = {
 	/* Keep the commands in alphabetical order */
-	{ "allocs", shell_cmd_allocs, NULL },
-	{ "conn", shell_cmd_conn, NULL },
-	{ "help", shell_cmd_help, NULL },
-	{ "iface", shell_cmd_iface, NULL },
-	{ "mem", shell_cmd_mem, NULL },
-	{ "nbr", shell_cmd_nbr, NULL },
-	{ "ping", shell_cmd_ping, NULL },
-	{ "route", shell_cmd_route, NULL },
-	{ "stacks", shell_cmd_stacks, NULL },
-	{ "stats", shell_cmd_stats, NULL },
+	{ "allocs", net_shell_cmd_allocs,
+		"\n\tPrint network memory allocations" },
+	{ "conn", net_shell_cmd_conn,
+		"\n\tPrint information about network connections" },
+	{ "dns", net_shell_cmd_dns, "\n\tShow how DNS is configure\n"
+		"dns cancel\n\tCancel all pending requests\n"
+		"dns <hostname> [A or AAAA]\n\tQuery IPv4 address (default) or "
+		"IPv6 address for a  host name" },
+	{ "http", net_shell_cmd_http,
+		"\n\tPrint information about active HTTP connections\n"
+		"http monitor\n\tStart monitoring HTTP connections\n"
+		"http\n\tTurn off HTTP connection monitoring" },
+	{ "iface", net_shell_cmd_iface,
+		"\n\tPrint information about network interfaces" },
+	{ "mem", net_shell_cmd_mem,
+		"\n\tPrint information about network interfaces" },
+	{ "nbr", net_shell_cmd_nbr, "\n\tPrint neighbor information\n"
+		"nbr rm <IPv6 address>\n\tRemove neighbor from cache" },
+	{ "ping", net_shell_cmd_ping, "<host>\n\tPing a network host" },
+	{ "route", net_shell_cmd_route, "\n\tShow network route" },
+	{ "stacks", net_shell_cmd_stacks,
+		"\n\tShow network stacks information" },
+	{ "stats", net_shell_cmd_stats, "\n\tShow network statistics" },
+	{ "tcp", net_shell_cmd_tcp, "connect <ip> port\n\tConnect to TCP peer\n"
+		"tcp send <data>\n\tSend data to peer using TCP\n"
+		"tcp close\n\tClose TCP connection" },
 	{ NULL, NULL, NULL }
 };
 
 void net_shell_init(void)
 {
-	SHELL_REGISTER(NET_SHELL_MODULE, net_commands);
 }
+
+SHELL_REGISTER(NET_SHELL_MODULE, net_commands);

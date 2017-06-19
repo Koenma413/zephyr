@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
@@ -20,14 +20,12 @@
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
 
-#include <gatt/gap.h>
 #include <gatt/hrs.h>
 #include <gatt/dis.h>
 #include <gatt/bas.h>
 
 #define DEVICE_NAME		CONFIG_BLUETOOTH_DEVICE_NAME
 #define DEVICE_NAME_LEN		(sizeof(DEVICE_NAME) - 1)
-#define HEART_RATE_APPEARANCE	0x0341
 
 struct bt_conn *default_conn;
 
@@ -40,7 +38,7 @@ static const struct bt_data sd[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
-static void connected(struct bt_conn *conn, uint8_t err)
+static void connected(struct bt_conn *conn, u8_t err)
 {
 	if (err) {
 		printk("Connection failed (err %u)\n", err);
@@ -50,7 +48,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void disconnected(struct bt_conn *conn, u8_t reason)
 {
 	printk("Disconnected (reason %u)\n", reason);
 
@@ -74,7 +72,6 @@ static void bt_ready(int err)
 
 	printk("Bluetooth initialized\n");
 
-	gap_init(DEVICE_NAME, HEART_RATE_APPEARANCE);
 	hrs_init(0x01);
 	bas_init();
 	dis_init(CONFIG_SOC, "Manufacturer");

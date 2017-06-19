@@ -29,38 +29,23 @@
 #include <kernel.h>
 #include <kernel_structs.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <wait_q.h>
 #include <misc/dlist.h>
 #include <debug/object_tracing_common.h>
 #include <errno.h>
 #include <init.h>
 
-#ifdef CONFIG_OBJECT_MONITOR
-#define RECORD_STATE_CHANGE(mutex) \
-	do { (mutex)->num_lock_state_changes++; } while ((0))
-#define RECORD_CONFLICT(mutex) \
-	do { (mutex)->num_conflicts++; } while ((0))
-#else
 #define RECORD_STATE_CHANGE(mutex) do { } while ((0))
 #define RECORD_CONFLICT(mutex) do { } while ((0))
-#endif
 
-#ifdef CONFIG_OBJECT_MONITOR
-#define INIT_OBJECT_MONITOR(mutex) do { \
-	mutex->num_lock_state_changes = 0; \
-	mutex->num_conflicts = 0; \
-	} while ((0))
-#else
-#define INIT_OBJECT_MONITOR(mutex) do { } while ((0))
-#endif
 
 extern struct k_mutex _k_mutex_list_start[];
 extern struct k_mutex _k_mutex_list_end[];
 
-struct k_mutex *_trace_list_k_mutex;
-
 #ifdef CONFIG_OBJECT_TRACING
+
+struct k_mutex *_trace_list_k_mutex;
 
 /*
  * Complete initialization of statically defined mutexes.
@@ -92,7 +77,6 @@ void k_mutex_init(struct k_mutex *mutex)
 	sys_dlist_init(&mutex->wait_q);
 
 	SYS_TRACING_OBJ_INIT(k_mutex, mutex);
-	INIT_OBJECT_MONITOR(mutex);
 }
 
 static int new_prio_for_inheritance(int target, int limit)
@@ -117,7 +101,7 @@ static void adjust_owner_prio(struct k_mutex *mutex, int new_prio)
 	}
 }
 
-int k_mutex_lock(struct k_mutex *mutex, int32_t timeout)
+int k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 {
 	int new_prio, key;
 

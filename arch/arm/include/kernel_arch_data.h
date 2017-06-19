@@ -25,52 +25,19 @@ extern "C" {
 #endif
 
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <arch/cpu.h>
+#include <kernel_arch_thread.h>
 
 #ifndef _ASMLANGUAGE
 #include <kernel.h>
 #include <nano_internal.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <misc/dlist.h>
 #include <atomic.h>
 #endif
 
 #ifndef _ASMLANGUAGE
-
-struct _caller_saved {
-	/*
-	 * Unused for Cortex-M, which automatically saves the necessary
-	 * registers in its exception stack frame.
-	 *
-	 * For Cortex-A, this may be:
-	 *
-	 * uint32_t a1;    // r0
-	 * uint32_t a2;    // r1
-	 * uint32_t a3;    // r2
-	 * uint32_t a4;    // r3
-	 * uint32_t ip;    // r12
-	 * uint32_t lr;    // r14
-	 * uint32_t pc;    // r15
-	 * uint32_t xpsr;
-	 */
-};
-
-typedef struct _caller_saved _caller_saved_t;
-
-struct _callee_saved {
-	uint32_t v1;  /* r4 */
-	uint32_t v2;  /* r5 */
-	uint32_t v3;  /* r6 */
-	uint32_t v4;  /* r7 */
-	uint32_t v5;  /* r8 */
-	uint32_t v6;  /* r9 */
-	uint32_t v7;  /* r10 */
-	uint32_t v8;  /* r11 */
-	uint32_t psp; /* r13 */
-};
-
-typedef struct _callee_saved _callee_saved_t;
 
 typedef struct __esf _esf_t;
 
@@ -87,47 +54,6 @@ typedef struct __esf _esf_t;
 #endif
 
 #ifndef _ASMLANGUAGE
-
-#ifdef CONFIG_FLOAT
-struct _preempt_float {
-	float  s16;
-	float  s17;
-	float  s18;
-	float  s19;
-	float  s20;
-	float  s21;
-	float  s22;
-	float  s23;
-	float  s24;
-	float  s25;
-	float  s26;
-	float  s27;
-	float  s28;
-	float  s29;
-	float  s30;
-	float  s31;
-};
-#endif
-
-struct _thread_arch {
-
-	/* interrupt locking key */
-	uint32_t basepri;
-
-	/* r0 in stack frame cannot be written to reliably */
-	uint32_t swap_return_value;
-
-#ifdef CONFIG_FLOAT
-	/*
-	 * No cooperative floating point register set structure exists for
-	 * the Cortex-M as it automatically saves the necessary registers
-	 * in its exception stack frame.
-	 */
-	struct _preempt_float  preempt_float;
-#endif
-};
-
-typedef struct _thread_arch _thread_arch_t;
 
 struct _kernel_arch {
 	/* empty */

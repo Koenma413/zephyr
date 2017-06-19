@@ -22,6 +22,7 @@ config SOC_PART_NUMBER
 	string
 	default SOC_PART_NUMBER_KINETIS_K6X if SOC_SERIES_KINETIS_K6X
 	default SOC_PART_NUMBER_KINETIS_KWX if SOC_SERIES_KINETIS_KWX
+	default SOC_PART_NUMBER_KINETIS_KL2X if SOC_SERIES_KINETIS_KL2X
 	help
 	  This string holds the full part number of the SoC. It is a hidden option
 	  that you should not set directly. The part number selection choice defines
@@ -56,6 +57,20 @@ config HAS_LPUART
 	default n
 	help
 	  Set if the low power uart (LPUART) module is present in the SoC.
+
+config HAS_LPSCI
+	bool
+	default n
+	help
+	  Set if the low power uart (LPSCI) module is present in the SoC.
+
+config HAS_SYSMPU
+	bool "Enable MPU"
+	depends on CPU_HAS_MPU
+	select NXP_MPU
+	default n
+	help
+	  Enable MPU
 
 if HAS_OSC
 

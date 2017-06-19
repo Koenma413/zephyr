@@ -12,9 +12,10 @@
 #include <misc/byteorder.h>
 #include <misc/util.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
-#include <bluetooth/log.h>
 #include <bluetooth/hci_driver.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
+#include "common/log.h"
 
 #define HCI_CMD			0x01
 #define HCI_ACL			0x02
@@ -57,8 +58,8 @@
  */
 #define SPI_MAX_MSG_LEN		255 /* As defined by X-NUCLEO-IDB04A1 BSP */
 
-static uint8_t rxmsg[SPI_MAX_MSG_LEN];
-static uint8_t txmsg[SPI_MAX_MSG_LEN];
+static u8_t rxmsg[SPI_MAX_MSG_LEN];
+static u8_t txmsg[SPI_MAX_MSG_LEN];
 
 static struct device		*spi_dev;
 #if defined(CONFIG_BLUETOOTH_SPI_BLUENRG)
@@ -74,6 +75,7 @@ static K_SEM_DEFINE(sem_request, 0, 1);
 static K_SEM_DEFINE(sem_busy, 1, 1);
 
 static BT_STACK_NOINIT(rx_stack, 448);
+static struct k_thread rx_thread_data;
 
 static struct spi_config spi_conf = {
 	.config = SPI_WORD(8),
@@ -82,10 +84,10 @@ static struct spi_config spi_conf = {
 
 #if defined(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
 #include <misc/printk.h>
-static inline void spi_dump_message(const uint8_t *pre, uint8_t *buf,
-				    uint8_t size)
+static inline void spi_dump_message(const u8_t *pre, u8_t *buf,
+				    u8_t size)
 {
-	uint8_t i, c;
+	u8_t i, c;
 
 	printk("%s (%d): ", pre, size);
 	for (i = 0; i < size; i++) {
@@ -101,15 +103,15 @@ static inline void spi_dump_message(const uint8_t *pre, uint8_t *buf,
 }
 #else
 static inline
-void spi_dump_message(const uint8_t *pre, uint8_t *buf, uint8_t size) {}
+void spi_dump_message(const u8_t *pre, u8_t *buf, u8_t size) {}
 #endif
 
-static inline uint16_t bt_spi_get_cmd(uint8_t *txmsg)
+static inline u16_t bt_spi_get_cmd(u8_t *txmsg)
 {
 	return (txmsg[CMD_OCF] << 8) | txmsg[CMD_OGF];
 }
 
-static inline uint16_t bt_spi_get_evt(uint8_t *rxmsg)
+static inline u16_t bt_spi_get_evt(u8_t *rxmsg)
 {
 	return (rxmsg[EVT_VENDOR_CODE_MSB] << 8) | rxmsg[EVT_VENDOR_CODE_LSB];
 }
@@ -120,7 +122,7 @@ static void bt_spi_isr(struct device *unused1, struct gpio_callback *unused2,
 	k_sem_give(&sem_request);
 }
 
-static void bt_spi_handle_vendor_evt(uint8_t *rxmsg)
+static void bt_spi_handle_vendor_evt(u8_t *rxmsg)
 {
 	switch (bt_spi_get_evt(rxmsg)) {
 	case EVT_BLUE_INITIALIZED:
@@ -133,10 +135,10 @@ static void bt_spi_handle_vendor_evt(uint8_t *rxmsg)
 static void bt_spi_rx_thread(void)
 {
 	struct net_buf *buf;
-	uint8_t header_master[5] = { SPI_READ, 0x00, 0x00, 0x00, 0x00 };
-	uint8_t header_slave[5];
+	u8_t header_master[5] = { SPI_READ, 0x00, 0x00, 0x00, 0x00 };
+	u8_t header_slave[5];
 	struct bt_hci_acl_hdr acl_hdr;
-	uint8_t size;
+	u8_t size;
 
 	memset(&txmsg, 0xFF, SPI_MAX_MSG_LEN);
 
@@ -181,17 +183,15 @@ static void bt_spi_rx_thread(void)
 				buf = bt_buf_get_cmd_complete(K_FOREVER);
 				break;
 			default:
-				buf = bt_buf_get_rx(K_FOREVER);
+				buf = bt_buf_get_rx(BT_BUF_EVT, K_FOREVER);
 				break;
 			}
 
-			bt_buf_set_type(buf, BT_BUF_EVT);
 			net_buf_add_mem(buf, &rxmsg[1],
 					rxmsg[EVT_HEADER_SIZE] + 2);
 			break;
 		case HCI_ACL:
-			buf = bt_buf_get_rx(K_FOREVER);
-			bt_buf_set_type(buf, BT_BUF_ACL_IN);
+			buf = bt_buf_get_rx(BT_BUF_ACL_IN, K_FOREVER);
 			memcpy(&acl_hdr, &rxmsg[1], sizeof(acl_hdr));
 			net_buf_add_mem(buf, &acl_hdr, sizeof(acl_hdr));
 			net_buf_add_mem(buf, &rxmsg[5],
@@ -213,8 +213,8 @@ static void bt_spi_rx_thread(void)
 
 static int bt_spi_send(struct net_buf *buf)
 {
-	uint8_t header[5] = { SPI_WRITE, 0x00,  0x00,  0x00,  0x00 };
-	uint32_t pending;
+	u8_t header[5] = { SPI_WRITE, 0x00,  0x00,  0x00,  0x00 };
+	u32_t pending;
 
 	/* Buffer needs an additional byte for type */
 	if (buf->len >= SPI_MAX_MSG_LEN) {
@@ -325,9 +325,10 @@ static int bt_spi_open(void)
 	}
 
 	/* Start RX thread */
-	k_thread_spawn(rx_stack, sizeof(rx_stack),
-		       (k_thread_entry_t)bt_spi_rx_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&rx_thread_data, rx_stack,
+			K_THREAD_STACK_SIZEOF(rx_stack),
+			(k_thread_entry_t)bt_spi_rx_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	/* Take BLE out of reset */
 	gpio_pin_write(rst_dev, GPIO_RESET_PIN, 1);
@@ -338,7 +339,7 @@ static int bt_spi_open(void)
 	return 0;
 }
 
-static struct bt_hci_driver drv = {
+static const struct bt_hci_driver drv = {
 	.name		= "BT SPI",
 	.bus		= BT_HCI_DRIVER_BUS_SPI,
 	.open		= bt_spi_open,

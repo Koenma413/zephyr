@@ -21,14 +21,21 @@ extern "C" {
 #endif
 
 #ifndef _ASMLANGUAGE
-#include <stdint.h>
+#include <zephyr/types.h>
 
 #if defined(CONFIG_SYS_CLOCK_EXISTS) && \
 	(CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC == 0)
 #error "SYS_CLOCK_HW_CYCLES_PER_SEC must be non-zero!"
 #endif
 
+#ifdef CONFIG_TICKLESS_KERNEL
+#define sys_clock_ticks_per_sec \
+		(1000000 / (CONFIG_TICKLESS_KERNEL_TIME_UNIT_IN_MICRO_SECS))
+extern int _sys_clock_always_on;
+extern void _enable_sys_clock(void);
+#else
 #define sys_clock_ticks_per_sec CONFIG_SYS_CLOCK_TICKS_PER_SEC
+#endif
 
 #if defined(CONFIG_TIMER_READS_ITS_FREQUENCY_AT_RUNTIME)
 extern int sys_clock_hw_cycles_per_sec;
@@ -68,7 +75,7 @@ extern int sys_clock_hw_cycles_per_tick;
 
 /* SYS_CLOCK_HW_CYCLES_TO_NS64 converts CPU clock cycles to nanoseconds */
 #define SYS_CLOCK_HW_CYCLES_TO_NS64(X) \
-	(((uint64_t)(X) * sys_clock_us_per_tick * NSEC_PER_USEC) / \
+	(((u64_t)(X) * sys_clock_us_per_tick * NSEC_PER_USEC) / \
 	 sys_clock_hw_cycles_per_tick)
 
 /*
@@ -76,7 +83,7 @@ extern int sys_clock_hw_cycles_per_tick;
  * and calculates the average cycle time
  */
 #define SYS_CLOCK_HW_CYCLES_TO_NS_AVG(X, NCYCLES) \
-	(uint32_t)(SYS_CLOCK_HW_CYCLES_TO_NS64(X) / NCYCLES)
+	(u32_t)(SYS_CLOCK_HW_CYCLES_TO_NS64(X) / NCYCLES)
 
 /**
  * @defgroup clock_apis Kernel Clock APIs
@@ -94,13 +101,13 @@ extern int sys_clock_hw_cycles_per_tick;
  *
  * @return Duration in nanoseconds.
  */
-#define SYS_CLOCK_HW_CYCLES_TO_NS(X) (uint32_t)(SYS_CLOCK_HW_CYCLES_TO_NS64(X))
+#define SYS_CLOCK_HW_CYCLES_TO_NS(X) (u32_t)(SYS_CLOCK_HW_CYCLES_TO_NS64(X))
 
 /**
  * @} end defgroup clock_apis
  */
 
-extern int64_t _sys_clock_tick_count;
+extern volatile u64_t _sys_clock_tick_count;
 
 /*
  * Number of ticks for x seconds. NOTE: With MSEC() or USEC(),

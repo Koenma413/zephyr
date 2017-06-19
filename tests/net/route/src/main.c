@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
 #include <misc/printk.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 #include <tc_util.h>
 
@@ -83,7 +83,7 @@ static struct k_sem wait_data;
 #define WAIT_TIME 250
 
 struct net_route_test {
-	uint8_t mac_addr[sizeof(struct net_eth_addr)];
+	u8_t mac_addr[sizeof(struct net_eth_addr)];
 	struct net_linkaddr ll_addr;
 };
 
@@ -92,17 +92,17 @@ int net_route_dev_init(struct device *dev)
 	return 0;
 }
 
-static uint8_t *net_route_get_mac(struct device *dev)
+static u8_t *net_route_get_mac(struct device *dev)
 {
 	struct net_route_test *route = dev->driver_data;
 
-	if (route->mac_addr[0] == 0x00) {
-		/* 10-00-00-00-00 to 10-00-00-00-FF Documentation RFC7042 */
-		route->mac_addr[0] = 0x10;
+	if (route->mac_addr[2] == 0x00) {
+		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
+		route->mac_addr[0] = 0x00;
 		route->mac_addr[1] = 0x00;
-		route->mac_addr[2] = 0x00;
+		route->mac_addr[2] = 0x5E;
 		route->mac_addr[3] = 0x00;
-		route->mac_addr[4] = 0x00;
+		route->mac_addr[4] = 0x53;
 		route->mac_addr[5] = sys_rand32_get();
 	}
 
@@ -114,15 +114,15 @@ static uint8_t *net_route_get_mac(struct device *dev)
 
 static void net_route_iface_init(struct net_if *iface)
 {
-	uint8_t *mac = net_route_get_mac(net_if_get_device(iface));
+	u8_t *mac = net_route_get_mac(net_if_get_device(iface));
 
 	net_if_set_link_addr(iface, mac, sizeof(struct net_eth_addr),
 			     NET_LINK_ETHERNET);
 }
 
-static int tester_send(struct net_if *iface, struct net_buf *buf)
+static int tester_send(struct net_if *iface, struct net_pkt *pkt)
 {
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		TC_ERROR("No data to send!\n");
 		return -ENODATA;
 	}
@@ -134,9 +134,9 @@ static int tester_send(struct net_if *iface, struct net_buf *buf)
 		DBG("Received at iface %p and feeding it into iface %p\n",
 		    iface, recipient);
 
-		if (net_recv_data(recipient, buf) < 0) {
+		if (net_recv_data(recipient, pkt) < 0) {
 			TC_ERROR("Data receive failed.");
-			net_nbuf_unref(buf);
+			net_pkt_unref(pkt);
 			test_failed = true;
 		}
 
@@ -145,9 +145,9 @@ static int tester_send(struct net_if *iface, struct net_buf *buf)
 		return 0;
 	}
 
-	DBG("Buf %p to be sent len %lu\n", buf, net_buf_frags_len(buf));
+	DBG("pkt %p to be sent len %lu\n", pkt, net_pkt_get_len(pkt));
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	if (data_failure) {
 		test_failed = true;
@@ -160,9 +160,9 @@ static int tester_send(struct net_if *iface, struct net_buf *buf)
 	return 0;
 }
 
-static int tester_send_peer(struct net_if *iface, struct net_buf *buf)
+static int tester_send_peer(struct net_if *iface, struct net_pkt *pkt)
 {
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		TC_ERROR("No data to send!\n");
 		return -ENODATA;
 	}
@@ -174,9 +174,9 @@ static int tester_send_peer(struct net_if *iface, struct net_buf *buf)
 		DBG("Received at iface %p and feeding it into iface %p\n",
 		    iface, recipient);
 
-		if (net_recv_data(recipient, buf) < 0) {
+		if (net_recv_data(recipient, pkt) < 0) {
 			TC_ERROR("Data receive failed.");
-			net_nbuf_unref(buf);
+			net_pkt_unref(pkt);
 			test_failed = true;
 		}
 
@@ -185,9 +185,9 @@ static int tester_send_peer(struct net_if *iface, struct net_buf *buf)
 		return 0;
 	}
 
-	DBG("Buf %p to be sent len %lu\n", buf, net_buf_frags_len(buf));
+	DBG("pkt %p to be sent len %lu\n", pkt, net_pkt_get_len(pkt));
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	if (data_failure) {
 		test_failed = true;
@@ -313,100 +313,6 @@ static bool net_ctx_create(void)
 	return true;
 }
 
-static inline uint8_t get_llao_len(struct net_if *iface)
-{
-	if (iface->link_addr.len == 6) {
-		return 8;
-	} else if (iface->link_addr.len == 8) {
-		return 16;
-	}
-
-	/* What else could it be? */
-	NET_ASSERT_INFO(0, "Invalid link address length %d",
-			iface->link_addr.len);
-
-	return 0;
-}
-
-static inline void set_llao(struct net_linkaddr *lladdr,
-			    uint8_t *llao, uint8_t llao_len, uint8_t type)
-{
-	llao[NET_ICMPV6_OPT_TYPE_OFFSET] = type;
-	llao[NET_ICMPV6_OPT_LEN_OFFSET] = llao_len >> 3;
-
-	memcpy(&llao[NET_ICMPV6_OPT_DATA_OFFSET], lladdr->addr, lladdr->len);
-
-	memset(&llao[NET_ICMPV6_OPT_DATA_OFFSET + lladdr->len], 0,
-	       llao_len - lladdr->len - 2);
-}
-
-static inline void setup_icmpv6_hdr(struct net_buf *buf, uint8_t type,
-				    uint8_t code)
-{
-	net_buf_add_u8(buf, type);
-	net_buf_add_u8(buf, code);
-
-	memset(net_buf_add(buf, NET_ICMPV6_UNUSED_LEN), 0,
-	       NET_ICMPV6_UNUSED_LEN);
-}
-
-static bool net_test_send_na(struct net_if *iface,
-			     struct in6_addr *addr,
-			     struct net_linkaddr *lladdr,
-			     struct in6_addr *dst)
-{
-	struct net_buf *buf, *frag;
-	uint8_t llao_len;
-
-	buf = net_nbuf_get_reserve_tx(net_if_get_ll_reserve(iface, dst),
-				      K_FOREVER);
-
-	NET_ASSERT_INFO(buf, "Out of TX buffers");
-
-	buf = net_ipv6_create_raw(buf, addr, dst, iface, IPPROTO_ICMPV6);
-
-	frag = net_nbuf_get_frag(buf, K_FOREVER);
-
-	NET_ASSERT_INFO(frag, "Out of DATA buffers");
-
-	net_buf_frag_add(buf, frag);
-
-	net_nbuf_set_iface(buf, iface);
-	net_nbuf_set_family(buf, AF_INET6);
-	net_nbuf_set_ip_hdr_len(buf, sizeof(struct net_ipv6_hdr));
-
-	NET_IPV6_BUF(buf)->hop_limit = NET_IPV6_ND_HOP_LIMIT;
-
-	setup_icmpv6_hdr(buf->frags, NET_ICMPV6_NA, 0);
-
-	net_nbuf_ll_clear(buf);
-
-	llao_len = get_llao_len(iface);
-
-	net_nbuf_set_ext_len(buf, 0);
-
-	net_ipaddr_copy(&NET_ICMPV6_NA_BUF(buf)->tgt, addr);
-
-	set_llao(lladdr,
-		 net_nbuf_icmp_data(buf) + sizeof(struct net_icmp_hdr) +
-					sizeof(struct net_icmpv6_na_hdr),
-		 llao_len, NET_ICMPV6_ND_OPT_TLLAO);
-
-	net_buf_add(buf->frags, llao_len + sizeof(struct net_icmp_hdr) +
-					sizeof(struct net_icmpv6_na_hdr));
-
-	NET_ICMPV6_NA_BUF(buf)->flags = NET_ICMPV6_NA_FLAG_SOLICITED;
-
-	buf = net_ipv6_finalize_raw(buf, IPPROTO_ICMPV6);
-
-	if (net_send_data(buf) < 0) {
-		TC_ERROR("Cannot send NA buffer\n");
-		return false;
-	}
-
-	return true;
-}
-
 static bool net_test_send_ns(struct net_if *iface,
 			     struct in6_addr *addr)
 {
@@ -443,6 +349,8 @@ static bool net_test_nbr_lookup_ok(struct net_if *iface,
 
 static bool populate_nbr_cache(void)
 {
+	struct net_nbr *nbr;
+
 	msg_sending = NET_ICMPV6_NS;
 	feed_data = true;
 	data_failure = false;
@@ -453,20 +361,13 @@ static bool populate_nbr_cache(void)
 		return false;
 	}
 
-	/* The NS message sending causes some NA to be sent. Those
-	 * NAs will be discarded because there is no suitable interface
-	 * with such destination address. This is quite normal and those
-	 * extra NA messages can be safely discarded.
-	 */
-
-	/* The next NA will cause the ll address to be added to the
-	 * neighbor cache.
-	 */
-
-	if (!net_test_send_na(peer_iface,
-			      &peer_addr,
-			      &net_route_data_peer.ll_addr,
-			      &my_addr)) {
+	nbr = net_ipv6_nbr_add(net_if_get_default(),
+			       &peer_addr,
+			       &net_route_data_peer.ll_addr,
+			       false,
+			       NET_IPV6_NBR_STATE_REACHABLE);
+	if (!nbr) {
+		TC_ERROR("Cannot add peer to neighbor cache\n");
 		return false;
 	}
 

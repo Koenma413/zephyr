@@ -18,11 +18,12 @@
 #include <misc/byteorder.h>
 #include <string.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
-#include <bluetooth/log.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_driver.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_HCI_DRIVER)
+#include "common/log.h"
 
 #include "../util.h"
 
@@ -37,31 +38,32 @@
 #define H4_EVT  0x04
 
 static BT_STACK_NOINIT(rx_thread_stack, CONFIG_BLUETOOTH_RX_STACK_SIZE);
+static struct k_thread rx_thread_data;
 
 static struct {
 	struct net_buf *buf;
 	struct k_fifo   fifo;
 
-	uint16_t remaining;
-	uint16_t discard;
+	u16_t    remaining;
+	u16_t    discard;
 
 	bool     have_hdr;
 	bool     discardable;
 
-	uint8_t  hdr_len;
+	u8_t     hdr_len;
 
-	uint8_t  type;
+	u8_t     type;
 	union {
 		struct bt_hci_evt_hdr evt;
 		struct bt_hci_acl_hdr acl;
-		uint8_t hdr[4];
+		u8_t hdr[4];
 	};
 } rx = {
 	.fifo = K_FIFO_INITIALIZER(rx.fifo),
 };
 
 static struct {
-	uint8_t type;
+	u8_t type;
 	struct net_buf *buf;
 	struct k_fifo   fifo;
 } tx = {
@@ -99,7 +101,7 @@ static inline void get_acl_hdr(void)
 	struct bt_hci_acl_hdr *hdr = &rx.acl;
 	int to_read = sizeof(*hdr) - rx.remaining;
 
-	rx.remaining -= uart_fifo_read(h4_dev, (uint8_t *)hdr + to_read,
+	rx.remaining -= uart_fifo_read(h4_dev, (u8_t *)hdr + to_read,
 				       rx.remaining);
 	if (!rx.remaining) {
 		rx.remaining = sys_le16_to_cpu(hdr->len);
@@ -113,7 +115,7 @@ static inline void get_evt_hdr(void)
 	struct bt_hci_evt_hdr *hdr = &rx.evt;
 	int to_read = rx.hdr_len - rx.remaining;
 
-	rx.remaining -= uart_fifo_read(h4_dev, (uint8_t *)hdr + to_read,
+	rx.remaining -= uart_fifo_read(h4_dev, (u8_t *)hdr + to_read,
 				       rx.remaining);
 	if (rx.hdr_len == sizeof(*hdr) && rx.remaining < sizeof(*hdr)) {
 		switch (rx.evt.evt) {
@@ -167,7 +169,11 @@ static struct net_buf *get_rx(int timeout)
 		return bt_buf_get_cmd_complete(timeout);
 	}
 
-	return bt_buf_get_rx(timeout);
+	if (rx.type == H4_ACL) {
+		return bt_buf_get_rx(BT_BUF_ACL_IN, timeout);
+	} else {
+		return bt_buf_get_rx(BT_BUF_EVT, timeout);
+	}
 }
 
 static void rx_thread(void *p1, void *p2, void *p3)
@@ -223,7 +229,7 @@ static void rx_thread(void *p1, void *p2, void *p3)
 
 static size_t h4_discard(struct device *uart, size_t len)
 {
-	uint8_t buf[33];
+	u8_t buf[33];
 
 	return uart_fifo_read(uart, buf, min(len, sizeof(buf)));
 }
@@ -433,13 +439,14 @@ static int h4_open(void)
 
 	uart_irq_callback_set(h4_dev, bt_uart_isr);
 
-	k_thread_spawn(rx_thread_stack, sizeof(rx_thread_stack), rx_thread,
-		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+	k_thread_create(&rx_thread_data, rx_thread_stack,
+			K_THREAD_STACK_SIZEOF(rx_thread_stack), rx_thread,
+			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	return 0;
 }
 
-static struct bt_hci_driver drv = {
+static const struct bt_hci_driver drv = {
 	.name		= "H:4",
 	.bus		= BT_HCI_DRIVER_BUS_UART,
 	.open		= h4_open,

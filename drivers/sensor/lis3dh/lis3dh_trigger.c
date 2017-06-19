@@ -36,7 +36,7 @@ int lis3dh_trigger_set(struct device *dev,
 }
 
 static void lis3dh_gpio_callback(struct device *dev,
-				 struct gpio_callback *cb, uint32_t pins)
+				 struct gpio_callback *cb, u32_t pins)
 {
 	struct lis3dh_data *drv_data =
 		CONTAINER_OF(cb, struct lis3dh_data, gpio_cb);
@@ -131,9 +131,11 @@ int lis3dh_init_interrupt(struct device *dev)
 #if defined(CONFIG_LIS3DH_TRIGGER_OWN_THREAD)
 	k_sem_init(&drv_data->gpio_sem, 0, UINT_MAX);
 
-	k_thread_spawn(drv_data->thread_stack, CONFIG_LIS3DH_THREAD_STACK_SIZE,
-		    (k_thread_entry_t)lis3dh_thread, POINTER_TO_INT(dev),
-		    0, NULL, K_PRIO_COOP(CONFIG_LIS3DH_THREAD_PRIORITY), 0, 0);
+	k_thread_create(&drv_data->thread, drv_data->thread_stack,
+			CONFIG_LIS3DH_THREAD_STACK_SIZE,
+			(k_thread_entry_t)lis3dh_thread, POINTER_TO_INT(dev),
+			0, NULL, K_PRIO_COOP(CONFIG_LIS3DH_THREAD_PRIORITY),
+			0, 0);
 #elif defined(CONFIG_LIS3DH_TRIGGER_GLOBAL_THREAD)
 	drv_data->work.handler = lis3dh_work_cb;
 	drv_data->dev = dev;

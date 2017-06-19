@@ -28,7 +28,7 @@ const NANO_ESF _default_esf = {
 
 /**
  *
- * @brief Nanokernel fatal error handler
+ * @brief Fatal error handler
  *
  * This routine is called when fatal error conditions are detected by software
  * and is responsible only for reporting the error. Once reported, it then
@@ -55,7 +55,7 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 	case _NANO_ERR_INVALID_TASK_EXIT:
 		printk("***** Invalid Exit Software Error! *****\n");
 		break;
-#if defined(CONFIG_STACK_CANARIES)
+#if defined(CONFIG_STACK_CANARIES) || defined(CONFIG_STACK_SENTINEL)
 	case _NANO_ERR_STACK_CHK_FAIL:
 		printk("***** Stack Check Fail! *****\n");
 		break;
@@ -63,6 +63,15 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 	case _NANO_ERR_ALLOCATION_FAIL:
 		printk("**** Kernel Allocation Failure! ****\n");
 		break;
+
+	case _NANO_ERR_KERNEL_OOPS:
+		printk("***** Kernel OOPS! *****\n");
+		break;
+
+	case _NANO_ERR_KERNEL_PANIC:
+		printk("***** Kernel Panic! *****\n");
+		break;
+
 	default:
 		printk("**** Unknown Fatal Error %d! ****\n", reason);
 		break;
@@ -81,6 +90,7 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 	 */
 	_SysFatalErrorHandler(reason, pEsf);
 }
+
 
 #ifdef CONFIG_PRINTK
 static char *cause_str(unsigned int cause_code)
@@ -189,8 +199,21 @@ FUNC_NORETURN void ReservedInterruptHandler(unsigned int intNo)
 	_NanoFatalErrorHandler(_NANO_ERR_RESERVED_IRQ, &_default_esf);
 }
 
-/* Implemented in Xtensa HAL */
-extern FUNC_NORETURN void exit(int exit_code);
+void exit(int return_code)
+{
+#ifdef XT_SIMULATOR
+	__asm__ (
+	    "mov a3, %[code]\n\t"
+	    "movi a2, %[call]\n\t"
+	    "simcall\n\t"
+	    :
+	    : [code] "r" (return_code), [call] "i" (SYS_exit)
+	    : "a3", "a2");
+#else
+	printk("exit(%d)\n", return_code);
+	k_panic();
+#endif
+}
 
 /**
  *
@@ -212,31 +235,40 @@ extern FUNC_NORETURN void exit(int exit_code);
  *
  * @return N/A
  */
-FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
+FUNC_NORETURN __weak void _SysFatalErrorHandler(unsigned int reason,
 					 const NANO_ESF *pEsf)
 {
-	ARG_UNUSED(reason);
 	ARG_UNUSED(pEsf);
 
 #if !defined(CONFIG_SIMPLE_FATAL_ERROR_HANDLER)
+#ifdef CONFIG_STACK_SENTINEL
+	if (reason == _NANO_ERR_STACK_CHK_FAIL) {
+		goto hang_system;
+	}
+#endif
+	if (reason == _NANO_ERR_KERNEL_PANIC) {
+		goto hang_system;
+	}
 	if (k_is_in_isr() || _is_thread_essential()) {
 		printk("Fatal fault in %s! Spinning...\n",
 		       k_is_in_isr() ? "ISR" : "essential thread");
-#ifdef XT_SIMULATOR
-		exit(255 - reason);
-#else
-		for (;;)
-			; /* spin forever */
-#endif
+		goto hang_system;
 	}
 	printk("Fatal fault in thread %p! Aborting.\n", _current);
 	k_thread_abort(_current);
+
+hang_system:
+#else
+	ARG_UNUSED(reason);
+#endif
+
+#ifdef XT_SIMULATOR
+	exit(255 - reason);
 #else
 	for (;;) {
 		k_cpu_idle();
 	}
 #endif
-
 	CODE_UNREACHABLE;
 }
 

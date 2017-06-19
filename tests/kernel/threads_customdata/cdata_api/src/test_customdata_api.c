@@ -15,19 +15,20 @@
 #endif
 
 /*local variables*/
-static char __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 
 static void customdata_entry(void *p1, void *p2, void *p3)
 {
-	uint32_t data = 1;
+	u32_t data = 1;
 
-	assert_is_null(k_thread_custom_data_get(), NULL);
+	zassert_is_null(k_thread_custom_data_get(), NULL);
 	while (1) {
 		k_thread_custom_data_set((void *)data);
 		/* relinguish cpu for a while */
 		k_sleep(50);
 		/** TESTPOINT: custom data comparison */
-		assert_equal(data, (uint32_t)k_thread_custom_data_get(), NULL);
+		zassert_equal(data, (u32_t)k_thread_custom_data_get(), NULL);
 		data++;
 	}
 }
@@ -39,7 +40,7 @@ static void customdata_entry(void *p1, void *p2, void *p3)
  */
 void test_customdata_get_set_coop(void)
 {
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		customdata_entry, NULL, NULL, NULL,
 		K_PRIO_COOP(1), 0, 0);
 	k_sleep(500);
@@ -55,7 +56,7 @@ void test_customdata_get_set_coop(void)
 void test_customdata_get_set_preempt(void)
 {
 	/** TESTPOINT: custom data of preempt thread */
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		customdata_entry, NULL, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 0);
 	k_sleep(500);

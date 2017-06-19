@@ -7,7 +7,7 @@
 #include <zephyr.h>
 #include <net/net_core.h>
 #include <net/net_context.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_if.h>
 #include <string.h>
 #include <errno.h>
@@ -45,27 +45,27 @@ static void set_destination(struct sockaddr *addr)
 #endif
 
 static void udp_received(struct net_context *context,
-			 struct net_buf *buf, int status, void *user_data)
+			 struct net_pkt *pkt, int status, void *user_data)
 {
 	struct udp_context *ctx = user_data;
 
 	ARG_UNUSED(context);
 	ARG_UNUSED(status);
 
-	if (ctx->rx_nbuf) {
+	if (ctx->rx_pkt) {
 		k_sem_give(&ctx->rx_sem);
 		k_yield();
 
-		if (ctx->rx_nbuf) {
+		if (ctx->rx_pkt) {
 			printk("Packet %p is still being handled, "
-			       "dropping %p\n", ctx->rx_nbuf, buf);
+			       "dropping %p\n", ctx->rx_pkt, pkt);
 
-			net_nbuf_unref(buf);
+			net_pkt_unref(pkt);
 			return;
 		}
 	}
 
-	ctx->rx_nbuf = buf;
+	ctx->rx_pkt = pkt;
 	k_sem_give(&ctx->rx_sem);
 	k_yield();
 }
@@ -74,34 +74,34 @@ int udp_tx(void *context, const unsigned char *buf, size_t size)
 {
 	struct udp_context *ctx = context;
 	struct net_context *udp_ctx;
-	struct net_buf *send_buf;
+	struct net_pkt *send_pkt;
 	struct sockaddr dst_addr;
 	int rc, len;
 
 	udp_ctx = ctx->net_ctx;
 
-	send_buf = net_nbuf_get_tx(udp_ctx, K_FOREVER);
-	if (!send_buf) {
+	send_pkt = net_pkt_get_tx(udp_ctx, K_FOREVER);
+	if (!send_pkt) {
 		printk("cannot create buf\n");
 		return -EIO;
 	}
 
-	rc = net_nbuf_append(send_buf, size, (uint8_t *) buf, K_FOREVER);
+	rc = net_pkt_append_all(send_pkt, size, (u8_t *) buf, K_FOREVER);
 	if (!rc) {
 		printk("cannot write buf\n");
-		net_nbuf_unref(send_buf);
+		net_pkt_unref(send_pkt);
 		return -EIO;
 	}
 
 	set_destination(&dst_addr);
-	len = net_buf_frags_len(send_buf);
+	len = net_pkt_get_len(send_pkt);
 	k_sleep(UDP_TX_TIMEOUT);
 
-	rc = net_context_sendto(send_buf, &dst_addr,
+	rc = net_context_sendto(send_pkt, &dst_addr,
 				addrlen, NULL, K_FOREVER, NULL, NULL);
 	if (rc < 0) {
 		printk("Cannot send data to peer (%d)\n", rc);
-		net_nbuf_unref(send_buf);
+		net_pkt_unref(send_pkt);
 		return -EIO;
 	} else {
 		return len;
@@ -112,23 +112,30 @@ int udp_rx(void *context, unsigned char *buf, size_t size)
 {
 	struct udp_context *ctx = context;
 	struct net_buf *rx_buf = NULL;
-	uint16_t read_bytes;
-	uint8_t *ptr;
+	u16_t read_bytes;
+	u8_t *ptr;
 	int pos;
 	int len;
 	int rc;
 
 	k_sem_take(&ctx->rx_sem, K_FOREVER);
 
-	read_bytes = net_nbuf_appdatalen(ctx->rx_nbuf);
+	read_bytes = net_pkt_appdatalen(ctx->rx_pkt);
 	if (read_bytes > size) {
-		net_nbuf_unref(ctx->rx_nbuf);
-		ctx->rx_nbuf = NULL;
+		net_pkt_unref(ctx->rx_pkt);
+		ctx->rx_pkt = NULL;
 		return -ENOMEM;
 	}
 
-	ptr = net_nbuf_appdata(ctx->rx_nbuf);
-	rx_buf = ctx->rx_nbuf->frags;
+	ptr = net_pkt_appdata(ctx->rx_pkt);
+
+	rx_buf = ctx->rx_pkt->frags;
+	if (!rx_buf) {
+		net_pkt_unref(ctx->rx_pkt);
+		ctx->rx_pkt = NULL;
+		return -ENOMEM;
+	}
+
 	len = rx_buf->len - (ptr - rx_buf->data);
 	pos = 0;
 
@@ -145,8 +152,8 @@ int udp_rx(void *context, unsigned char *buf, size_t size)
 		len = rx_buf->len;
 	}
 
-	net_nbuf_unref(ctx->rx_nbuf);
-	ctx->rx_nbuf = NULL;
+	net_pkt_unref(ctx->rx_pkt);
+	ctx->rx_pkt = NULL;
 
 	if (read_bytes != pos) {
 		return -EIO;
@@ -202,16 +209,16 @@ int udp_init(struct udp_context *ctx)
 		goto error;
 	}
 
-	ctx->rx_nbuf = NULL;
+	ctx->rx_pkt = NULL;
 	ctx->remaining = 0;
 	ctx->net_ctx = udp_ctx;
 
-#if defined(CONFIG_NET_SAMPLES_PEER_IPV6_ADDR)
+#if defined(CONFIG_NET_APP_PEER_IPV6_ADDR)
 	if (net_addr_pton(AF_INET6,
-			  CONFIG_NET_SAMPLES_PEER_IPV6_ADDR,
+			  CONFIG_NET_APP_PEER_IPV6_ADDR,
 			  &server_addr) < 0) {
 		printk("Invalid peer IPv6 address %s",
-		       CONFIG_NET_SAMPLES_PEER_IPV6_ADDR);
+		       CONFIG_NET_APP_PEER_IPV6_ADDR);
 	}
 #endif
 
@@ -253,15 +260,15 @@ int udp_init(struct udp_context *ctx)
 		goto error;
 	}
 
-	ctx->rx_nbuf = NULL;
+	ctx->rx_pkt = NULL;
 	ctx->remaining = 0;
 	ctx->net_ctx = udp_ctx;
 
-#if defined(CONFIG_NET_SAMPLES_PEER_IPV4_ADDR)
-	if (net_addr_pton(AF_INET, CONFIG_NET_SAMPLES_PEER_IPV4_ADDR,
+#if defined(CONFIG_NET_APP_PEER_IPV4_ADDR)
+	if (net_addr_pton(AF_INET, CONFIG_NET_APP_PEER_IPV4_ADDR,
 			  &server_addr) < 0) {
 		printk("Invalid IPv4 address %s",
-		       CONFIG_NET_SAMPLES_PEER_IPV4_ADDR);
+		       CONFIG_NET_APP_PEER_IPV4_ADDR);
 	}
 #endif
 

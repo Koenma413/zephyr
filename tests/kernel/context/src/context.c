@@ -9,8 +9,8 @@
 /*
  * DESCRIPTION
  * This module tests the following CPU and thread related routines:
- * k_thread_spawn, k_yield(), k_is_in_isr(),
- * k_current_get(), k_cpu_idle(),
+ * k_thread_create, k_yield(), k_is_in_isr(),
+ * k_current_get(), k_cpu_idle(), k_cpu_atomic_idle(),
  * irq_lock(), irq_unlock(),
  * irq_offload(), irq_enable(), irq_disable(),
  */
@@ -82,8 +82,8 @@
 
 
 
-extern uint32_t _tick_get_32(void);
-extern int64_t _tick_get(void);
+extern u32_t _tick_get_32(void);
+extern s64_t _tick_get(void);
 
 typedef struct {
 	int command;            /* command to process   */
@@ -105,8 +105,10 @@ struct k_fifo timeout_order_fifo;
 static int thread_detected_error;
 static int thread_evidence;
 
-static char __stack thread_stack1[THREAD_STACKSIZE];
-static char __stack thread_stack2[THREAD_STACKSIZE];
+static K_THREAD_STACK_DEFINE(thread_stack1, THREAD_STACKSIZE);
+static K_THREAD_STACK_DEFINE(thread_stack2, THREAD_STACKSIZE);
+static struct k_thread thread_data1;
+static struct k_thread thread_data2;
 
 static ISR_INFO isr_info;
 
@@ -185,21 +187,31 @@ static int kernel_init_objects(void)
  * @return TC_PASS on success
  * @return TC_FAIL on failure
  */
-static int test_kernel_cpu_idle(void)
+static int test_kernel_cpu_idle(int atomic)
 {
-	int tick;               /* current tick count */
+	int tms, tms2;;         /* current time in millisecond */
 	int i;                  /* loop variable */
 
-	/* Align to a "tick boundary". */
-	tick = _tick_get_32();
-	while (tick == _tick_get_32()) {
+	/* Align to a "ms boundary". */
+	tms = k_uptime_get_32();
+	while (tms == k_uptime_get_32()) {
 	}
 
-	tick = _tick_get_32();
+	tms = k_uptime_get_32();
 	for (i = 0; i < 5; i++) {       /* Repeat the test five times */
-		k_cpu_idle();
-		tick++;
-		if (_tick_get_32() != tick) {
+		if (atomic) {
+			unsigned int key = irq_lock();
+
+			k_cpu_atomic_idle(key);
+		} else {
+			k_cpu_idle();
+		}
+		/* calculating milliseconds per tick*/
+		tms += sys_clock_us_per_tick / USEC_PER_MSEC;
+		tms2 = k_uptime_get_32();
+		if (tms2 < tms) {
+			TC_ERROR("Bad ms per tick value computed, got %d which is less than %d\n",
+				 tms2, tms);
 			return TC_FAIL;
 		}
 	}
@@ -308,6 +320,7 @@ static int test_kernel_interrupts(disable_int_func disable_int,
 	enable_int(imask);
 
 	if (tick2 != tick) {
+		TC_ERROR("tick advanced with interrupts locked\n");
 		return TC_FAIL;
 	}
 
@@ -316,7 +329,13 @@ static int test_kernel_interrupts(disable_int_func disable_int,
 		_tick_get_32();
 	}
 
-	return (tick == _tick_get_32()) ? TC_FAIL : TC_PASS;
+	tick2 = _tick_get_32();
+	if (tick == tick2) {
+		TC_ERROR("tick didn't advance as expected\n");
+		return TC_FAIL;
+	}
+
+	return TC_PASS;
 }
 
 /**
@@ -324,8 +343,8 @@ static int test_kernel_interrupts(disable_int_func disable_int,
  * @brief Test some context routines from a preemptible thread
  *
  * This routines tests the k_current_get() and
- * k_is_in_isr() routines from both a preemtible thread  and an ISR (that
- * interrupted a preemtible thread). Checking those routines with cooperative
+ * k_is_in_isr() routines from both a preemptible thread  and an ISR (that
+ * interrupted a preemptible thread). Checking those routines with cooperative
  * threads are done elsewhere.
  *
  * @return TC_PASS on success
@@ -342,11 +361,14 @@ static int test_kernel_ctx_task(void)
 	isr_info.error = 0;
 	/* isr_info is modified by the isr_handler routine */
 	isr_handler_trigger();
-	if (isr_info.error || isr_info.data != (void *)self_thread_id) {
-		/*
-		 * Either the ISR detected an error, or the ISR context ID
-		 * does not match the interrupted task's thread ID.
-		 */
+
+	if (isr_info.error) {
+		TC_ERROR("ISR detected an error\n");
+		return TC_FAIL;
+	}
+
+	if (isr_info.data != (void *)self_thread_id) {
+		TC_ERROR("ISR context ID mismatch\n");
 		return TC_FAIL;
 	}
 
@@ -354,12 +376,24 @@ static int test_kernel_ctx_task(void)
 	isr_info.command = EXEC_CTX_TYPE_CMD;
 	isr_info.error = 0;
 	isr_handler_trigger();
-	if (isr_info.error || isr_info.value != K_ISR) {
+
+	if (isr_info.error) {
+		TC_ERROR("ISR detected an error\n");
 		return TC_FAIL;
 	}
 
-	TC_PRINT("Testing k_is_in_isr() from a preemtible thread\n");
-	if (k_is_in_isr() || _current->base.prio < 0) {
+	if (isr_info.value != K_ISR) {
+		TC_ERROR("isr_info.value was not K_ISR\n");
+		return TC_FAIL;
+	}
+
+	TC_PRINT("Testing k_is_in_isr() from a preemptible thread\n");
+	if (k_is_in_isr()) {
+		TC_ERROR("Should not be in ISR context\n");
+		return TC_FAIL;
+	}
+	if (_current->base.prio < 0) {
+		TC_ERROR("Current thread should have preemptible priority\n");
 		return TC_FAIL;
 	}
 
@@ -433,7 +467,7 @@ static int test_kernel_thread(k_tid_t task_thread_id)
  * @brief Entry point to the thread's helper
  *
  * This routine is the entry point to the thread's helper thread.  It is used to
- * help test the behaviour of the k_yield() routine.
+ * help test the behavior of the k_yield() routine.
  *
  * @param arg1    unused
  * @param arg2    unused
@@ -474,14 +508,14 @@ static void thread_helper(void *arg1, void *arg2, void *arg3)
  * @brief Test the k_yield() routine
  *
  * This routine tests the k_yield() routine.  It starts another thread
- * (thus also testing k_thread_spawn() and checks that behaviour of
+ * (thus also testing k_thread_create() and checks that behavior of
  * k_yield() against the cases of there being a higher priority thread,
  * a lower priority thread, and another thread of equal priority.
  *
  * On error, it may set <thread_detected_error> to one of the following values:
  *   10 - helper thread ran prematurely
  *   11 - k_yield() did not yield to a higher priority thread
- *   12 - k_yield() did not yield to an equal prioirty thread
+ *   12 - k_yield() did not yield to an equal priority thread
  *   13 - k_yield() yielded to a lower priority thread
  *
  * @return TC_PASS on success
@@ -500,12 +534,12 @@ static int test_k_yield(void)
 	self_thread_id = k_current_get();
 	thread_evidence = 0;
 
-	k_thread_spawn(thread_stack2, THREAD_STACKSIZE, thread_helper,
-		       NULL, NULL, NULL,
-		       K_PRIO_COOP(THREAD_PRIORITY - 1), 0, 0);
+	k_thread_create(&thread_data2, thread_stack2, THREAD_STACKSIZE,
+			thread_helper, NULL, NULL, NULL,
+			K_PRIO_COOP(THREAD_PRIORITY - 1), 0, 0);
 
 	if (thread_evidence != 0) {
-		/* ERROR! Helper spawned at higher */
+		/* ERROR! Helper created at higher */
 		thread_detected_error = 10;     /* priority ran prematurely. */
 		return TC_FAIL;
 	}
@@ -591,12 +625,12 @@ static void thread_entry(void *task_thread_id, void *arg1, void *arg2)
 /*
  * Timeout tests
  *
- * Test the k_sleep() API, as well as the k_thread_spawn() ones.
+ * Test the k_sleep() API, as well as the k_thread_create() ones.
  */
 
 struct timeout_order {
 	void *link_in_fifo;
-	int32_t timeout;
+	s32_t timeout;
 	int timeout_order;
 	int q_order;
 };
@@ -612,12 +646,14 @@ struct timeout_order timeouts[] = {
 };
 
 #define NUM_TIMEOUT_THREADS ARRAY_SIZE(timeouts)
-static char __stack timeout_stacks[NUM_TIMEOUT_THREADS][THREAD_STACKSIZE];
+static K_THREAD_STACK_ARRAY_DEFINE(timeout_stacks, NUM_TIMEOUT_THREADS,
+				   THREAD_STACKSIZE);
+static struct k_thread timeout_threads[NUM_TIMEOUT_THREADS];
 
 /* a thread busy waits, then reports through a fifo */
 static void test_busy_wait(void *mseconds, void *arg2, void *arg3)
 {
-	uint32_t usecs;
+	u32_t usecs;
 
 	ARG_UNUSED(arg2);
 	ARG_UNUSED(arg3);
@@ -647,7 +683,7 @@ static void test_busy_wait(void *mseconds, void *arg2, void *arg3)
 /* a thread sleeps and times out, then reports through a fifo */
 static void test_thread_sleep(void *delta, void *arg2, void *arg3)
 {
-	int64_t timestamp;
+	s64_t timestamp;
 	int timeout = (int)delta;
 
 	ARG_UNUSED(arg2);
@@ -659,7 +695,8 @@ static void test_thread_sleep(void *delta, void *arg2, void *arg3)
 	timestamp = k_uptime_get() - timestamp;
 	TC_PRINT(" thread back from sleep\n");
 
-	if (timestamp < timeout || timestamp > timeout + 10) {
+	if (timestamp < timeout || timestamp > timeout + __ticks_to_ms(2)) {
+		TC_ERROR("timestamp out of range, got %d\n", (int)timestamp);
 		return;
 	}
 
@@ -683,7 +720,7 @@ static void delayed_thread(void *num, void *arg2, void *arg3)
 static int test_timeout(void)
 {
 	struct timeout_order *data;
-	int32_t timeout;
+	s32_t timeout;
 	int rv;
 	int i;
 
@@ -691,9 +728,10 @@ static int test_timeout(void)
 	TC_PRINT("Testing k_busy_wait()\n");
 	timeout = 20;           /* in ms */
 
-	k_thread_spawn(timeout_stacks[0], THREAD_STACKSIZE, test_busy_wait,
-		       (void *)(intptr_t) timeout, NULL,
-		       NULL, K_PRIO_COOP(THREAD_PRIORITY), 0, 0);
+	k_thread_create(&timeout_threads[0], timeout_stacks[0],
+			THREAD_STACKSIZE, test_busy_wait,
+			(void *)(intptr_t) timeout, NULL,
+			NULL, K_PRIO_COOP(THREAD_PRIORITY), 0, 0);
 
 	rv = k_sem_take(&reply_timeout, timeout * 2);
 
@@ -707,9 +745,10 @@ static int test_timeout(void)
 	TC_PRINT("Testing k_sleep()\n");
 	timeout = 50;
 
-	k_thread_spawn(timeout_stacks[0], THREAD_STACKSIZE, test_thread_sleep,
-		       (void *)(intptr_t) timeout, NULL,
-		       NULL, K_PRIO_COOP(THREAD_PRIORITY), 0, 0);
+	k_thread_create(&timeout_threads[0], timeout_stacks[0],
+			THREAD_STACKSIZE, test_thread_sleep,
+			(void *)(intptr_t) timeout, NULL,
+			NULL, K_PRIO_COOP(THREAD_PRIORITY), 0, 0);
 
 	rv = k_sem_take(&reply_timeout, timeout * 2);
 	if (rv) {
@@ -718,15 +757,16 @@ static int test_timeout(void)
 		return TC_FAIL;
 	}
 
-	/* test k_thread_spawn() without cancellation */
-	TC_PRINT("Testing k_thread_spawn() without cancellation\n");
+	/* test k_thread_create() without cancellation */
+	TC_PRINT("Testing k_thread_create() without cancellation\n");
 
 	for (i = 0; i < NUM_TIMEOUT_THREADS; i++) {
-		k_thread_spawn(timeout_stacks[i], THREAD_STACKSIZE,
-			       delayed_thread,
-			       (void *)i,
-			       NULL, NULL,
-			       K_PRIO_COOP(5), 0, timeouts[i].timeout);
+		k_thread_create(&timeout_threads[i], timeout_stacks[i],
+				THREAD_STACKSIZE,
+				delayed_thread,
+				(void *)i,
+				NULL, NULL,
+				K_PRIO_COOP(5), 0, timeouts[i].timeout);
 	}
 	for (i = 0; i < NUM_TIMEOUT_THREADS; i++) {
 		data = k_fifo_get(&timeout_order_fifo, 750);
@@ -754,8 +794,8 @@ static int test_timeout(void)
 		return TC_FAIL;
 	}
 
-	/* test k_thread_spawn() with cancellation */
-	TC_PRINT("Testing k_thread_spawn() with cancellations\n");
+	/* test k_thread_create() with cancellation */
+	TC_PRINT("Testing k_thread_create() with cancellations\n");
 
 	int cancellations[] = { 0, 3, 4, 6 };
 	int num_cancellations = ARRAY_SIZE(cancellations);
@@ -766,10 +806,10 @@ static int test_timeout(void)
 	for (i = 0; i < NUM_TIMEOUT_THREADS; i++) {
 		k_tid_t id;
 
-		id = k_thread_spawn(timeout_stacks[i], THREAD_STACKSIZE,
-				    delayed_thread,
-				    (void *)i, NULL, NULL,
-				    K_PRIO_COOP(5), 0, timeouts[i].timeout);
+		id = k_thread_create(&timeout_threads[i], timeout_stacks[i],
+				     THREAD_STACKSIZE, delayed_thread,
+				     (void *)i, NULL, NULL,
+				     K_PRIO_COOP(5), 0, timeouts[i].timeout);
 
 		delayed_threads[i] = id;
 	}
@@ -851,13 +891,6 @@ void main(void)
 	if (rv != TC_PASS) {
 		goto tests_done;
 	}
-#ifdef HAS_POWERSAVE_INSTRUCTION
-	TC_PRINT("Testing k_cpu_idle()\n");
-	rv = test_kernel_cpu_idle();
-	if (rv != TC_PASS) {
-		goto tests_done;
-	}
-#endif
 
 	TC_PRINT("Testing interrupt locking and unlocking\n");
 	rv = test_kernel_interrupts(irq_lock_wrapper, irq_unlock_wrapper, -1);
@@ -884,9 +917,9 @@ void main(void)
 	TC_PRINT("Spawning a thread from a task\n");
 	thread_evidence = 0;
 
-	k_thread_spawn(thread_stack1, THREAD_STACKSIZE, thread_entry,
-		       k_current_get(), NULL,
-		       NULL, K_PRIO_COOP(THREAD_PRIORITY), 0, 0);
+	k_thread_create(&thread_data1, thread_stack1, THREAD_STACKSIZE,
+			thread_entry, k_current_get(), NULL,
+			NULL, K_PRIO_COOP(THREAD_PRIORITY), 0, 0);
 
 	if (thread_evidence != 1) {
 		rv = TC_FAIL;
@@ -924,6 +957,21 @@ void main(void)
 	if (rv != TC_PASS) {
 		goto tests_done;
 	}
+
+#ifdef HAS_POWERSAVE_INSTRUCTION
+	TC_PRINT("Testing k_cpu_idle()\n");
+	rv = test_kernel_cpu_idle(0);
+	if (rv != TC_PASS) {
+		goto tests_done;
+	}
+#ifndef CONFIG_ARM
+	TC_PRINT("Testing k_cpu_atomic_idle()\n");
+	rv = test_kernel_cpu_idle(1);
+	if (rv != TC_PASS) {
+		goto tests_done;
+	}
+#endif
+#endif
 
 tests_done:
 	TC_END_RESULT(rv);

@@ -14,12 +14,12 @@
 #define __NET_6LO_H
 
 #include <misc/slist.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include "icmpv6.h"
 
-typedef bool (*fragment_handler_t)(struct net_buf *, int);
+typedef bool (*fragment_handler_t)(struct net_pkt *, int);
 
 /**
  *  @brief Compress IPv6 packet as per RFC 6282
@@ -28,27 +28,27 @@ typedef bool (*fragment_handler_t)(struct net_buf *, int);
  *  are compressed as per RFC 6282. After header compression data
  *  will be adjusted according to remaining space in fragments.
  *
- *  @param Pointer to network buffer
+ *  @param Pointer to network packet
  *  @param iphc true for IPHC compression, false for IPv6 dispatch header
  *  @param Pointer to fragment function
  *
  *  @return True on success, false otherwise
  */
-bool net_6lo_compress(struct net_buf *buf, bool iphc,
+bool net_6lo_compress(struct net_pkt *pkt, bool iphc,
 		      fragment_handler_t fragment);
 
 /**
- *  @brief Unompress IPv6 packet as per RFC 6282
+ *  @brief Uncompress IPv6 packet as per RFC 6282
  *
  *  @details After this IPv6 packet and next header(if UDP), headers
  *  are uncompressed as per RFC 6282. After header uncompression data
  *  will be adjusted according to remaining space in fragments.
  *
- *  @param Pointer to network buffer
+ *  @param Pointer to network packet
  *
  *  @return True on success, false otherwise
  */
-bool net_6lo_uncompress(struct net_buf *buf);
+bool net_6lo_uncompress(struct net_pkt *pkt);
 
 /**
  *  @brief Set 6lowpan context information

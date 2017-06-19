@@ -1,6 +1,6 @@
 /dts-v1/;
 
-#include "nxp_kw41z.dtsi"
+#include <nxp/nxp_kw41z.dtsi>
 
 / {
 	model = "NXP Freedom KW41Z board";
@@ -25,4 +25,5 @@
 
 &lpuart0 {
 	status = "ok";
+	current-speed = <115200>;
 };

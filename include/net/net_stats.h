@@ -14,13 +14,18 @@
 #ifndef __NET_STATS_H
 #define __NET_STATS_H
 
-#include <stdint.h>
+#include <zephyr/types.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef uint32_t net_stats_t;
+typedef u32_t net_stats_t;
+
+struct net_stats_bytes {
+	u32_t sent;
+	u32_t received;
+};
 
 struct net_stats_ip {
 	/** Number of received packets at the IP layer. */
@@ -78,6 +83,12 @@ struct net_stats_icmp {
 };
 
 struct net_stats_tcp {
+	/** Amount of received and sent TCP application data. */
+	struct net_stats_bytes bytes;
+
+	/** Amount of retransmitted data. */
+	net_stats_t resent;
+
 	/** Number of recived TCP segments. */
 	net_stats_t recv;
 
@@ -90,8 +101,11 @@ struct net_stats_tcp {
 	/** Number of TCP segments with a bad checksum. */
 	net_stats_t chkerr;
 
-	/** Number of TCP segments with a bad ACK number. */
+	/** Number of received TCP segments with a bad ACK number. */
 	net_stats_t ackerr;
+
+	/** Number of received bad TCP RST (reset) segments. */
+	net_stats_t rsterr;
 
 	/** Number of received TCP RST (reset) segments. */
 	net_stats_t rst;
@@ -99,13 +113,13 @@ struct net_stats_tcp {
 	/** Number of retransmitted TCP segments. */
 	net_stats_t rexmit;
 
-	/** Number of dropped SYNs because too few connections were
-	 * available.
+	/** Number of dropped connection attempts because too few connections
+	 * were available.
 	 */
-	net_stats_t syndrop;
+	net_stats_t conndrop;
 
-	/** Number of SYNs for closed ports, triggering a RST. */
-	net_stats_t synrst;
+	/** Number of connection attempts for closed ports, triggering a RST. */
+	net_stats_t connrst;
 };
 
 struct net_stats_udp {
@@ -179,16 +193,16 @@ struct net_stats_rpl_dao_ack {
 };
 
 struct net_stats_rpl {
-	uint16_t mem_overflows;
-	uint16_t local_repairs;
-	uint16_t global_repairs;
-	uint16_t malformed_msgs;
-	uint16_t resets;
-	uint16_t parent_switch;
-	uint16_t forward_errors;
-	uint16_t loop_errors;
-	uint16_t loop_warnings;
-	uint16_t root_repairs;
+	u16_t mem_overflows;
+	u16_t local_repairs;
+	u16_t global_repairs;
+	u16_t malformed_msgs;
+	u16_t resets;
+	u16_t parent_switch;
+	u16_t forward_errors;
+	u16_t loop_errors;
+	u16_t loop_warnings;
+	u16_t root_repairs;
 
 	struct net_stats_rpl_dis dis;
 	struct net_stats_rpl_dio dio;
@@ -205,11 +219,6 @@ struct net_stats_ipv6_mld {
 
 	/** Number of dropped IPv6 MLD packets */
 	net_stats_t drop;
-};
-
-struct net_stats_bytes {
-	uint32_t sent;
-	uint32_t received;
 };
 
 struct net_stats {

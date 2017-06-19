@@ -15,6 +15,19 @@
 #define ALARM		(RTC_ALARM_SECOND * (SECONDS_TO_SLEEP - 1))
 #define GPIO_IN_PIN	16
 
+/* In Tickless Kernel mode, time is passed in milliseconds instead of ticks */
+#ifdef CONFIG_TICKLESS_KERNEL
+#define TICKS_TO_SECONDS_MULTIPLIER 1000
+#define TIME_UNIT_STRING "milliseconds"
+#else
+#define TICKS_TO_SECONDS_MULTIPLIER CONFIG_SYS_CLOCK_TICKS_PER_SEC
+#define TIME_UNIT_STRING "ticks"
+#endif
+
+#define MIN_TIME_TO_SUSPEND	((SECONDS_TO_SLEEP * \
+				  TICKS_TO_SECONDS_MULTIPLIER) - \
+				  (TICKS_TO_SECONDS_MULTIPLIER / 2))
+
 static void create_device_list(void);
 static void suspend_devices(void);
 static void resume_devices(void);
@@ -33,7 +46,7 @@ static char device_ordered_list[DEVICE_POLICY_MAX];
 static char device_retval[DEVICE_POLICY_MAX];
 
 static struct device *rtc_dev;
-static uint32_t start_time, end_time;
+static u32_t start_time, end_time;
 static void setup_rtc(void);
 static void enable_wake_event(void);
 
@@ -53,7 +66,7 @@ void main(void)
 	}
 }
 
-static int check_pm_policy(int32_t ticks)
+static int check_pm_policy(s32_t ticks)
 {
 	static int policy;
 	int power_states[] = {SYS_POWER_STATE_MAX, SYS_POWER_STATE_CPU_LPS,
@@ -113,7 +126,7 @@ static void deep_sleep_exit(void)
 			end_time - start_time);
 }
 
-static int low_power_state_entry(int32_t ticks)
+static int low_power_state_entry(s32_t ticks)
 {
 	printk("\nLow power state entry!\n");
 
@@ -128,7 +141,7 @@ static int low_power_state_entry(int32_t ticks)
 	return SYS_PM_LOW_POWER_STATE;
 }
 
-static int deep_sleep_entry(int32_t ticks)
+static int deep_sleep_entry(s32_t ticks)
 {
 	printk("\nDeep sleep entry!\n");
 
@@ -154,15 +167,15 @@ static int deep_sleep_entry(int32_t ticks)
 	return SYS_PM_DEEP_SLEEP;
 }
 
-int _sys_soc_suspend(int32_t ticks)
+int _sys_soc_suspend(s32_t ticks)
 {
 	int ret = SYS_PM_NOT_HANDLED;
 
 	post_ops_done = 0;
 
-	if (ticks < (SECONDS_TO_SLEEP * CONFIG_SYS_CLOCK_TICKS_PER_SEC)) {
-		printk("Not enough time for PM operations (ticks: %d).\n",
-		       ticks);
+	if ((ticks != K_FOREVER) && (ticks < MIN_TIME_TO_SUSPEND)) {
+		printk("Not enough time for PM operations (" TIME_UNIT_STRING
+		       ": %d).\n", ticks);
 		return SYS_PM_NOT_HANDLED;
 	}
 
@@ -337,8 +350,8 @@ static void setup_rtc(void)
 
 static void enable_wake_event(void)
 {
-	uint32_t now = rtc_read(rtc_dev);
-	uint32_t alarm;
+	u32_t now = rtc_read(rtc_dev);
+	u32_t alarm;
 
 	alarm = (rtc_read(rtc_dev) + ALARM);
 	rtc_set_alarm(rtc_dev, alarm);

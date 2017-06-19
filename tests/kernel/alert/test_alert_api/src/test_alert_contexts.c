@@ -24,7 +24,8 @@ static int alert_handler1(struct k_alert *);
 K_ALERT_DEFINE(kalert_pending, alert_handler1, PENDING_MAX);
 K_ALERT_DEFINE(kalert_consumed, alert_handler0, PENDING_MAX);
 
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 static struct k_alert *palert;
 static volatile int handler_executed;
 
@@ -56,26 +57,26 @@ static void alert_recv(void)
 	if (palert->handler == K_ALERT_IGNORE ||
 			palert->handler == alert_handler0){
 		if (palert->handler == alert_handler0)
-			assert_equal(handler_executed, PENDING_MAX, NULL);
+			zassert_equal(handler_executed, PENDING_MAX, NULL);
 		ret = k_alert_recv(palert, TIMEOUT);
-		assert_equal(ret, -EAGAIN, NULL);
+		zassert_equal(ret, -EAGAIN, NULL);
 	}
 
 	if (palert->handler == K_ALERT_DEFAULT ||
 			palert->handler == alert_handler1){
 		if (palert->handler == alert_handler1)
-			assert_equal(handler_executed, PENDING_MAX, NULL);
+			zassert_equal(handler_executed, PENDING_MAX, NULL);
 		for (int i = 0; i < PENDING_MAX; i++) {
 			/**TESTPOINT: alert recv*/
 			ret = k_alert_recv(palert, K_NO_WAIT);
-			assert_false(ret, NULL);
+			zassert_false(ret, NULL);
 		}
 		/**TESTPOINT: alert recv -EAGAIN*/
 		ret = k_alert_recv(palert, TIMEOUT);
-		assert_equal(ret, -EAGAIN, NULL);
+		zassert_equal(ret, -EAGAIN, NULL);
 		/**TESTPOINT: alert recv -EBUSY*/
 		ret = k_alert_recv(palert, K_NO_WAIT);
-		assert_equal(ret, -EBUSY, NULL);
+		zassert_equal(ret, -EBUSY, NULL);
 	}
 }
 
@@ -88,7 +89,7 @@ static void thread_alert(void)
 {
 	handler_executed = 0;
 	/**TESTPOINT: thread-thread sync via alert*/
-	k_tid_t tid = k_thread_spawn(tstack, STACK_SIZE,
+	k_tid_t tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		tThread_entry, NULL, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 0);
 	alert_send();

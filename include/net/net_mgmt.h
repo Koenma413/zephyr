@@ -29,11 +29,13 @@ struct net_if;
 #define NET_MGMT_EVENT_MASK		0x80000000
 #define NET_MGMT_ON_IFACE_MASK		0x40000000
 #define NET_MGMT_LAYER_MASK		0x30000000
-#define NET_MGMT_LAYER_CODE_MASK	0x0FFF0000
+#define NET_MGMT_SYNC_EVENT_MASK	0x08000000
+#define NET_MGMT_LAYER_CODE_MASK	0x07FF0000
 #define NET_MGMT_COMMAND_MASK		0x0000FFFF
 
 #define NET_MGMT_EVENT_BIT		BIT(31)
 #define NET_MGMT_IFACE_BIT		BIT(30)
+#define NET_MGMT_SYNC_EVENT_BIT		BIT(27)
 
 #define NET_MGMT_LAYER(_layer)		(_layer << 28)
 #define NET_MGMT_LAYER_CODE(_code)	(_code << 16)
@@ -43,6 +45,9 @@ struct net_if;
 
 #define NET_MGMT_ON_IFACE(mgmt_request)		\
 	(mgmt_request & NET_MGMT_ON_IFACE_MASK)
+
+#define NET_MGMT_EVENT_SYNCHRONOUS(mgmt_request)	\
+	(mgmt_request & NET_MGMT_SYNC_EVENT_MASK)
 
 #define NET_MGMT_GET_LAYER(mgmt_request)	\
 	((mgmt_request & NET_MGMT_LAYER_MASK) >> 28)
@@ -73,7 +78,7 @@ struct net_if;
  *        NULL otherwise.
  * @param len Length in byte of the memory pointed by data.
  */
-typedef int (*net_mgmt_request_handler_t)(uint32_t mgmt_request,
+typedef int (*net_mgmt_request_handler_t)(u32_t mgmt_request,
 					  struct net_if *iface,
 					  void *data, size_t len);
 
@@ -81,7 +86,7 @@ typedef int (*net_mgmt_request_handler_t)(uint32_t mgmt_request,
 	net_mgmt_##_mgmt_request(_mgmt_request, _iface, _data, _len)
 
 #define NET_MGMT_DEFINE_REQUEST_HANDLER(_mgmt_request)			\
-	extern int net_mgmt_##_mgmt_request(uint32_t mgmt_request,	\
+	extern int net_mgmt_##_mgmt_request(u32_t mgmt_request,	\
 					    struct net_if *iface,	\
 					    void *data, size_t len)
 
@@ -95,12 +100,12 @@ struct net_mgmt_event_callback;
  * @brief Define the user's callback handler function signature
  * @param "struct net_mgmt_event_callback *cb"
  *        Original struct net_mgmt_event_callback owning this handler.
- * @param "uint32_t mgmt_event" The network event being notified.
+ * @param "u32_t mgmt_event" The network event being notified.
  * @param "struct net_if *iface" A pointer on a struct net_if to which the
  *        the event belongs to, if it's an event on an iface. NULL otherwise.
  */
 typedef void (*net_mgmt_event_handler_t)(struct net_mgmt_event_callback *cb,
-					 uint32_t mgmt_event,
+					 u32_t mgmt_event,
 					 struct net_if *iface);
 
 /**
@@ -115,16 +120,33 @@ struct net_mgmt_event_callback {
 	 */
 	sys_snode_t node;
 
-	/** Actual callback function being used to notify the owner
-	 */
-	net_mgmt_event_handler_t handler;
+	union {
+		/** Actual callback function being used to notify the owner
+		 */
+		net_mgmt_event_handler_t handler;
+		/** Semaphore meant to be used internaly for the synchronous
+		 * net_mgmt_event_wait() function.
+		 */
+		struct k_sem *sync_call;
+	};
 
 	/** A mask of network events on which the above handler should be
 	 * called in case those events come. Such mask can be modified
 	 * whenever necessary by the owner, and thus will affect the handler
 	 * being called or not.
 	 */
-	uint32_t event_mask;
+	union {
+		/** A mask of network events on which the above handler should
+		 * be called in case those events come. Such mask can be
+		 * modified whenever necessary by the owner, and thus will
+		 * affect the handler being called or not.
+		 */
+		u32_t event_mask;
+		/** Internal place holder when a synchronous event wait is
+		 * successfully unlocked on a event.
+		 */
+		u32_t raised_event;
+	};
 };
 
 #ifdef CONFIG_NET_MGMT_EVENT
@@ -137,7 +159,7 @@ struct net_mgmt_event_callback {
 static inline
 void net_mgmt_init_event_callback(struct net_mgmt_event_callback *cb,
 				  net_mgmt_event_handler_t handler,
-				  uint32_t mgmt_event_mask)
+				  u32_t mgmt_event_mask)
 {
 	__ASSERT(cb, "Callback pointer should not be NULL");
 	__ASSERT(handler, "Handler pointer should not be NULL");
@@ -164,7 +186,50 @@ void net_mgmt_del_event_callback(struct net_mgmt_event_callback *cb);
  * @param iface a valid pointer on a struct net_if if only the event is
  *        based on an iface. NULL otherwise.
  */
-void net_mgmt_event_notify(uint32_t mgmt_event, struct net_if *iface);
+void net_mgmt_event_notify(u32_t mgmt_event, struct net_if *iface);
+
+/**
+ * @brief Used to wait synchronously on an event mask
+ * @param mgmt_event_mask A mask of relevant events to wait on.
+ * @param raised_event a pointer on a u32_t to get which event from
+ *        the mask generated the event. Can be NULL if the caller is not
+ *        interested in that information.
+ * @param iface a pointer on a place holder for the iface on which the
+ *        event has originated from. This is valid if only the event mask
+ *        has bit NET_MGMT_IFACE_BIT set relevantly, depending on events
+ *        the caller wants to listen to.
+ * @param timeout a delay in milliseconds. K_FOREVER can be used to wait
+ *        indefinitely.
+ *
+ * @return 0 on success, a negative error code otherwise. -ETIMEDOUT will
+ *         be specifically returned if the timeout kick-in instead of an
+ *         actual event.
+ */
+int net_mgmt_event_wait(u32_t mgmt_event_mask,
+			u32_t *raised_event,
+			struct net_if **iface,
+			int timeout);
+
+/**
+ * @brief Used to wait synchronously on an event mask for a specific iface
+ * @param iface a pointer on a valid network interface to listen event to
+ * @param mgmt_event_mask A mask of relevant events to wait on. Listened
+ *        to events should be relevant to iface events and thus have the bit
+ *        NET_MGMT_IFACE_BIT set.
+ * @param raised_event a pointer on a u32_t to get which event from
+ *        the mask generated the event. Can be NULL if the caller is not
+ *        interested in that information.
+ * @param timeout a delay in milliseconds. K_FOREVER can be used to wait
+ *        indefinitely.
+ *
+ * @return 0 on success, a negative error code otherwise. -ETIMEDOUT will
+ *         be specifically returned if the timeout kick-in instead of an
+ *         actual event.
+ */
+int net_mgmt_event_wait_on_iface(struct net_if *iface,
+				 u32_t mgmt_event_mask,
+				 u32_t *raised_event,
+				 int timeout);
 
 /**
  * @brief Used by the core of the network stack to initialize the network
@@ -176,6 +241,23 @@ void net_mgmt_event_init(void);
 #define net_mgmt_add_event_callback(...)
 #define net_mgmt_event_notify(...)
 #define net_mgmt_event_init(...)
+
+static inline int net_mgmt_event_wait(u32_t mgmt_event_mask,
+				      u32_t *raised_event,
+				      struct net_if **iface,
+				      int timeout)
+{
+	return 0;
+}
+
+static inline int net_mgmt_event_wait_on_iface(struct net_if *iface,
+					       u32_t mgmt_event_mask,
+					       u32_t *raised_event,
+					       int timeout)
+{
+	return 0;
+}
+
 #endif /* CONFIG_NET_MGMT_EVENT */
 
 /**

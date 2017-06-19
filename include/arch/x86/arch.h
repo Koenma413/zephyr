@@ -16,6 +16,7 @@
 
 #include <irq.h>
 #include <arch/x86/irq_controller.h>
+#include <kernel_arch_thread.h>
 
 #ifndef _ASMLANGUAGE
 #include <arch/x86/asm_inline.h>
@@ -48,20 +49,6 @@ void _int_latency_stop(void);
 #endif
 
 /* interrupt/exception/error related definitions */
-
-/**
- * Floating point register set alignment.
- *
- * If support for SSEx extensions is enabled a 16 byte boundary is required,
- * since the 'fxsave' and 'fxrstor' instructions require this. In all other
- * cases a 4 byte boundary is sufficient.
- */
-
-#ifdef CONFIG_SSE
-#define FP_REG_SET_ALIGN  16
-#else
-#define FP_REG_SET_ALIGN  4
-#endif
 
 /*
  * The TCS must be aligned to the same boundary as that used by the floating
@@ -260,7 +247,7 @@ extern void _arch_isr_direct_footer(int maybe_swap);
 	static inline int name##_body(void)
 
 /**
- * @brief Nanokernel Exception Stack Frame
+ * @brief Exception Stack Frame
  *
  * A pointer to an "exception stack frame" (ESF) is passed as an argument
  * to exception handlers registered via nanoCpuExcConnect().  As the system
@@ -288,7 +275,7 @@ typedef struct nanoEsf {
 } NANO_ESF;
 
 /**
- * @brief Nanokernel "interrupt stack frame" (ISF)
+ * @brief "interrupt stack frame" (ISF)
  *
  * An "interrupt stack frame" (ISF) as constructed by the processor and the
  * interrupt wrapper function _interrupt_enter().  As the system always
@@ -339,6 +326,10 @@ typedef struct nanoIsf {
 #define _NANO_ERR_ALLOCATION_FAIL    (5)
 /** Unhandled exception */
 #define _NANO_ERR_CPU_EXCEPTION		(6)
+/** Kernel oops (fatal to thread) */
+#define _NANO_ERR_KERNEL_OOPS		(7)
+/** Kernel panic (fatal to system) */
+#define _NANO_ERR_KERNEL_PANIC		(8)
 
 #ifndef _ASMLANGUAGE
 
@@ -449,7 +440,7 @@ extern void	_arch_irq_disable(unsigned int irq);
  * by _Swap() it will either inherit an FPU that is guaranteed to be in a "sane"
  * state (if the most recent user of the FPU was cooperatively swapped out)
  * or the thread's own floating point context will be loaded (if the most
- * recent user of the FPU was pre-empted, or if this thread is the first user
+ * recent user of the FPU was preempted, or if this thread is the first user
  * of the FPU). Thereafter, the kernel will protect the thread's FP context
  * so that it is not altered during a preemptive context switch.
  *
@@ -488,17 +479,31 @@ extern void k_float_disable(k_tid_t thread);
 
 extern void	k_cpu_idle(void);
 
-extern uint32_t _timer_cycle_get_32(void);
+extern u32_t _timer_cycle_get_32(void);
 #define _arch_k_cycle_get_32()	_timer_cycle_get_32()
 
-/** Nanokernel provided routine to report any detected fatal error. */
+/** kernel provided routine to report any detected fatal error. */
 extern FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 						 const NANO_ESF * pEsf);
+
 /** User provided routine to handle any detected fatal error post reporting. */
 extern FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 						const NANO_ESF * pEsf);
+
+#if CONFIG_X86_KERNEL_OOPS
+#define _ARCH_EXCEPT(reason_p) do { \
+	__asm__ volatile( \
+		"push %[reason]\n\t" \
+		"int %[vector]\n\t" \
+		: \
+		: [vector] "i" (CONFIG_X86_KERNEL_OOPS_VECTOR), \
+		  [reason] "i" (reason_p)); \
+	CODE_UNREACHABLE; \
+} while (0)
+#else
 /** Dummy ESF for fatal errors that would otherwise not have an ESF */
 extern const NANO_ESF _default_esf;
+#endif /* CONFIG_X86_KERNEL_OOPS */
 
 #endif /* !_ASMLANGUAGE */
 

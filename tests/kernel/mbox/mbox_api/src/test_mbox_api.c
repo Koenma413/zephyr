@@ -29,14 +29,15 @@
 
 /**TESTPOINT: init via K_MBOX_DEFINE*/
 K_MBOX_DEFINE(kmbox);
-K_MEM_POOL_DEFINE(mpooltx, 4, MAIL_LEN, 1, 4);
-K_MEM_POOL_DEFINE(mpoolrx, 4, MAIL_LEN, 1, 4);
+K_MEM_POOL_DEFINE(mpooltx, 8, MAIL_LEN, 1, 4);
+K_MEM_POOL_DEFINE(mpoolrx, 8, MAIL_LEN, 1, 4);
 
 static struct k_mbox mbox;
 
 static k_tid_t sender_tid, receiver_tid;
 
-static char __noinit __stack tstack[STACK_SIZE];
+static K_THREAD_STACK_DEFINE(tstack, STACK_SIZE);
+static struct k_thread tdata;
 
 static struct k_sem end_sema, sync_sema;
 
@@ -71,7 +72,6 @@ static void tmbox_put(struct k_mbox *pmbox)
 		mmsg.info = PUT_GET_NULL;
 		mmsg.size = 0;
 		mmsg.tx_data = NULL;
-		mmsg.tx_block.pool_id = NULL;
 		mmsg.tx_target_thread = K_ANY;
 		k_mbox_put(pmbox, &mmsg, K_FOREVER);
 		break;
@@ -106,7 +106,7 @@ static void tmbox_put(struct k_mbox *pmbox)
 		mmsg.info = ASYNC_PUT_GET_BLOCK;
 		mmsg.size = MAIL_LEN;
 		mmsg.tx_data = NULL;
-		assert_equal(k_mem_pool_alloc(&mpooltx, &mmsg.tx_block,
+		zassert_equal(k_mem_pool_alloc(&mpooltx, &mmsg.tx_block,
 			MAIL_LEN, K_NO_WAIT), 0, NULL);
 		memcpy(mmsg.tx_block.data, data[info_type], MAIL_LEN);
 		if (info_type == TARGET_SOURCE_THREAD_BLOCK) {
@@ -117,7 +117,6 @@ static void tmbox_put(struct k_mbox *pmbox)
 		k_mbox_async_put(pmbox, &mmsg, &sync_sema);
 		/*wait for msg being taken*/
 		k_sem_take(&sync_sema, K_FOREVER);
-		k_mem_pool_free(&mmsg.tx_block);
 		break;
 	default:
 		break;
@@ -136,12 +135,12 @@ static void tmbox_get(struct k_mbox *pmbox)
 		mmsg.size = sizeof(rxdata);
 		mmsg.rx_source_thread = K_ANY;
 		/*verify return value*/
-		assert_true(k_mbox_get(pmbox, &mmsg, rxdata, K_FOREVER) == 0,
+		zassert_true(k_mbox_get(pmbox, &mmsg, rxdata, K_FOREVER) == 0,
 			NULL);
 		/*verify .info*/
-		assert_equal(mmsg.info, PUT_GET_NULL, NULL);
+		zassert_equal(mmsg.info, PUT_GET_NULL, NULL);
 		/*verify .size*/
-		assert_equal(mmsg.size, 0, NULL);
+		zassert_equal(mmsg.size, 0, NULL);
 		break;
 	case PUT_GET_BUFFER:
 		/*fall through*/
@@ -153,24 +152,24 @@ static void tmbox_get(struct k_mbox *pmbox)
 		} else {
 			mmsg.rx_source_thread = K_ANY;
 		}
-		assert_true(k_mbox_get(pmbox, &mmsg, rxdata, K_FOREVER) == 0,
+		zassert_true(k_mbox_get(pmbox, &mmsg, rxdata, K_FOREVER) == 0,
 			NULL);
-		assert_equal(mmsg.info, PUT_GET_BUFFER, NULL);
-		assert_equal(mmsg.size, sizeof(data[info_type]), NULL);
+		zassert_equal(mmsg.info, PUT_GET_BUFFER, NULL);
+		zassert_equal(mmsg.size, sizeof(data[info_type]), NULL);
 		/*verify rxdata*/
-		assert_true(memcmp(rxdata, data[info_type], MAIL_LEN) == 0,
+		zassert_true(memcmp(rxdata, data[info_type], MAIL_LEN) == 0,
 			NULL);
 		break;
 	case ASYNC_PUT_GET_BUFFER:
 		/**TESTPOINT: mbox async get buffer*/
 		mmsg.size = sizeof(rxdata);
 		mmsg.rx_source_thread = K_ANY;
-		assert_true(k_mbox_get(pmbox, &mmsg, NULL, K_FOREVER) == 0,
+		zassert_true(k_mbox_get(pmbox, &mmsg, NULL, K_FOREVER) == 0,
 			NULL);
-		assert_equal(mmsg.info, ASYNC_PUT_GET_BUFFER, NULL);
-		assert_equal(mmsg.size, sizeof(data[info_type]), NULL);
+		zassert_equal(mmsg.info, ASYNC_PUT_GET_BUFFER, NULL);
+		zassert_equal(mmsg.size, sizeof(data[info_type]), NULL);
 		k_mbox_data_get(&mmsg, rxdata);
-		assert_true(memcmp(rxdata, data[info_type], MAIL_LEN) == 0,
+		zassert_true(memcmp(rxdata, data[info_type], MAIL_LEN) == 0,
 			NULL);
 		break;
 	case ASYNC_PUT_GET_BLOCK:
@@ -183,14 +182,14 @@ static void tmbox_get(struct k_mbox *pmbox)
 		} else {
 			mmsg.rx_source_thread = K_ANY;
 		}
-		assert_true(k_mbox_get(pmbox, &mmsg, NULL, K_FOREVER) == 0,
+		zassert_true(k_mbox_get(pmbox, &mmsg, NULL, K_FOREVER) == 0,
 			NULL);
-		assert_true(k_mbox_data_block_get
+		zassert_true(k_mbox_data_block_get
 			(&mmsg, &mpoolrx, &rxblock, K_FOREVER) == 0, NULL);
-		assert_equal(mmsg.info, ASYNC_PUT_GET_BLOCK, NULL);
-		assert_equal(mmsg.size, MAIL_LEN, NULL);
+		zassert_equal(mmsg.info, ASYNC_PUT_GET_BLOCK, NULL);
+		zassert_equal(mmsg.size, MAIL_LEN, NULL);
 		/*verify rxblock*/
-		assert_true(memcmp(rxblock.data, data[info_type], MAIL_LEN)
+		zassert_true(memcmp(rxblock.data, data[info_type], MAIL_LEN)
 			== 0, NULL);
 		k_mem_pool_free(&rxblock);
 		break;
@@ -214,7 +213,7 @@ static void tmbox(struct k_mbox *pmbox)
 
 	/**TESTPOINT: thread-thread data passing via mbox*/
 	sender_tid = k_current_get();
-	receiver_tid = k_thread_spawn(tstack, STACK_SIZE,
+	receiver_tid = k_thread_create(&tdata, tstack, STACK_SIZE,
 		tmbox_entry, pmbox, NULL, NULL,
 		K_PRIO_PREEMPT(0), 0, 0);
 	tmbox_put(pmbox);

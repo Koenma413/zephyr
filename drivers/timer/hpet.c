@@ -43,7 +43,7 @@
 
 #include <kernel.h>
 #include <toolchain.h>
-#include <sections.h>
+#include <linker/sections.h>
 #include <sys_clock.h>
 #include <drivers/ioapic.h>
 #include <drivers/system_timer.h>
@@ -74,7 +74,7 @@
 
 /* convenience macros for accessing specific HPET registers */
 
-#define _HPET_GENERAL_CAPS ((volatile uint64_t *) \
+#define _HPET_GENERAL_CAPS ((volatile u64_t *) \
 			(CONFIG_HPET_TIMER_BASE_ADDRESS + GENERAL_CAPS_REG))
 
 /*
@@ -82,7 +82,7 @@
  * is performed since the most significant bits contain no useful information.
  */
 
-#define _HPET_GENERAL_CONFIG ((volatile uint32_t *) \
+#define _HPET_GENERAL_CONFIG ((volatile u32_t *) \
 			(CONFIG_HPET_TIMER_BASE_ADDRESS + GENERAL_CONFIG_REG))
 
 /*
@@ -91,21 +91,21 @@
  * (i.e. there is no need to determine the interrupt status of other timers).
  */
 
-#define _HPET_GENERAL_INT_STATUS ((volatile uint32_t *) \
+#define _HPET_GENERAL_INT_STATUS ((volatile u32_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + GENERAL_INT_STATUS_REG))
 
-#define _HPET_MAIN_COUNTER_VALUE ((volatile uint64_t *) \
+#define _HPET_MAIN_COUNTER_VALUE ((volatile u64_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + MAIN_COUNTER_VALUE_REG))
-#define _HPET_MAIN_COUNTER_LSW ((volatile uint32_t *) \
+#define _HPET_MAIN_COUNTER_LSW ((volatile u32_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + MAIN_COUNTER_VALUE_REG))
-#define _HPET_MAIN_COUNTER_MSW ((volatile uint32_t *) \
+#define _HPET_MAIN_COUNTER_MSW ((volatile u32_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + MAIN_COUNTER_VALUE_REG + 0x4))
 
-#define _HPET_TIMER0_CONFIG_CAPS ((volatile uint64_t *) \
+#define _HPET_TIMER0_CONFIG_CAPS ((volatile u64_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + TIMER0_CONFIG_CAPS_REG))
-#define _HPET_TIMER0_COMPARATOR ((volatile uint64_t *) \
+#define _HPET_TIMER0_COMPARATOR ((volatile u64_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + TIMER0_COMPARATOR_REG))
-#define _HPET_TIMER0_FSB_INT_ROUTE ((volatile uint64_t *) \
+#define _HPET_TIMER0_FSB_INT_ROUTE ((volatile u64_t *) \
 		(CONFIG_HPET_TIMER_BASE_ADDRESS + TIMER0_FSB_INT_ROUTE_REG))
 
 /* general capabilities register macros */
@@ -161,9 +161,9 @@
 
 
 #ifdef CONFIG_INT_LATENCY_BENCHMARK
-static uint32_t main_count_first_irq_value;
-static uint32_t main_count_expected_value;
-extern uint32_t _hw_irq_to_c_handler_latency;
+static u32_t main_count_first_irq_value;
+static u32_t main_count_expected_value;
+extern u32_t _hw_irq_to_c_handler_latency;
 #endif
 
 #ifdef CONFIG_HPET_TIMER_DEBUG
@@ -177,14 +177,14 @@ extern uint32_t _hw_irq_to_c_handler_latency;
 
 /* additional globals, locals, and forward declarations */
 
-extern int32_t _sys_idle_elapsed_ticks;
+extern s32_t _sys_idle_elapsed_ticks;
 
 /* main counter units per system tick */
-static uint32_t __noinit counter_load_value;
+static u32_t __noinit counter_load_value;
 /* counter value for most recent tick */
-static uint64_t counter_last_value;
+static u64_t counter_last_value;
 /* # ticks timer is programmed for */
-static int32_t programmed_ticks = 1;
+static s32_t programmed_ticks = 1;
 /* is stale interrupt possible? */
 static int stale_irq_check;
 
@@ -199,20 +199,30 @@ static int stale_irq_check;
  *
  * @return current 64-bit counter value
  */
-static uint64_t _hpetMainCounterAtomic(void)
+static u64_t _hpetMainCounterAtomic(void)
 {
-	uint32_t highBits;
-	uint32_t lowBits;
+	u32_t highBits;
+	u32_t lowBits;
 
 	do {
 		highBits = *_HPET_MAIN_COUNTER_MSW;
 		lowBits = *_HPET_MAIN_COUNTER_LSW;
 	} while (highBits != *_HPET_MAIN_COUNTER_MSW);
 
-	return ((uint64_t)highBits << 32) | lowBits;
+	return ((u64_t)highBits << 32) | lowBits;
 }
 
 #endif /* CONFIG_TICKLESS_IDLE */
+
+#ifdef CONFIG_TICKLESS_KERNEL
+static inline void program_max_cycles(void)
+{
+	stale_irq_check = 1;
+	*_HPET_TIMER0_CONFIG_CAPS |= HPET_Tn_VAL_SET_CNF;
+	counter_last_value = *_HPET_TIMER0_COMPARATOR;
+	*_HPET_TIMER0_COMPARATOR = counter_last_value - 1;
+}
+#endif
 
 /**
  *
@@ -233,7 +243,7 @@ void _timer_int_handler(void *unused)
 #endif
 
 #ifdef CONFIG_INT_LATENCY_BENCHMARK
-	uint32_t delta = *_HPET_MAIN_COUNTER_VALUE - main_count_expected_value;
+	u32_t delta = *_HPET_MAIN_COUNTER_VALUE - main_count_expected_value;
 
 	if (_hw_irq_to_c_handler_latency > delta) {
 		/* keep the lowest value observed */
@@ -257,6 +267,16 @@ void _timer_int_handler(void *unused)
 
 	/* see if interrupt was triggered while timer was being reprogrammed */
 
+#if defined(CONFIG_TICKLESS_KERNEL)
+	/* If timer not programmed or already consumed exit */
+	if (!programmed_ticks) {
+		if (_sys_clock_always_on) {
+			_sys_clock_tick_count = _get_elapsed_clock_time();
+			program_max_cycles();
+		}
+		return;
+	}
+#endif
 	if (stale_irq_check) {
 		stale_irq_check = 0;
 		if (_hpetMainCounterAtomic() < *_HPET_TIMER0_COMPARATOR) {
@@ -264,17 +284,103 @@ void _timer_int_handler(void *unused)
 		}
 	}
 
-	/* configure timer to expire on next tick */
+	/* configure timer to expire on next tick for tick based kernel */
 
+#if defined(CONFIG_TICKLESS_KERNEL)
+
+	_sys_idle_elapsed_ticks = programmed_ticks;
+
+	/*
+	 * Clear programmed ticks before announcing elapsed time so
+	 * that recursive calls to _update_elapsed_time() will not
+	 * announce already consumed elapsed time
+	 */
+	programmed_ticks = 0;
+	_sys_clock_tick_announce();
+
+	/* _sys_clock_tick_announce() could cause new programming */
+	if (!programmed_ticks && _sys_clock_always_on) {
+		_sys_clock_tick_count = _get_elapsed_clock_time();
+		program_max_cycles();
+	}
+#else
 	counter_last_value = *_HPET_TIMER0_COMPARATOR;
 	*_HPET_TIMER0_CONFIG_CAPS |= HPET_Tn_VAL_SET_CNF;
 	*_HPET_TIMER0_COMPARATOR = counter_last_value + counter_load_value;
 	programmed_ticks = 1;
-
 	_sys_clock_final_tick_announce();
+#endif
 #endif /* !CONFIG_TICKLESS_IDLE */
 
 }
+
+#ifdef CONFIG_TICKLESS_KERNEL
+u32_t _get_program_time(void)
+{
+	return programmed_ticks;
+}
+
+u32_t _get_remaining_program_time(void)
+{
+	if (programmed_ticks == 0) {
+		return 0;
+	}
+
+	return (u32_t) ((s64_t)
+			  (*_HPET_TIMER0_COMPARATOR -
+			   _hpetMainCounterAtomic()) / counter_load_value);
+}
+
+u32_t _get_elapsed_program_time(void)
+{
+	if (programmed_ticks == 0) {
+		return 0;
+	}
+
+	return (u32_t) (programmed_ticks -
+		       ((s64_t)(*_HPET_TIMER0_COMPARATOR -
+			 _hpetMainCounterAtomic()) / counter_load_value));
+}
+
+void _set_time(u32_t time)
+{
+	/* Assumes cycles in one time unit is greater than HPET_COMP_DELAY */
+
+	if (!time) {
+		programmed_ticks = 0;
+		return;
+	}
+
+	programmed_ticks = time;
+
+	_sys_clock_tick_count = _get_elapsed_clock_time();
+
+	stale_irq_check = 1;
+
+	*_HPET_TIMER0_CONFIG_CAPS |= HPET_Tn_VAL_SET_CNF;
+	counter_last_value = _hpetMainCounterAtomic();
+	*_HPET_TIMER0_COMPARATOR =
+	    counter_last_value + time * counter_load_value;
+}
+
+void _enable_sys_clock(void)
+{
+	if (!programmed_ticks) {
+		program_max_cycles();
+	}
+}
+
+u64_t _get_elapsed_clock_time(void)
+{
+	u64_t elapsed;
+
+	elapsed = _sys_clock_tick_count;
+	elapsed +=  ((s64_t)(_hpetMainCounterAtomic() -
+			counter_last_value) / counter_load_value);
+
+	return elapsed;
+}
+#endif
 
 #ifdef CONFIG_TICKLESS_IDLE
 
@@ -302,9 +408,21 @@ void _timer_int_handler(void *unused)
  * Called while interrupts are locked.
  */
 
-void _timer_idle_enter(int32_t ticks /* system ticks */
+void _timer_idle_enter(s32_t ticks /* system ticks */
 				)
 {
+#ifdef CONFIG_TICKLESS_KERNEL
+	if (ticks != K_FOREVER) {
+		/* Need to reprogram only if current program is smaller */
+		if (ticks > programmed_ticks) {
+			_set_time(ticks);
+		}
+	} else {
+		programmed_ticks = 0;
+		counter_last_value = *_HPET_TIMER0_COMPARATOR;
+		*_HPET_GENERAL_CONFIG &= ~HPET_ENABLE_CNF;
+	}
+#else
 	/*
 	 * reprogram timer to expire at the desired time (which is guaranteed
 	 * to be at least one full tick from the current counter value)
@@ -313,9 +431,10 @@ void _timer_idle_enter(int32_t ticks /* system ticks */
 	*_HPET_TIMER0_CONFIG_CAPS |= HPET_Tn_VAL_SET_CNF;
 	*_HPET_TIMER0_COMPARATOR =
 		(ticks >= 0) ? counter_last_value + ticks * counter_load_value
-			     : ~(uint64_t)0;
-	stale_irq_check = 1;
+			     : ~(u64_t)0;
 	programmed_ticks = ticks;
+#endif
+	stale_irq_check = 1;
 }
 
 /**
@@ -335,9 +454,14 @@ void _timer_idle_enter(int32_t ticks /* system ticks */
 
 void _timer_idle_exit(void)
 {
-	uint64_t currTime = _hpetMainCounterAtomic();
-	int32_t elapsedTicks;
-	uint64_t counterNextValue;
+#ifdef CONFIG_TICKLESS_KERNEL
+	if (!programmed_ticks && _sys_clock_always_on) {
+		program_max_cycles();
+	}
+#else
+	u64_t currTime = _hpetMainCounterAtomic();
+	s32_t elapsedTicks;
+	u64_t counterNextValue;
 
 	/* see if idling ended because timer expired at the desired tick */
 
@@ -382,8 +506,8 @@ void _timer_idle_exit(void)
 	 */
 
 	elapsedTicks =
-		(int32_t)((currTime - counter_last_value) / counter_load_value);
-	counter_last_value += (uint64_t)elapsedTicks * counter_load_value;
+		(s32_t)((currTime - counter_last_value) / counter_load_value);
+	counter_last_value += (u64_t)elapsedTicks * counter_load_value;
 
 	counterNextValue = counter_last_value + counter_load_value;
 
@@ -417,6 +541,7 @@ void _timer_idle_exit(void)
 	 */
 
 	programmed_ticks = 1;
+#endif
 }
 
 #endif /* CONFIG_TICKLESS_IDLE */
@@ -433,10 +558,10 @@ void _timer_idle_exit(void)
 
 int _sys_clock_driver_init(struct device *device)
 {
-	uint64_t hpetClockPeriod;
-	uint64_t tickFempto;
+	u64_t hpetClockPeriod;
+	u64_t tickFempto;
 #ifndef CONFIG_TICKLESS_IDLE
-	uint32_t counter_load_value;
+	u32_t counter_load_value;
 #endif
 
 	ARG_UNUSED(device);
@@ -459,7 +584,7 @@ int _sys_clock_driver_init(struct device *device)
 	 * from microseconds to femptoseconds
 	 */
 
-	tickFempto = (uint64_t)sys_clock_us_per_tick * 1000000000;
+	tickFempto = (u64_t)sys_clock_us_per_tick * 1000000000;
 
 	/*
 	 * This driver shall read the COUNTER_CLK_PERIOD value from the general
@@ -477,14 +602,14 @@ int _sys_clock_driver_init(struct device *device)
 	 * 'sys_clock_us_per_tick' period
 	 */
 
-	counter_load_value = (uint32_t)(tickFempto / hpetClockPeriod);
+	counter_load_value = (u32_t)(tickFempto / hpetClockPeriod);
 
 	DBG("\n\nHPET: configuration: 0x%x, clock period: 0x%x (%d pico-s)\n",
-	       (uint32_t)(*_HPET_GENERAL_CAPS),
-	       (uint32_t)hpetClockPeriod, (uint32_t)hpetClockPeriod / 1000);
+	       (u32_t)(*_HPET_GENERAL_CAPS),
+	       (u32_t)hpetClockPeriod, (u32_t)hpetClockPeriod / 1000);
 
 	DBG("HPET: timer0: available interrupts mask 0x%x\n",
-	       (uint32_t)(*_HPET_TIMER0_CONFIG_CAPS >> 32));
+	       (u32_t)(*_HPET_TIMER0_CONFIG_CAPS >> 32));
 
 	/* Initialize sys_clock_hw_cycles_per_tick/sec */
 
@@ -593,9 +718,9 @@ int _sys_clock_driver_init(struct device *device)
  * it will need to call _hpetMainCounterAtomic().
  */
 
-uint32_t _timer_cycle_get_32(void)
+u32_t _timer_cycle_get_32(void)
 {
-	return (uint32_t) *_HPET_MAIN_COUNTER_VALUE;
+	return (u32_t) *_HPET_MAIN_COUNTER_VALUE;
 }
 
 #ifdef CONFIG_SYSTEM_CLOCK_DISABLE

@@ -19,38 +19,57 @@ typedef void (*spi_dw_config_t)(void);
 
 /* Private structures */
 struct spi_dw_config {
-	uint32_t regs;
+	u32_t regs;
 #ifdef CONFIG_SPI_DW_CLOCK_GATE
 	void *clock_data;
 #endif /* CONFIG_SPI_DW_CLOCK_GATE */
-#ifdef CONFIG_SPI_DW_CS_GPIO
-	char *cs_gpio_name;
-	uint32_t cs_gpio_pin;
-#endif /* CONFIG_SPI_DW_CS_GPIO */
 	spi_dw_config_t config_func;
 };
 
+#if defined(CONFIG_SPI_LEGACY_API)
 struct spi_dw_data {
 	struct k_sem device_sync_sem;
-	uint32_t error:1;
-	uint32_t dfs:3; /* dfs in bytes: 1,2 or 4 */
-	uint32_t slave:17; /* up 16 slaves */
-	uint32_t fifo_diff:9; /* cannot be bigger than FIFO depth */
-	uint32_t last_tx:1;
-	uint32_t _unused:1;
+	u32_t error:1;
+	u32_t dfs:3; /* dfs in bytes: 1,2 or 4 */
+	u32_t slave:17; /* up 16 slaves */
+	u32_t fifo_diff:9; /* cannot be bigger than FIFO depth */
+	u32_t last_tx:1;
+	u32_t _unused:1;
 #ifdef CONFIG_SPI_DW_CLOCK_GATE
 	struct device *clock;
 #endif /* CONFIG_SPI_DW_CLOCK_GATE */
-#ifdef CONFIG_SPI_DW_CS_GPIO
-	struct device *cs_gpio_port;
-#endif /* CONFIG_SPI_DW_CS_GPIO */
-	const uint8_t *tx_buf;
-	uint32_t tx_buf_len;
-	uint8_t *rx_buf;
-	uint32_t rx_buf_len;
+	const u8_t *tx_buf;
+	u32_t tx_buf_len;
+	u8_t *rx_buf;
+	u32_t rx_buf_len;
 };
+#else
+
+#include "spi_context.h"
+
+struct spi_dw_data {
+#ifdef CONFIG_SPI_DW_CLOCK_GATE
+	struct device *clock;
+#endif /* CONFIG_SPI_DW_CLOCK_GATE */
+	struct spi_context ctx;
+	u8_t error;
+	u8_t dfs;	/* dfs in bytes: 1,2 or 4 */
+	u8_t fifo_diff;	/* cannot be bigger than FIFO depth */
+	u8_t _unused;
+};
+#endif /* CONFIG_SPI_LEGACY_API */
 
 /* Helper macros */
+
+#ifdef SPI_DW_SPI_CLOCK
+#define SPI_DW_CLK_DIVIDER(ssi_clk_hz) \
+		((SPI_DW_SPI_CLOCK / ssi_clk_hz) & 0xFFFF)
+/* provision for soc.h providing a clock that is different than CPU clock */
+#else
+#define SPI_DW_CLK_DIVIDER(ssi_clk_hz) \
+		((CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / ssi_clk_hz) & 0xFFFF)
+#endif
+
 
 #ifdef CONFIG_SPI_DW_ARC_AUX_REGS
 #define _REG_READ(__sz) sys_in##__sz
@@ -67,30 +86,30 @@ struct spi_dw_data {
 #endif /* CONFIG_SPI_DW_ARC_AUX_REGS */
 
 #define DEFINE_MM_REG_READ(__reg, __off, __sz)				\
-	static inline uint32_t read_##__reg(uint32_t addr)		\
+	static inline u32_t read_##__reg(u32_t addr)			\
 	{								\
 		return _REG_READ(__sz)(addr + __off);			\
 	}
 #define DEFINE_MM_REG_WRITE(__reg, __off, __sz)				\
-	static inline void write_##__reg(uint32_t data, uint32_t addr)	\
+	static inline void write_##__reg(u32_t data, u32_t addr)	\
 	{								\
 		_REG_WRITE(__sz)(data, addr + __off);			\
 	}
 
 #define DEFINE_SET_BIT_OP(__reg_bit, __reg_off, __bit)			\
-	static inline void set_bit_##__reg_bit(uint32_t addr)		\
+	static inline void set_bit_##__reg_bit(u32_t addr)		\
 	{								\
 		_REG_SET_BIT(addr + __reg_off, __bit);			\
 	}
 
 #define DEFINE_CLEAR_BIT_OP(__reg_bit, __reg_off, __bit)		\
-	static inline void clear_bit_##__reg_bit(uint32_t addr)		\
+	static inline void clear_bit_##__reg_bit(u32_t addr)		\
 	{								\
 		_REG_CLEAR_BIT(addr + __reg_off, __bit);		\
 	}
 
 #define DEFINE_TEST_BIT_OP(__reg_bit, __reg_off, __bit)			\
-	static inline int test_bit_##__reg_bit(uint32_t addr)		\
+	static inline int test_bit_##__reg_bit(u32_t addr)		\
 	{								\
 		return _REG_TEST_BIT(addr + __reg_off, __bit);		\
 	}
@@ -115,14 +134,14 @@ struct spi_dw_data {
 #define DW_SPI_CTRLR0_DFS		DW_SPI_CTRLR0_DFS_32
 #endif
 
-/* 0x38 represents the bits 8,16 and 32. Knowing that 24 is bits 8 and 16
+/* 0x38 represents the bits 8, 16 and 32. Knowing that 24 is bits 8 and 16
  * These are the bits were when you divide by 8, you keep the result as it is.
  * For all the other ones, 4 to 7, 9 to 15, etc... you need a +1,
  * since on such division it takes only the result above 0
  */
-#define SPI_DFS_TO_BYTES(__bpw)		(((__bpw) & ~0x38) ?		\
-						(((__bpw) / 8) + 1) :	\
-						((__bpw) / 8))
+#define SPI_WS_TO_DFS(__bpw)		(((__bpw) & ~0x38) ?		\
+					 (((__bpw) / 8) + 1) :		\
+					 ((__bpw) / 8))
 
 /* SSIENR bits */
 #define DW_SPI_SSIENR_SSIEN_BIT		(0)
@@ -166,8 +185,8 @@ struct spi_dw_data {
 
 /* Threshold defaults */
 #define DW_SPI_FIFO_DEPTH		CONFIG_SPI_DW_FIFO_DEPTH
-#define DW_SPI_TXFTLR_DFLT		((DW_SPI_FIFO_DEPTH*1)/2) /* 50% */
-#define DW_SPI_RXFTLR_DFLT		((DW_SPI_FIFO_DEPTH*5)/8)
+#define DW_SPI_TXFTLR_DFLT		((DW_SPI_FIFO_DEPTH * 1) / 2) /* 50% */
+#define DW_SPI_RXFTLR_DFLT		((DW_SPI_FIFO_DEPTH * 5) / 8)
 
 /* Interrupt mask (IMR) */
 #define DW_SPI_IMR_MASK			(0x0)
@@ -193,6 +212,7 @@ struct spi_dw_data {
 #endif
 
 /* GPIO used to emulate CS */
+#if defined(CONFIG_SPI_LEGACY_API)
 #ifdef CONFIG_SPI_DW_CS_GPIO
 
 #include <gpio.h>
@@ -229,6 +249,7 @@ static inline void _spi_control_cs(struct device *dev, int on)
 #define _spi_control_cs(...)
 #define _spi_config_cs(...)
 #endif /* CONFIG_SPI_DW_CS_GPIO */
+#endif /* CONFIG_SPI_LEGACY_API */
 
 /* Interrupt mask
  * SoC SPECIFIC!
@@ -262,4 +283,3 @@ DEFINE_TEST_BIT_OP(sr_busy, DW_SPI_REG_SR, DW_SPI_SR_BUSY_BIT)
 }
 #endif
 #endif /* __SPI_DW_H__ */
-

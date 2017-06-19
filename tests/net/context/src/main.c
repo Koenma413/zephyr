@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
 #include <misc/printk.h>
-#include <sections.h>
+#include <linker/sections.h>
 
 #include <tc_util.h>
 
@@ -497,22 +497,23 @@ static void send_cb(struct net_context *context, int status,
 static bool net_ctx_send_v6(void)
 {
 	int ret, len;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf  *frag;
 
-	buf = net_nbuf_get_tx(udp_v6_ctx, K_FOREVER);
-	frag = net_nbuf_get_data(udp_v6_ctx, K_FOREVER);
+	pkt = net_pkt_get_tx(udp_v6_ctx, K_FOREVER);
+	frag = net_pkt_get_data(udp_v6_ctx, K_FOREVER);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
 	len = strlen(test_data);
 
 	memcpy(net_buf_add(frag, len), test_data, len);
 
-	net_nbuf_set_appdatalen(buf, len);
+	net_pkt_set_appdatalen(pkt, len);
 
 	test_token = SENDING;
 
-	ret = net_context_send(buf, send_cb, 0, INT_TO_POINTER(test_token),
+	ret = net_context_send(pkt, send_cb, 0, INT_TO_POINTER(test_token),
 			       INT_TO_POINTER(AF_INET6));
 	if (ret || cb_failure) {
 		TC_ERROR("Context send IPv6 UDP test failed (%d)\n", ret);
@@ -525,22 +526,23 @@ static bool net_ctx_send_v6(void)
 static bool net_ctx_send_v4(void)
 {
 	int ret, len;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf  *frag;
 
-	buf = net_nbuf_get_tx(udp_v4_ctx, K_FOREVER);
-	frag = net_nbuf_get_data(udp_v4_ctx, K_FOREVER);
+	pkt = net_pkt_get_tx(udp_v4_ctx, K_FOREVER);
+	frag = net_pkt_get_data(udp_v4_ctx, K_FOREVER);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
 	len = strlen(test_data);
 
 	memcpy(net_buf_add(frag, len), test_data, len);
 
-	net_nbuf_set_appdatalen(buf, len);
+	net_pkt_set_appdatalen(pkt, len);
 
 	test_token = SENDING;
 
-	ret = net_context_send(buf, send_cb, 0, INT_TO_POINTER(test_token),
+	ret = net_context_send(pkt, send_cb, 0, INT_TO_POINTER(test_token),
 			       INT_TO_POINTER(AF_INET));
 	if (ret || cb_failure) {
 		TC_ERROR("Context send IPv4 UDP test failed (%d)\n", ret);
@@ -553,7 +555,8 @@ static bool net_ctx_send_v4(void)
 static bool net_ctx_sendto_v6(void)
 {
 	int ret, len;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf  *frag;
 	struct sockaddr_in6 addr = {
 		.sin6_family = AF_INET6,
 		.sin6_port = htons(PEER_PORT),
@@ -561,20 +564,20 @@ static bool net_ctx_sendto_v6(void)
 				   0, 0, 0, 0, 0, 0, 0, 0x2 } } },
 	};
 
-	buf = net_nbuf_get_tx(udp_v6_ctx, K_FOREVER);
-	frag = net_nbuf_get_data(udp_v6_ctx, K_FOREVER);
+	pkt = net_pkt_get_tx(udp_v6_ctx, K_FOREVER);
+	frag = net_pkt_get_data(udp_v6_ctx, K_FOREVER);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
 	len = strlen(test_data);
 
 	memcpy(net_buf_add(frag, len), test_data, len);
 
-	net_nbuf_set_appdatalen(buf, len);
+	net_pkt_set_appdatalen(pkt, len);
 
 	test_token = SENDING;
 
-	ret = net_context_sendto(buf, (struct sockaddr *)&addr,
+	ret = net_context_sendto(pkt, (struct sockaddr *)&addr,
 				 sizeof(struct sockaddr_in6),
 				 send_cb, 0,
 				 INT_TO_POINTER(test_token),
@@ -590,27 +593,28 @@ static bool net_ctx_sendto_v6(void)
 static bool net_ctx_sendto_v4(void)
 {
 	int ret, len;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf  *frag;
 	struct sockaddr_in addr = {
 		.sin_family = AF_INET,
 		.sin_port = htons(PEER_PORT),
 		.sin_addr = { { { 192, 0, 2, 2 } } },
 	};
 
-	buf = net_nbuf_get_tx(udp_v4_ctx, K_FOREVER);
-	frag = net_nbuf_get_data(udp_v4_ctx, K_FOREVER);
+	pkt = net_pkt_get_tx(udp_v4_ctx, K_FOREVER);
+	frag = net_pkt_get_data(udp_v4_ctx, K_FOREVER);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
 	len = strlen(test_data);
 
 	memcpy(net_buf_add(frag, len), test_data, len);
 
-	net_nbuf_set_appdatalen(buf, len);
+	net_pkt_set_appdatalen(pkt, len);
 
 	test_token = SENDING;
 
-	ret = net_context_sendto(buf, (struct sockaddr *)&addr,
+	ret = net_context_sendto(pkt, (struct sockaddr *)&addr,
 				 sizeof(struct sockaddr_in),
 				 send_cb, 0,
 				 INT_TO_POINTER(test_token),
@@ -624,7 +628,7 @@ static bool net_ctx_sendto_v4(void)
 }
 
 static void recv_cb(struct net_context *context,
-		    struct net_buf *buf,
+		    struct net_pkt *pkt,
 		    int status,
 		    void *user_data)
 {
@@ -687,7 +691,8 @@ static bool net_ctx_recv_v4(void)
 static bool net_ctx_sendto_v6_wrong_src(void)
 {
 	int ret, len;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf  *frag;
 	struct sockaddr_in6 addr = {
 		.sin6_family = AF_INET6,
 		.sin6_port = htons(PEER_PORT),
@@ -695,20 +700,20 @@ static bool net_ctx_sendto_v6_wrong_src(void)
 				   0, 0, 0, 0, 0, 0, 0, 0x3 } } },
 	};
 
-	buf = net_nbuf_get_tx(udp_v6_ctx, K_FOREVER);
-	frag = net_nbuf_get_data(udp_v6_ctx, K_FOREVER);
+	pkt = net_pkt_get_tx(udp_v6_ctx, K_FOREVER);
+	frag = net_pkt_get_data(udp_v6_ctx, K_FOREVER);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
 	len = strlen(test_data);
 
 	memcpy(net_buf_add(frag, len), test_data, len);
 
-	net_nbuf_set_appdatalen(buf, len);
+	net_pkt_set_appdatalen(pkt, len);
 
 	test_token = SENDING;
 
-	ret = net_context_sendto(buf, (struct sockaddr *)&addr,
+	ret = net_context_sendto(pkt, (struct sockaddr *)&addr,
 				 sizeof(struct sockaddr_in6),
 				 send_cb, 0,
 				 INT_TO_POINTER(test_token),
@@ -745,27 +750,28 @@ static bool net_ctx_recv_v6_fail(void)
 static bool net_ctx_sendto_v4_wrong_src(void)
 {
 	int ret, len;
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
 	struct sockaddr_in addr = {
 		.sin_family = AF_INET,
 		.sin_port = htons(PEER_PORT),
 		.sin_addr = { { { 192, 0, 2, 3 } } },
 	};
 
-	buf = net_nbuf_get_tx(udp_v4_ctx, K_FOREVER);
-	frag = net_nbuf_get_data(udp_v4_ctx, K_FOREVER);
+	pkt = net_pkt_get_tx(udp_v4_ctx, K_FOREVER);
+	frag = net_pkt_get_data(udp_v4_ctx, K_FOREVER);
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
 	len = strlen(test_data);
 
 	memcpy(net_buf_add(frag, len), test_data, len);
 
-	net_nbuf_set_appdatalen(buf, len);
+	net_pkt_set_appdatalen(pkt, len);
 
 	test_token = SENDING;
 
-	ret = net_context_sendto(buf, (struct sockaddr *)&addr,
+	ret = net_context_sendto(pkt, (struct sockaddr *)&addr,
 				 sizeof(struct sockaddr_in),
 				 send_cb, 0,
 				 INT_TO_POINTER(test_token),
@@ -833,7 +839,7 @@ static bool net_ctx_recv_v4_again(void)
 }
 
 static void recv_cb_another(struct net_context *context,
-			    struct net_buf *buf,
+			    struct net_pkt *pkt,
 			    int status,
 			    void *user_data)
 {
@@ -898,10 +904,11 @@ static bool net_ctx_recv_v4_reconfig(void)
 }
 
 #define STACKSIZE 1024
-char __noinit __stack thread_stack[STACKSIZE];
+K_THREAD_STACK_DEFINE(thread_stack, STACKSIZE);
+static struct k_thread thread_data;
 
 static void recv_cb_timeout(struct net_context *context,
-			    struct net_buf *buf,
+			    struct net_pkt *pkt,
 			    int status,
 			    void *user_data)
 {
@@ -934,18 +941,18 @@ void timeout_thread(struct net_context *ctx, sa_family_t *family)
 
 static void start_timeout_v6_thread(void)
 {
-	k_thread_spawn(&thread_stack[0], STACKSIZE,
-		       (k_thread_entry_t)timeout_thread,
-		       udp_v6_ctx, INT_TO_POINTER(AF_INET6), NULL,
-		       K_PRIO_COOP(7), 0, 0);
+	k_thread_create(&thread_data, thread_stack, STACKSIZE,
+			(k_thread_entry_t)timeout_thread,
+			udp_v6_ctx, INT_TO_POINTER(AF_INET6), NULL,
+			K_PRIO_COOP(7), 0, 0);
 }
 
 static void start_timeout_v4_thread(void)
 {
-	k_thread_spawn(&thread_stack[0], STACKSIZE,
-		       (k_thread_entry_t)timeout_thread,
-		       udp_v4_ctx, INT_TO_POINTER(AF_INET), NULL,
-		       K_PRIO_COOP(7), 0, 0);
+	k_thread_create(&thread_data, thread_stack, STACKSIZE,
+			(k_thread_entry_t)timeout_thread,
+			udp_v4_ctx, INT_TO_POINTER(AF_INET), NULL,
+			K_PRIO_COOP(7), 0, 0);
 }
 
 static bool net_ctx_recv_v6_timeout(void)
@@ -1020,7 +1027,7 @@ static bool net_ctx_put(void)
 }
 
 struct net_context_test {
-	uint8_t mac_addr[sizeof(struct net_eth_addr)];
+	u8_t mac_addr[sizeof(struct net_eth_addr)];
 	struct net_linkaddr ll_addr;
 };
 
@@ -1029,17 +1036,17 @@ int net_context_dev_init(struct device *dev)
 	return 0;
 }
 
-static uint8_t *net_context_get_mac(struct device *dev)
+static u8_t *net_context_get_mac(struct device *dev)
 {
 	struct net_context_test *context = dev->driver_data;
 
-	if (context->mac_addr[0] == 0x00) {
-		/* 10-00-00-00-00 to 10-00-00-00-FF Documentation RFC7042 */
-		context->mac_addr[0] = 0x10;
+	if (context->mac_addr[2] == 0x00) {
+		/* 00-00-5E-00-53-xx Documentation RFC 7042 */
+		context->mac_addr[0] = 0x00;
 		context->mac_addr[1] = 0x00;
-		context->mac_addr[2] = 0x00;
+		context->mac_addr[2] = 0x5E;
 		context->mac_addr[3] = 0x00;
-		context->mac_addr[4] = 0x00;
+		context->mac_addr[4] = 0x53;
 		context->mac_addr[5] = sys_rand32_get();
 	}
 
@@ -1048,15 +1055,15 @@ static uint8_t *net_context_get_mac(struct device *dev)
 
 static void net_context_iface_init(struct net_if *iface)
 {
-	uint8_t *mac = net_context_get_mac(net_if_get_device(iface));
+	u8_t *mac = net_context_get_mac(net_if_get_device(iface));
 
 	net_if_set_link_addr(iface, mac, sizeof(struct net_eth_addr),
 			     NET_LINK_ETHERNET);
 }
 
-static int tester_send(struct net_if *iface, struct net_buf *buf)
+static int tester_send(struct net_if *iface, struct net_pkt *pkt)
 {
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		TC_ERROR("No data to send!\n");
 		return -ENODATA;
 	}
@@ -1074,29 +1081,29 @@ static int tester_send(struct net_if *iface, struct net_buf *buf)
 		/* We need to swap the IP addresses because otherwise
 		 * the packet will be dropped.
 		 */
-		uint16_t port;
+		u16_t port;
 
-		if (net_nbuf_family(buf) == AF_INET6) {
+		if (net_pkt_family(pkt) == AF_INET6) {
 			struct in6_addr addr;
 
-			net_ipaddr_copy(&addr, &NET_IPV6_BUF(buf)->src);
-			net_ipaddr_copy(&NET_IPV6_BUF(buf)->src,
-					&NET_IPV6_BUF(buf)->dst);
-			net_ipaddr_copy(&NET_IPV6_BUF(buf)->dst, &addr);
+			net_ipaddr_copy(&addr, &NET_IPV6_HDR(pkt)->src);
+			net_ipaddr_copy(&NET_IPV6_HDR(pkt)->src,
+					&NET_IPV6_HDR(pkt)->dst);
+			net_ipaddr_copy(&NET_IPV6_HDR(pkt)->dst, &addr);
 		} else {
 			struct in_addr addr;
 
-			net_ipaddr_copy(&addr, &NET_IPV4_BUF(buf)->src);
-			net_ipaddr_copy(&NET_IPV4_BUF(buf)->src,
-					&NET_IPV4_BUF(buf)->dst);
-			net_ipaddr_copy(&NET_IPV4_BUF(buf)->dst, &addr);
+			net_ipaddr_copy(&addr, &NET_IPV4_HDR(pkt)->src);
+			net_ipaddr_copy(&NET_IPV4_HDR(pkt)->src,
+					&NET_IPV4_HDR(pkt)->dst);
+			net_ipaddr_copy(&NET_IPV4_HDR(pkt)->dst, &addr);
 		}
 
-		port = NET_UDP_BUF(buf)->src_port;
-		NET_UDP_BUF(buf)->src_port = NET_UDP_BUF(buf)->dst_port;
-		NET_UDP_BUF(buf)->dst_port = port;
+		port = NET_UDP_HDR(pkt)->src_port;
+		NET_UDP_HDR(pkt)->src_port = NET_UDP_HDR(pkt)->dst_port;
+		NET_UDP_HDR(pkt)->dst_port = port;
 
-		if (net_recv_data(iface, buf) < 0) {
+		if (net_recv_data(iface, pkt) < 0) {
 			TC_ERROR("Data receive failed.");
 			goto out;
 		}
@@ -1107,7 +1114,7 @@ static int tester_send(struct net_if *iface, struct net_buf *buf)
 	}
 
 out:
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	if (data_failure) {
 		test_failed = true;
