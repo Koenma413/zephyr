@@ -1,0 +1,6 @@
+sample:
+  name: Dining Philosophers
+tests:
+  test:
+    tags: samples
+    harness: console

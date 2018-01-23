@@ -1,0 +1,7 @@
+sample:
+  name: External Library
+tests:
+  test:
+    platform_whitelist: qemu_x86
+    tags: external
+    harness: console

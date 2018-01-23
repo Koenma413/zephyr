@@ -46,7 +46,7 @@
 #include "rpl.h"
 
 #include "connection.h"
-#include "udp.h"
+#include "udp_internal.h"
 #include "tcp.h"
 
 #include "net_stats.h"
@@ -165,7 +165,7 @@ static void net_rx_thread(void)
 
 		pkt = k_fifo_get(&rx_queue, K_FOREVER);
 
-		net_analyze_stack("RX thread", rx_stack,
+		net_analyze_stack("RX thread", K_THREAD_STACK_BUFFER(rx_stack),
 				  K_THREAD_STACK_SIZEOF(rx_stack));
 
 #if defined(CONFIG_NET_STATISTICS) || defined(CONFIG_NET_DEBUG_CORE)
@@ -195,7 +195,10 @@ static void init_rx_queue(void)
 				 K_ESSENTIAL, K_NO_WAIT);
 }
 
-#if defined(CONFIG_NET_IP_ADDR_CHECK)
+/* If loopback driver is enabled, then direct packets to it so the address
+ * check is not needed.
+ */
+#if defined(CONFIG_NET_IP_ADDR_CHECK) && !defined(CONFIG_NET_LOOPBACK)
 /* Check if the IPv{4|6} addresses are proper. As this can be expensive,
  * make this optional.
  */
@@ -241,6 +244,7 @@ static inline int check_ip_addr(struct net_pkt *pkt)
 	if (net_pkt_family(pkt) == AF_INET) {
 		if (net_ipv4_addr_cmp(&NET_IPV4_HDR(pkt)->dst,
 				      net_ipv4_unspecified_address())) {
+			NET_DBG("IPv4 dst address missing");
 			return -EADDRNOTAVAIL;
 		}
 
@@ -380,9 +384,9 @@ static int net_init(struct device *unused)
 {
 	int status = 0;
 
-	NET_DBG("Priority %d", CONFIG_NET_INIT_PRIO);
+	net_hostname_init();
 
-	net_shell_init();
+	NET_DBG("Priority %d", CONFIG_NET_INIT_PRIO);
 
 	net_pkt_init();
 

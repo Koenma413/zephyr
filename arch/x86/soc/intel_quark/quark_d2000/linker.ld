@@ -13,6 +13,7 @@
 
 #include <autoconf.h>
 
+#include <generated_dts_board.h>
 /* physical address of RAM (needed for correct __ram_phys_end symbol) */
 #define PHYS_RAM_ADDR    CONFIG_PHYS_RAM_ADDR
 
@@ -26,7 +27,7 @@
 #ifdef CONFIG_SET_GDT
 #define PHYS_RAM_SIZE CONFIG_RAM_SIZE*1K
 #else /* !CONFIG_SET_GDT */
-#define PHYS_RAM_SIZE CONFIG_RAM_SIZE*1K - CONFIG_BSP_SHARED_GDT_RAM_SIZE
+#define PHYS_RAM_SIZE CONFIG_RAM_SIZE*1K - CONFIG_SHARED_GDT_RAM_SIZE
 #endif
 
 MEMORY
@@ -38,8 +39,8 @@ MEMORY
     RAM (wx)	    : ORIGIN = PHYS_LOAD_ADDR, LENGTH = PHYS_RAM_SIZE
 #endif /* CONFIG_XIP */
 #ifndef CONFIG_SET_GDT
-    BSP_SHARED_GDT_RAM (rw) : ORIGIN = CONFIG_BSP_SHARED_GDT_RAM_ADDR,
-                              LENGTH = CONFIG_BSP_SHARED_GDT_RAM_SIZE
+    SHARED_GDT_RAM (rw) : ORIGIN = CONFIG_SHARED_GDT_RAM_ADDR,
+                              LENGTH = CONFIG_SHARED_GDT_RAM_SIZE
 #endif /* !CONFIG_SET_GDT */
 
     /*
@@ -48,7 +49,7 @@ MEMORY
      * target. However, it shouldn't overlap any other regions.
      */
 
-    IDT_LIST        : ORIGIN = 512, LENGTH = 512
+    IDT_LIST        : ORIGIN = 0, LENGTH = 2K
     }
 
 #include <arch/x86/linker.ld>

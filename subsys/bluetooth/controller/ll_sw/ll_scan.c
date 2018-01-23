@@ -13,26 +13,27 @@
 #include "pdu.h"
 #include "ctrl.h"
 #include "ll.h"
+#include "ll_filter.h"
 
 static struct {
 	u16_t interval;
 	u16_t window;
 
-#if defined(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT)
+#if defined(CONFIG_BT_CTLR_ADV_EXT)
 	u8_t  type:4;
-#else /* !CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
+#else /* !CONFIG_BT_CTLR_ADV_EXT */
 	u8_t  type:1;
-#endif /* !CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
+#endif /* !CONFIG_BT_CTLR_ADV_EXT */
 
-	u8_t  tx_addr:1;
-	u8_t  filter_policy:1;
+	u8_t  own_addr_type:2;
+	u8_t  filter_policy:2;
 } ll_scan;
 
 u32_t ll_scan_params_set(u8_t type, u16_t interval, u16_t window,
 			 u8_t own_addr_type, u8_t filter_policy)
 {
 	if (radio_scan_is_enabled()) {
-		return 0x0C; /* Command Disallowed */
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
 	/* type value:
@@ -50,7 +51,7 @@ u32_t ll_scan_params_set(u8_t type, u16_t interval, u16_t window,
 	ll_scan.type = type;
 	ll_scan.interval = interval;
 	ll_scan.window = window;
-	ll_scan.tx_addr = own_addr_type;
+	ll_scan.own_addr_type = own_addr_type;
 	ll_scan.filter_policy = filter_policy;
 
 	return 0;
@@ -59,17 +60,32 @@ u32_t ll_scan_params_set(u8_t type, u16_t interval, u16_t window,
 u32_t ll_scan_enable(u8_t enable)
 {
 	u32_t status;
+	u8_t  rpa_gen = 0;
 
 	if (!enable) {
-		status = radio_scan_disable();
-
-		return status;
+		return radio_scan_disable();
+	} else if (radio_scan_is_enabled()) {
+		/* Duplicate filtering is processed in the HCI layer */
+		return 0;
 	}
 
-	status = radio_scan_enable(ll_scan.type, ll_scan.tx_addr,
-				   ll_addr_get(ll_scan.tx_addr, NULL),
+#if defined(CONFIG_BT_CTLR_PRIVACY)
+	ll_filters_scan_update(ll_scan.filter_policy);
+
+	if ((ll_scan.type & 0x1) &&
+	    (ll_scan.own_addr_type == BT_ADDR_LE_PUBLIC_ID ||
+	     ll_scan.own_addr_type == BT_ADDR_LE_RANDOM_ID)) {
+		/* Generate RPAs if required */
+		ll_rl_rpa_update(false);
+		rpa_gen = 1;
+	}
+#endif
+	status = radio_scan_enable(ll_scan.type, ll_scan.own_addr_type & 0x1,
+				   ll_addr_get(ll_scan.own_addr_type & 0x1,
+					       NULL),
 				   ll_scan.interval, ll_scan.window,
-				   ll_scan.filter_policy);
+				   ll_scan.filter_policy, rpa_gen,
+				   FILTER_IDX_NONE);
 
 	return status;
 }

@@ -293,7 +293,7 @@ int bt_gatt_service_register(struct bt_gatt_service *svc);
  *
  *  @return 0 in case of success or negative value in case of error.
  */
-int bt_gatt_unregister_service(struct bt_gatt_service *svc);
+int bt_gatt_service_unregister(struct bt_gatt_service *svc);
 
 enum {
 	BT_GATT_ITER_STOP = 0,
@@ -485,21 +485,26 @@ ssize_t bt_gatt_attr_read_chrc(struct bt_conn *conn,
 					       .properties = _props, }),\
 }
 
-/** @brief GATT CCC configuration entry. */
+#define BT_GATT_CCC_MAX (CONFIG_BT_MAX_PAIRED + CONFIG_BT_MAX_CONN)
+
+/** @brief GATT CCC configuration entry.
+ *  @param valid Valid flag
+ *  @param peer Remote peer address
+ *  @param value Configuration value.
+ *  @param data Configuration pointer data.
+ */
 struct bt_gatt_ccc_cfg {
-	/** Config peer address. */
-	bt_addr_le_t		peer;
-	/** Config peer value. */
-	u16_t		value;
-	/** Config valid flag. */
 	u8_t			valid;
+	bt_addr_le_t		peer;
+	u16_t			value;
+	u8_t			data[4] __aligned(4);
 };
 
 /* Internal representation of CCC value */
 struct _bt_gatt_ccc {
 	struct bt_gatt_ccc_cfg	*cfg;
 	size_t			cfg_len;
-	u16_t		value;
+	u16_t			value;
 	void			(*cfg_changed)(const struct bt_gatt_attr *attr,
 					       u16_t value);
 };
@@ -890,7 +895,7 @@ struct bt_gatt_read_params {
 	bt_gatt_read_func_t func;
 	size_t handle_count;
 	union {
-		struct __single {
+		struct {
 			u16_t handle;
 			u16_t offset;
 		} single;

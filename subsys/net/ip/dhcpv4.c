@@ -23,8 +23,10 @@
 #include <net/net_if.h>
 #include "net_private.h"
 
-#include "udp.h"
+#include <net/udp.h>
+#include "udp_internal.h"
 #include <net/dhcpv4.h>
+#include <net/dns_resolve.h>
 
 struct dhcp_msg {
 	u8_t op;		/* Message type, 1:BOOTREQUEST, 2:BOOTREPLY */
@@ -250,11 +252,13 @@ static inline bool add_sname(struct net_pkt *pkt)
 static void setup_header(struct net_pkt *pkt, const struct in_addr *server_addr)
 {
 	struct net_ipv4_hdr *ipv4;
-	struct net_udp_hdr *udp;
+	struct net_udp_hdr hdr, *udp;
 	u16_t len;
 
 	ipv4 = NET_IPV4_HDR(pkt);
-	udp = NET_UDP_HDR(pkt);
+
+	udp = net_udp_get_hdr(pkt, &hdr);
+	NET_ASSERT(udp && udp != &hdr);
 
 	len = net_pkt_get_len(pkt);
 
@@ -277,6 +281,8 @@ static void setup_header(struct net_pkt *pkt, const struct in_addr *server_addr)
 	udp->len = htons(len);
 	udp->chksum = 0;
 	udp->chksum = ~net_calc_chksum_udp(pkt);
+
+	net_udp_set_hdr(pkt, udp);
 }
 
 /* Prepare initial DHCPv4 message and add options as per message type */
@@ -441,7 +447,7 @@ static void send_request(struct net_if *iface)
 fail:
 	NET_DBG("Message preparation failed");
 
-	if (!pkt) {
+	if (pkt) {
 		net_pkt_unref(pkt);
 	}
 }
@@ -484,7 +490,7 @@ static void send_discover(struct net_if *iface)
 fail:
 	NET_DBG("Message preparation failed");
 
-	if (!pkt) {
+	if (pkt) {
 		net_pkt_unref(pkt);
 	}
 }
@@ -740,6 +746,46 @@ static enum net_verdict parse_options(struct net_if *iface,
 			net_if_ipv4_set_gw(iface, &router);
 			break;
 		}
+#if defined(CONFIG_DNS_RESOLVER)
+		case DHCPV4_OPTIONS_DNS_SERVER: {
+			int status;
+			struct sockaddr_in dns;
+			const struct sockaddr *dns_servers[] = {
+				(struct sockaddr *)&dns, NULL
+			};
+
+			/* DNS server option may present 1 or more
+			 * addresses. Each 4 bytes in length. DNS
+			 * servers should be listed in order
+			 * of preference.  Hence we choose the first
+			 * and skip the rest.
+			 */
+			if (length % 4 != 0) {
+				NET_ERR("options_dns, bad length");
+				return NET_DROP;
+			}
+
+			memset(&dns, 0, sizeof(dns));
+			frag = net_frag_read(frag, pos, &pos, 4,
+					     dns.sin_addr.s4_addr);
+			frag = net_frag_skip(frag, pos, &pos, length - 4);
+			if (!frag && pos) {
+				NET_ERR("options_dns, short packet");
+				return NET_DROP;
+			}
+			dns.sin_family = AF_INET;
+
+			dns_resolve_close(dns_resolve_get_default());
+			status = dns_resolve_init(dns_resolve_get_default(),
+						  NULL, dns_servers);
+			if (status < 0) {
+				NET_DBG("options_dns, failed to set "
+					"resolve address: %d", status);
+				return NET_DROP;
+			}
+			break;
+		}
+#endif
 		case DHCPV4_OPTIONS_LEASE_TIME:
 			if (length != 4) {
 				NET_ERR("options_lease_time, bad length");
@@ -1098,7 +1144,7 @@ int dhcpv4_init(void)
 
 	net_ipaddr_copy(&net_sin(&local_addr)->sin_addr,
 			net_ipv4_unspecified_address());
-	local_addr.family = AF_INET;
+	local_addr.sa_family = AF_INET;
 
 	/* Register UDP input callback on
 	 * DHCPV4_SERVER_PORT(67) and DHCPV4_CLIENT_PORT(68) for

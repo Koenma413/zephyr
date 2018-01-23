@@ -9,6 +9,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr.h>
 #include <shell/shell.h>
@@ -18,7 +19,73 @@
 
 #include "../controller/include/ll.h"
 
-#if defined(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT)
+#if defined(CONFIG_BT_CTLR_DTM)
+#include "../controller/ll_sw/ll_test.h"
+
+int cmd_test_tx(int argc, char *argv[])
+{
+	u8_t chan, len, type, phy;
+	u32_t err;
+
+	if (argc < 5) {
+		return -EINVAL;
+	}
+
+	chan = strtoul(argv[1], NULL, 16);
+	len  = strtoul(argv[2], NULL, 16);
+	type = strtoul(argv[3], NULL, 16);
+	phy  = strtoul(argv[4], NULL, 16);
+
+	err = ll_test_tx(chan, len, type, phy);
+	if (err) {
+		return -EINVAL;
+	}
+
+	printk("test_tx...\n");
+
+	return 0;
+}
+
+int cmd_test_rx(int argc, char *argv[])
+{
+	u8_t chan, phy, mod_idx;
+	u32_t err;
+
+	if (argc < 4) {
+		return -EINVAL;
+	}
+
+	chan    = strtoul(argv[1], NULL, 16);
+	phy     = strtoul(argv[2], NULL, 16);
+	mod_idx = strtoul(argv[3], NULL, 16);
+
+	err = ll_test_rx(chan, phy, mod_idx);
+	if (err) {
+		return -EINVAL;
+	}
+
+	printk("test_rx...\n");
+
+	return 0;
+}
+
+int cmd_test_end(int argc, char *argv[])
+{
+	u16_t num_rx;
+	u32_t err;
+
+	err = ll_test_end(&num_rx);
+	if (err) {
+		return -EINVAL;
+	}
+
+	printk("num_rx= %u.\n", num_rx);
+
+	return 0;
+}
+#endif /* CONFIG_BT_CTLR_DTM */
+
+#if defined(CONFIG_BT_CTLR_ADV_EXT)
 #define ADV_INTERVAL 0x000020
 #define ADV_TYPE 0x05 /* Adv. Ext. */
 #define OWN_ADDR_TYPE 1
@@ -117,8 +184,8 @@ exit:
 
 int cmd_scanx(int argc, char *argv[])
 {
+	u8_t type = 0;
 	u8_t enable;
-	u8_t type;
 	s32_t err;
 
 	if (argc < 2) {
@@ -170,4 +237,4 @@ exit:
 
 	return 0;
 }
-#endif /* CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
+#endif /* CONFIG_BT_CTLR_ADV_EXT */

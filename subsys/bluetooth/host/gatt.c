@@ -20,7 +20,7 @@
 #include <bluetooth/gatt.h>
 #include <bluetooth/hci_driver.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_GATT)
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_GATT)
 #include "common/log.h"
 
 #include "hci_core.h"
@@ -31,12 +31,14 @@
 #include "smp.h"
 #include "gatt_internal.h"
 
-#if defined(CONFIG_BLUETOOTH_GATT_CLIENT)
-static sys_slist_t subscriptions;
-#endif /* CONFIG_BLUETOOTH_GATT_CLIENT */
+#define SC_TIMEOUT K_MSEC(10)
 
-static const char *gap_name = CONFIG_BLUETOOTH_DEVICE_NAME;
-static const u16_t gap_appearance = CONFIG_BLUETOOTH_DEVICE_APPEARANCE;
+#if defined(CONFIG_BT_GATT_CLIENT)
+static sys_slist_t subscriptions;
+#endif /* CONFIG_BT_GATT_CLIENT */
+
+static const char *gap_name = CONFIG_BT_DEVICE_NAME;
+static const u16_t gap_appearance = CONFIG_BT_DEVICE_APPEARANCE;
 
 static sys_slist_t db;
 
@@ -69,7 +71,7 @@ static struct bt_gatt_attr gap_attrs[] = {
 
 static struct bt_gatt_service gap_svc = BT_GATT_SERVICE(gap_attrs);
 
-static struct bt_gatt_ccc_cfg sc_ccc_cfg[CONFIG_BLUETOOTH_MAX_PAIRED] = {};
+static struct bt_gatt_ccc_cfg sc_ccc_cfg[BT_GATT_CCC_MAX] = {};
 
 static void sc_ccc_cfg_changed(const struct bt_gatt_attr *attr,
 			       u16_t value)
@@ -128,46 +130,118 @@ populate:
 	return 0;
 }
 
-void bt_gatt_init(void)
-{
-	/* Register mandatory services */
-	gatt_register(&gap_svc);
-	gatt_register(&gatt_svc);
-}
+enum {
+	SC_RANGE_CHANGED,    /* SC range changed */
+	SC_INDICATE_PENDING, /* SC indicate pending */
 
-static struct k_sem sc_sem = K_SEM_INITIALIZER(sc_sem, 1, 1);
+	/* Total number of flags - must be at the end of the enum */
+	SC_NUM_FLAGS,
+};
+
+static struct gatt_sc {
+	struct bt_gatt_indicate_params params;
+	u16_t start;
+	u16_t end;
+	struct k_delayed_work work;
+	ATOMIC_DEFINE(flags, SC_NUM_FLAGS);
+} gatt_sc;
 
 static void sc_indicate_rsp(struct bt_conn *conn,
 			    const struct bt_gatt_attr *attr, u8_t err)
 {
 	BT_DBG("err 0x%02x", err);
 
-	k_sem_give(&sc_sem);
+	atomic_clear_bit(gatt_sc.flags, SC_INDICATE_PENDING);
+
+	/* Check if there is new change in the meantime */
+	if (atomic_test_bit(gatt_sc.flags, SC_RANGE_CHANGED)) {
+		/* Reschedule without any delay since it is waiting already */
+		k_delayed_work_submit(&gatt_sc.work, K_NO_WAIT);
+	}
 }
 
-static void sc_indicate(struct bt_gatt_attr *start, struct bt_gatt_attr *end)
+static void sc_process(struct k_work *work)
 {
-	static struct bt_gatt_indicate_params params;
+	struct gatt_sc *sc = CONTAINER_OF(work, struct gatt_sc, work);
 	u16_t sc_range[2];
 
-	if (k_sem_take(&sc_sem, K_NO_WAIT)) {
-		BT_DBG("Service Changed indicating, waiting until complete...");
-		k_sem_take(&sc_sem, K_FOREVER);
-	}
+	__ASSERT(!atomic_test_bit(sc->flags, SC_INDICATE_PENDING),
+		 "Indicate already pending");
 
-	sc_range[0] = sys_cpu_to_le16(start->handle);
-	sc_range[1] = sys_cpu_to_le16(end->handle);
+	BT_DBG("start 0x%04x end 0x%04x", sc->start, sc->end);
 
-	params.attr = &gatt_attrs[2];
-	params.func = sc_indicate_rsp;
-	params.data = &sc_range[0];
-	params.len = sizeof(sc_range);
+	sc_range[0] = sys_cpu_to_le16(sc->start);
+	sc_range[1] = sys_cpu_to_le16(sc->end);
 
-	if (!bt_gatt_indicate(NULL, &params)) {
+	atomic_clear_bit(sc->flags, SC_RANGE_CHANGED);
+	sc->start = 0;
+	sc->end = 0;
+
+	sc->params.attr = &gatt_attrs[2];
+	sc->params.func = sc_indicate_rsp;
+	sc->params.data = &sc_range[0];
+	sc->params.len = sizeof(sc_range);
+
+	if (bt_gatt_indicate(NULL, &sc->params)) {
+		/* No connections to indicate */
 		return;
 	}
 
-	k_sem_give(&sc_sem);
+	atomic_set_bit(sc->flags, SC_INDICATE_PENDING);
+}
+
+void bt_gatt_init(void)
+{
+	/* Register mandatory services */
+	gatt_register(&gap_svc);
+	gatt_register(&gatt_svc);
+
+	k_delayed_work_init(&gatt_sc.work, sc_process);
+}
+
+static bool update_range(u16_t *start, u16_t *end, u16_t new_start,
+			 u16_t new_end)
+{
+	BT_DBG("start 0x%04x end 0x%04x new_start 0x%04x new_end 0x%04x",
+	       *start, *end, new_start, new_end);
+
+	/* Check if inside existing range */
+	if (new_start >= *start && new_end <= *end) {
+		return false;
+	}
+
+	/* Update range */
+	if (*start > new_start) {
+		*start = new_start;
+	}
+
+	if (*end < new_end) {
+		*end = new_end;
+	}
+
+	return true;
+}
+
+static void sc_indicate(struct gatt_sc *sc, uint16_t start, uint16_t end)
+{
+	if (!atomic_test_and_set_bit(sc->flags, SC_RANGE_CHANGED)) {
+		sc->start = start;
+		sc->end = end;
+		goto submit;
+	}
+
+	if (!update_range(&sc->start, &sc->end, start, end)) {
+		return;
+	}
+
+submit:
+	if (atomic_test_bit(sc->flags, SC_INDICATE_PENDING)) {
+		BT_DBG("indicate pending, waiting until complete...");
+		return;
+	}
+
+	/* Reschedule since the range has changed */
+	k_delayed_work_submit(&sc->work, SC_TIMEOUT);
 }
 
 int bt_gatt_service_register(struct bt_gatt_service *svc)
@@ -189,12 +263,13 @@ int bt_gatt_service_register(struct bt_gatt_service *svc)
 		return err;
 	}
 
-	sc_indicate(&svc->attrs[0], &svc->attrs[svc->attr_count - 1]);
+	sc_indicate(&gatt_sc, svc->attrs[0].handle,
+		    svc->attrs[svc->attr_count - 1].handle);
 
 	return 0;
 }
 
-int bt_gatt_unregister_service(struct bt_gatt_service *svc)
+int bt_gatt_service_unregister(struct bt_gatt_service *svc)
 {
 	__ASSERT(svc, "invalid parameters\n");
 
@@ -202,7 +277,8 @@ int bt_gatt_unregister_service(struct bt_gatt_service *svc)
 		return -ENOENT;
 	}
 
-	sc_indicate(&svc->attrs[0], &svc->attrs[svc->attr_count - 1]);
+	sc_indicate(&gatt_sc, svc->attrs[0].handle,
+		    svc->attrs[svc->attr_count - 1].handle);
 
 	return 0;
 }
@@ -616,6 +692,39 @@ static int gatt_indicate(struct bt_conn *conn,
 	return gatt_send(conn, buf, gatt_indicate_rsp, params, NULL);
 }
 
+struct sc_data {
+	u16_t start;
+	u16_t end;
+};
+
+static void sc_save(struct bt_gatt_ccc_cfg *cfg,
+		    struct bt_gatt_indicate_params *params)
+{
+	struct sc_data data;
+	struct sc_data *stored;
+
+	memcpy(&data, params->data, params->len);
+
+	data.start = sys_le16_to_cpu(data.start);
+	data.end = sys_le16_to_cpu(data.end);
+
+	/* Load data stored */
+	stored = (struct sc_data *)cfg->data;
+
+	/* Check if there is any change stored */
+	if (!stored->start && !stored->end) {
+		*stored = data;
+		goto done;
+	}
+
+	update_range(&stored->start, &stored->end,
+		     data.start, data.end);
+
+done:
+	BT_DBG("peer %s start 0x%04x end 0x%04x", bt_addr_le_str(&cfg->peer),
+	       stored->start, stored->end);
+}
+
 static u8_t notify_cb(const struct bt_gatt_attr *attr, void *user_data)
 {
 	struct notify_data *data = user_data;
@@ -642,12 +751,18 @@ static u8_t notify_cb(const struct bt_gatt_attr *attr, void *user_data)
 		struct bt_conn *conn;
 		int err;
 
-		if (ccc->value != data->type) {
+		/* Check if config value matches data type since consolidated
+		 * value may be for a different peer.
+		 */
+		if (ccc->cfg[i].value != data->type) {
 			continue;
 		}
 
 		conn = bt_conn_lookup_addr_le(&ccc->cfg[i].peer);
 		if (!conn) {
+			if (ccc->cfg == sc_ccc_cfg) {
+				sc_save(&ccc->cfg[i], data->params);
+			}
 			continue;
 		}
 
@@ -723,6 +838,23 @@ u16_t bt_gatt_get_mtu(struct bt_conn *conn)
 	return bt_att_get_mtu(conn);
 }
 
+static void sc_restore(struct bt_gatt_ccc_cfg *cfg)
+{
+	struct sc_data *data = (struct sc_data *)cfg->data;
+
+	if (!data->start && !data->end) {
+		return;
+	}
+
+	BT_DBG("peer %s start 0x%04x end 0x%04x", bt_addr_le_str(&cfg->peer),
+	       data->start, data->end);
+
+	sc_indicate(&gatt_sc, data->start, data->end);
+
+	/* Reset config data */
+	memset(cfg->data, 0, sizeof(cfg->data));
+}
+
 static u8_t connected_cb(const struct bt_gatt_attr *attr, void *user_data)
 {
 	struct bt_conn *conn = user_data;
@@ -736,11 +868,6 @@ static u8_t connected_cb(const struct bt_gatt_attr *attr, void *user_data)
 
 	ccc = attr->user_data;
 
-	/* If already enabled skip */
-	if (ccc->value) {
-		return BT_GATT_ITER_CONTINUE;
-	}
-
 	for (i = 0; i < ccc->cfg_len; i++) {
 		/* Ignore configuration for different peer */
 		if (bt_conn_addr_le_cmp(conn, &ccc->cfg[i].peer)) {
@@ -749,6 +876,9 @@ static u8_t connected_cb(const struct bt_gatt_attr *attr, void *user_data)
 
 		if (ccc->cfg[i].value) {
 			gatt_ccc_changed(attr, ccc);
+			if (ccc->cfg == sc_ccc_cfg) {
+				sc_restore(&ccc->cfg[i]);
+			}
 			return BT_GATT_ITER_CONTINUE;
 		}
 	}
@@ -818,7 +948,7 @@ static u8_t disconnected_cb(const struct bt_gatt_attr *attr, void *user_data)
 	return BT_GATT_ITER_CONTINUE;
 }
 
-#if defined(CONFIG_BLUETOOTH_GATT_CLIENT)
+#if defined(CONFIG_BT_GATT_CLIENT)
 void bt_gatt_notification(struct bt_conn *conn, u16_t handle,
 			  const void *data, u16_t length)
 {
@@ -1618,7 +1748,7 @@ int bt_gatt_write_without_response(struct bt_conn *conn, u16_t handle,
 		return -ENOTCONN;
 	}
 
-#if defined(CONFIG_BLUETOOTH_SMP)
+#if defined(CONFIG_BT_SMP)
 	if (conn->encrypt) {
 		/* Don't need to sign if already encrypted */
 		sign = false;
@@ -1935,15 +2065,15 @@ static void add_subscriptions(struct bt_conn *conn)
 	}
 }
 
-#endif /* CONFIG_BLUETOOTH_GATT_CLIENT */
+#endif /* CONFIG_BT_GATT_CLIENT */
 
 void bt_gatt_connected(struct bt_conn *conn)
 {
 	BT_DBG("conn %p", conn);
 	bt_gatt_foreach_attr(0x0001, 0xffff, connected_cb, conn);
-#if defined(CONFIG_BLUETOOTH_GATT_CLIENT)
+#if defined(CONFIG_BT_GATT_CLIENT)
 	add_subscriptions(conn);
-#endif /* CONFIG_BLUETOOTH_GATT_CLIENT */
+#endif /* CONFIG_BT_GATT_CLIENT */
 }
 
 void bt_gatt_disconnected(struct bt_conn *conn)
@@ -1951,7 +2081,7 @@ void bt_gatt_disconnected(struct bt_conn *conn)
 	BT_DBG("conn %p", conn);
 	bt_gatt_foreach_attr(0x0001, 0xffff, disconnected_cb, conn);
 
-#if defined(CONFIG_BLUETOOTH_GATT_CLIENT)
+#if defined(CONFIG_BT_GATT_CLIENT)
 	remove_subscriptions(conn);
-#endif /* CONFIG_BLUETOOTH_GATT_CLIENT */
+#endif /* CONFIG_BT_GATT_CLIENT */
 }

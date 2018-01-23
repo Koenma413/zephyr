@@ -22,6 +22,10 @@
 #define PRINT_DATA(fmt, ...) printk(fmt, ##__VA_ARGS__)
 #endif /* CONFIG_STDOUT_CONSOLE */
 
+#if defined CONFIG_ARCH_POSIX
+#include "posix_board_if.h"
+#endif
+
 /**
  * @def TC_PRINT_RUN_ID
  * @brief Report a Run ID
@@ -67,18 +71,27 @@
 	} while (0)
 
 #define TC_PRINT(fmt, ...) PRINT_DATA(fmt, ##__VA_ARGS__)
-#define TC_START(name) PRINT_DATA("tc_start() - %s\n", name)
+#define TC_START(name) PRINT_DATA("starting test - %s\n", name)
 #define TC_END(result, fmt, ...) PRINT_DATA(fmt, ##__VA_ARGS__)
 
 /* prints result and the function name */
 #define _TC_END_RESULT(result, func)					\
 	do {								\
-		PRINT_LINE;						\
 		TC_END(result, "%s - %s.\n",				\
 		       (result) == TC_PASS ? PASS : FAIL, func);	\
+		PRINT_LINE;						\
 	} while (0)
 #define TC_END_RESULT(result)                           \
 	_TC_END_RESULT((result), __func__)
+
+#if defined CONFIG_ARCH_POSIX
+#define TC_END_POST                                 \
+	do {                                        \
+		main_clean_up(0);                    \
+	} while (0)
+#else
+#define TC_END_POST
+#endif
 
 #define TC_END_REPORT(result)                               \
 	do {                                                    \
@@ -87,6 +100,7 @@
 		TC_END(result,                                      \
 		       "PROJECT EXECUTION %s\n",               \
 		       (result) == TC_PASS ? "SUCCESSFUL" : "FAILED");	\
+		TC_END_POST;                                            \
 	} while (0)
 
 #define TC_CMD_DEFINE(name)				\

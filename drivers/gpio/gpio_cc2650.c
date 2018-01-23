@@ -111,11 +111,6 @@ static int gpio_cc2650_config_pin(int pin, int flags)
 		 CC2650_IOC_IOCFGX_IE_MASK |
 		 CC2650_IOC_IOCFGX_HYST_EN_MASK);
 
-	if (flags & GPIO_PIN_DISABLE) {
-		disconnect(pin, &gpio_doe31_0_config, &iocfg_config);
-		goto commit_config;
-	}
-
 	if (flags & GPIO_DIR_OUT) {
 		gpio_doe31_0_config |= BIT(pin);
 		iocfg_config |= CC2650_IOC_INPUT_DISABLED;
@@ -162,26 +157,25 @@ static int gpio_cc2650_config_pin(int pin, int flags)
 		iocfg_config |= CC2650_IOC_NORMAL_IO;
 	}
 
-	if (flags & GPIO_PUD_NORMAL) {
-		iocfg_config |= CC2650_IOC_NO_PULL;
-	} else if (flags & GPIO_PUD_PULL_UP) {
+	if (flags & GPIO_PUD_PULL_UP) {
 		iocfg_config |= CC2650_IOC_PULL_UP;
 	} else if (flags & GPIO_PUD_PULL_DOWN) {
 		iocfg_config |= CC2650_IOC_PULL_DOWN;
+	} else {
+		iocfg_config |= CC2650_IOC_NO_PULL;
 	}
 
 	/* Remember, we only look at GPIO_DS_*_LOW ! */
 	if (flags & GPIO_DS_DISCONNECT_LOW) {
 		disconnect(pin, &gpio_doe31_0_config, &iocfg_config);
 	}
-	if (flags & GPIO_DS_DFLT_LOW) {
-		iocfg_config |= CC2650_IOC_MIN_DRIVE_STRENGTH;
-	} else {
+	if (flags & GPIO_DS_ALT_LOW) {
 		iocfg_config |= CC2650_IOC_MAX_DRIVE_STRENGTH;
+	} else {
+		iocfg_config |= CC2650_IOC_MIN_DRIVE_STRENGTH;
 	}
 
 	/* Commit changes */
-commit_config:
 	sys_write32(iocfg_config, iocfg);
 	sys_write32(gpio_doe31_0_config, doe31_0);
 	return 0;

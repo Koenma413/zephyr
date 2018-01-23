@@ -96,11 +96,12 @@ typedef void (*ticker_op_func) (u32_t status, void *op_context);
 */
 u32_t ticker_init(u8_t instance_index, u8_t count_node, void *node,
 		  u8_t count_user, void *user, u8_t count_op, void *user_op);
+bool ticker_is_initialized(u8_t instance_index);
 void ticker_trigger(u8_t instance_index);
 u32_t ticker_start(u8_t instance_index, u8_t user_id, u8_t ticker_id,
 		   u32_t ticks_anchor, u32_t ticks_first, u32_t ticks_periodic,
 		   u32_t remainder_periodic, u16_t lazy, u16_t ticks_slot,
-		   ticker_timeout_func ticker_timeout_func, void *context,
+		   ticker_timeout_func fp_timeout_func, void *context,
 		   ticker_op_func fp_op_func, void *op_context);
 u32_t ticker_update(u8_t instance_index, u8_t user_id, u8_t ticker_id,
 		    u16_t ticks_drift_plus, u16_t ticks_drift_minus,

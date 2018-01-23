@@ -9,6 +9,7 @@
 #include <wait_q.h>
 #include <init.h>
 #include <string.h>
+#include <misc/__assert.h>
 
 /* Linker-defined symbols bound the static pool structs */
 extern struct k_mem_pool _k_mem_pool_list_start[];
@@ -273,9 +274,7 @@ static int pool_alloc(struct k_mem_pool *p, struct k_mem_block *block,
 		return -EAGAIN;
 	}
 
-	for (from_l = free_l;
-	     level_empty(p, alloc_l) && from_l < alloc_l;
-	     from_l++) {
+	for (from_l = free_l; from_l < alloc_l; from_l++) {
 		blk = break_block(p, blk, from_l, lsizes);
 	}
 
@@ -323,10 +322,10 @@ int k_mem_pool_alloc(struct k_mem_pool *p, struct k_mem_block *block,
 	return -EAGAIN;
 }
 
-void k_mem_pool_free(struct k_mem_block *block)
+void k_mem_pool_free_id(struct k_mem_block_id *id)
 {
 	int i, key, need_sched = 0;
-	struct k_mem_pool *p = get_pool(block->id.pool);
+	struct k_mem_pool *p = get_pool(id->pool);
 	size_t lsizes[p->n_levels];
 
 	/* As in k_mem_pool_alloc(), we build a table of level sizes
@@ -336,12 +335,11 @@ void k_mem_pool_free(struct k_mem_block *block)
 	 * sublevels.
 	 */
 	lsizes[0] = _ALIGN4(p->max_sz);
-	for (i = 1; i <= block->id.level; i++) {
+	for (i = 1; i <= id->level; i++) {
 		lsizes[i] = _ALIGN4(lsizes[i-1] / 4);
 	}
 
-	free_block(get_pool(block->id.pool), block->id.level,
-		   lsizes, block->id.block);
+	free_block(p, id->level, lsizes, id->block);
 
 	/* Wake up anyone blocked on this pool and let them repeat
 	 * their allocation attempts
@@ -364,6 +362,11 @@ void k_mem_pool_free(struct k_mem_block *block)
 	}
 }
 
+void k_mem_pool_free(struct k_mem_block *block)
+{
+	k_mem_pool_free_id(&block->id);
+}
+
 #if (CONFIG_HEAP_MEM_POOL_SIZE > 0)
 
 /*
@@ -384,16 +387,16 @@ void *k_malloc(size_t size)
 	 * get a block large enough to hold an initial (hidden) block
 	 * descriptor, as well as the space the caller requested
 	 */
-	size += sizeof(struct k_mem_block);
+	size += sizeof(struct k_mem_block_id);
 	if (k_mem_pool_alloc(_HEAP_MEM_POOL, &block, size, K_NO_WAIT) != 0) {
 		return NULL;
 	}
 
 	/* save the block descriptor info at the start of the actual block */
-	memcpy(block.data, &block, sizeof(struct k_mem_block));
+	memcpy(block.data, &block.id, sizeof(struct k_mem_block_id));
 
 	/* return address of the user area part of the block to the caller */
-	return (char *)block.data + sizeof(struct k_mem_block);
+	return (char *)block.data + sizeof(struct k_mem_block_id);
 }
 
 
@@ -401,10 +404,28 @@ void k_free(void *ptr)
 {
 	if (ptr != NULL) {
 		/* point to hidden block descriptor at start of block */
-		ptr = (char *)ptr - sizeof(struct k_mem_block);
+		ptr = (char *)ptr - sizeof(struct k_mem_block_id);
 
 		/* return block to the heap memory pool */
-		k_mem_pool_free(ptr);
+		k_mem_pool_free_id(ptr);
 	}
+}
+
+void *k_calloc(size_t nmemb, size_t size)
+{
+	void *ret;
+	size_t bounds;
+
+#ifdef CONFIG_ASSERT
+	__ASSERT(!__builtin_mul_overflow(nmemb, size, &bounds),
+		 "requested size overflow");
+#else
+	bounds = nmemb * size;
+#endif
+	ret = k_malloc(bounds);
+	if (ret) {
+		memset(ret, 0, bounds);
+	}
+	return ret;
 }
 #endif

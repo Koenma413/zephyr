@@ -21,6 +21,7 @@
 
 #include <toolchain.h>
 #include <linker/sections.h>
+#include <misc/util.h>
 
 /* include platform dependent linker-defs */
 #ifdef CONFIG_X86
@@ -34,6 +35,8 @@
 #elif defined(CONFIG_RISCV32)
 /* Nothing yet to include */
 #elif defined(CONFIG_XTENSA)
+/* Nothing yet to include */
+#elif defined(CONFIG_ARCH_POSIX)
 /* Nothing yet to include */
 #else
 #error Arch not supported.
@@ -96,10 +99,37 @@
  * their shell commands are automatically initialized by the kernel.
  */
 
-#define	SHELL_INIT_SECTIONS()		\
-		__shell_cmd_start = .;		\
-		KEEP(*(".shell_*"));		\
-		__shell_cmd_end = .;
+#define	SHELL_INIT_SECTIONS()				\
+		__shell_module_start = .;		\
+		KEEP(*(".shell_module_*"));		\
+		__shell_module_end = .;			\
+		__shell_cmd_start = .;			\
+		KEEP(*(".shell_cmd_*"));		\
+		__shell_cmd_end = .;			\
+
+#ifdef CONFIG_APPLICATION_MEMORY
+
+#ifndef NUM_KERNEL_OBJECT_FILES
+#error "Expected NUM_KERNEL_OBJECT_FILES to be defined"
+#elif NUM_KERNEL_OBJECT_FILES > 19
+#error "Max supported kernel objects is 19."
+/* TODO: Using the preprocessor to do this was a mistake. Rewrite to
+   scale better. e.g. by aggregating the kernel objects into two
+   archives like KBuild did.*/
+#endif
+
+#define X(i, j) KERNEL_OBJECT_FILE_##i (j)
+#define Y(i, j) KERNEL_OBJECT_FILE_##i
+
+#define KERNEL_INPUT_SECTION(sect) \
+    UTIL_LISTIFY(NUM_KERNEL_OBJECT_FILES, X, sect)
+#define APP_INPUT_SECTION(sect)	\
+    *(EXCLUDE_FILE (UTIL_LISTIFY(NUM_KERNEL_OBJECT_FILES, Y, ~)) sect)
+
+#else
+#define KERNEL_INPUT_SECTION(sect)	*(sect)
+#define APP_INPUT_SECTION(sect)		*(sect)
+#endif
 
 
 #ifdef CONFIG_X86 /* LINKER FILES: defines used by linker script */
@@ -136,22 +166,73 @@ GDATA(__data_num_words)
 #else /* ! _ASMLANGUAGE */
 
 #include <zephyr/types.h>
+
+#ifdef CONFIG_APPLICATION_MEMORY
+/* Memory owned by the application. Start and end will be aligned for memory
+ * management/protection hardware for the target architecture.
+
+ * The policy for this memory will be to configure all of it as user thread
+ * accessible. It consists of all non-kernel globals.
+ */
+extern char __app_ram_start[];
+extern char __app_ram_end[];
+extern char __app_ram_size[];
+#endif
+
+/* Memory owned by the kernel. Start and end will be aligned for memory
+ * management/protection hardware for the target architecture..
+ *
+ * Consists of all kernel-side globals, all kernel objects, all thread stacks,
+ * and all currently unused RAM.  If CONFIG_APPLICATION_MEMORY is not enabled,
+ * has all globals, not just kernel side.
+ *
+ * Except for the stack of the currently executing thread, none of this memory
+ * is normally accessible to user threads unless specifically granted at
+ * runtime.
+ */
+extern char __kernel_ram_start[];
+extern char __kernel_ram_end[];
+extern char __kernel_ram_size[];
+
+/* Used by _bss_zero or arch-specific implementation */
 extern char __bss_start[];
 extern char __bss_end[];
+#ifdef CONFIG_APPLICATION_MEMORY
+extern char __app_bss_start[];
+extern char __app_bss_end[];
+#endif
+
+/* Used by _data_copy() or arch-specific implementation */
 #ifdef CONFIG_XIP
 extern char __data_rom_start[];
 extern char __data_ram_start[];
 extern char __data_ram_end[];
-#endif
+#ifdef CONFIG_APPLICATION_MEMORY
+extern char __app_data_rom_start[];
+extern char __app_data_ram_start[];
+extern char __app_data_ram_end[];
+#endif /* CONFIG_APPLICATION_MEMORY */
+#endif /* CONFIG_XIP */
 
+/* Includes text and rodata */
 extern char _image_rom_start[];
 extern char _image_rom_end[];
+extern char _image_rom_size[];
+
+/* datas, bss, noinit */
 extern char _image_ram_start[];
 extern char _image_ram_end[];
+
 extern char _image_text_start[];
 extern char _image_text_end[];
 
-/* end address of image. */
+extern char _image_rodata_start[];
+extern char _image_rodata_end[];
+
+extern char _vector_start[];
+extern char _vector_end[];
+
+/* end address of image, used by newlib for the heap */
 extern char _end[];
 
 #endif /* ! _ASMLANGUAGE */

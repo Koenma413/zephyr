@@ -1,0 +1,7 @@
+sample:
+  name: Memory Domain APIs Test
+tests:
+  test:
+    filter: CONFIG_ARCH_HAS_USERSPACE
+    tags: samples
+    harness: console

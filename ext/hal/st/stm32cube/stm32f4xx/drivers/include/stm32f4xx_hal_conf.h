@@ -2,8 +2,6 @@
   ******************************************************************************
   * @file    stm32f4xx_hal_conf_template.h
   * @author  MCD Application Team
-  * @version V1.7.0
-  * @date    17-February-2017
   * @brief   HAL configuration template file. 
   *          This file should be copied to the application folder and renamed
   *          to stm32f4xx_hal_conf.h.
@@ -50,7 +48,13 @@
 
 /* ########################## Module Selection ############################## */
 /**
-  * @brief This is the list of modules to be used in the HAL driver 
+  * @brief This is the list of modules to be used in the HAL driver
+  *
+  *     Note:
+  *     	HAL_I2C_MODULE_ENABLED had to be disabled due to the HAL
+  *     	redefining I2C_SPEED_STANDARD and I2C_SPEED_FAST when the
+  *     	I2C LL driver was enabled.
+  *
   */
 #define HAL_MODULE_ENABLED  
 #define HAL_ADC_MODULE_ENABLED
@@ -71,7 +75,6 @@
 #define HAL_SDRAM_MODULE_ENABLED
 #define HAL_HASH_MODULE_ENABLED
 #define HAL_GPIO_MODULE_ENABLED
-#define HAL_I2C_MODULE_ENABLED
 #define HAL_I2S_MODULE_ENABLED
 #define HAL_IWDG_MODULE_ENABLED
 #define HAL_LTDC_MODULE_ENABLED
@@ -98,6 +101,22 @@
 #define HAL_DFSDM_MODULE_ENABLED
 #define HAL_LPTIM_MODULE_ENABLED
 #define HAL_MMC_MODULE_ENABLED
+/**
+ * HAL_I2C_MODULE_ENABLED: [disabled]
+ * ----------------------------------
+ *
+ * When enabling the STM32 I2C LL driver this would otherwise trigger:
+ *
+ *  include/i2c.h:34:0: warning: "I2C_SPEED_STANDARD" redefined
+ *  stm32f1xx_hal_i2c.h:578:0: this is the location of the previous definition
+ *
+ *  include/i2c.h:37:0: warning: "I2C_SPEED_FAST" redefined
+ *  stm32f1xx_hal_i2c.h:579:0:  this is the location of the previous definition
+ *
+ */
+#if 0
+#define HAL_I2C_MODULE_ENABLED
+#endif
 
 /* ########################## HSE/HSI Values adaptation ##################### */
 /**
@@ -435,7 +454,7 @@
 #ifdef  USE_FULL_ASSERT
 /**
   * @brief  The assert_param macro is used for function's parameters check.
-  * @param  expr: If expr is false, it calls assert_failed function
+  * @param  expr If expr is false, it calls assert_failed function
   *         which reports the name of the source file and the source
   *         line number of the call that failed. 
   *         If expr is true, it returns no value.

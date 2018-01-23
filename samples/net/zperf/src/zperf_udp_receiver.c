@@ -12,6 +12,7 @@
 
 #include <net/net_core.h>
 #include <net/net_pkt.h>
+#include <net/udp.h>
 
 #include "zperf.h"
 #include "zperf_internal.h"
@@ -31,8 +32,12 @@
 static K_THREAD_STACK_DEFINE(zperf_rx_stack, RX_THREAD_STACK_SIZE);
 static struct k_thread zperf_rx_thread_data;
 
+#if defined(CONFIG_NET_IPV6)
 static struct sockaddr_in6 *in6_addr_my;
+#endif
+#if defined(CONFIG_NET_IPV4)
 static struct sockaddr_in *in4_addr_my;
+#endif
 
 #define MAX_DBG_PRINT 64
 
@@ -40,12 +45,20 @@ static inline void set_dst_addr(sa_family_t family,
 				struct net_pkt *pkt,
 				struct sockaddr *dst_addr)
 {
+	struct net_udp_hdr hdr, *udp_hdr;
+
+	udp_hdr = net_udp_get_hdr(pkt, &hdr);
+	if (!udp_hdr) {
+		printk(TAG "Invalid UDP data\n");
+		return;
+	}
+
 #if defined(CONFIG_NET_IPV6)
 	if (family == AF_INET6) {
 		net_ipaddr_copy(&net_sin6(dst_addr)->sin6_addr,
 				&NET_IPV6_HDR(pkt)->src);
 		net_sin6(dst_addr)->sin6_family = AF_INET6;
-		net_sin6(dst_addr)->sin6_port = NET_UDP_HDR(pkt)->src_port;
+		net_sin6(dst_addr)->sin6_port = udp_hdr->src_port;
 	}
 #endif /* CONFIG_NET_IPV6 */
 
@@ -54,7 +67,7 @@ static inline void set_dst_addr(sa_family_t family,
 		net_ipaddr_copy(&net_sin(dst_addr)->sin_addr,
 				&NET_IPV4_HDR(pkt)->src);
 		net_sin(dst_addr)->sin_family = AF_INET;
-		net_sin(dst_addr)->sin_port = NET_UDP_HDR(pkt)->src_port;
+		net_sin(dst_addr)->sin_port = udp_hdr->src_port;
 	}
 #endif /* CONFIG_NET_IPV4 */
 }
@@ -126,9 +139,9 @@ static void udp_received(struct net_context *context,
 			 int status,
 			 void *user_data)
 {
-	struct net_buf *frag = pkt->frags;
 	struct zperf_udp_datagram hdr;
 	struct session *session;
+	struct net_buf *frag;
 	u16_t offset, pos;
 	s32_t transit_time;
 	u32_t time;
@@ -138,7 +151,10 @@ static void udp_received(struct net_context *context,
 		return;
 	}
 
+	frag = pkt->frags;
+
 	if (net_pkt_appdatalen(pkt) < sizeof(struct zperf_udp_datagram)) {
+		printk(TAG "ERROR! short iperf packet!\n");
 		net_pkt_unref(pkt);
 		return;
 	}
@@ -286,10 +302,13 @@ static void udp_received(struct net_context *context,
 /* RX thread entry point */
 static void zperf_rx_thread(int port)
 {
-	struct net_context *context4 = NULL, *context6 = NULL;
-	int ret, fail = 0;
-
-	printk(TAG "Listening to port %d\n", port);
+#if defined(CONFIG_NET_IPV4) && defined(MY_IP4ADDR)
+	struct net_context *context4 = NULL;
+#endif
+#if defined(CONFIG_NET_IPV6) && defined(MY_IP6ADDR)
+	struct net_context *context6 = NULL;
+#endif
+	int ret;
 
 #if defined(CONFIG_NET_IPV4) && defined(MY_IP4ADDR)
 	ret = net_context_get(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &context4);
@@ -308,6 +327,17 @@ static void zperf_rx_thread(int port)
 	       net_sprint_ipv4_addr(&in4_addr_my->sin_addr));
 
 	in4_addr_my->sin_port = htons(port);
+
+	if (context4) {
+		ret = net_context_bind(context4,
+				       (struct sockaddr *)in4_addr_my,
+				       sizeof(struct sockaddr_in));
+		if (ret < 0) {
+			printk(TAG "Cannot bind IPv4 UDP port %d (%d)\n",
+			       ntohs(in4_addr_my->sin_port), ret);
+			return;
+		}
+	}
 #endif
 
 #if defined(CONFIG_NET_IPV6) && defined(MY_IP6ADDR)
@@ -328,7 +358,6 @@ static void zperf_rx_thread(int port)
 	       net_sprint_ipv6_addr(&in6_addr_my->sin6_addr));
 
 	in6_addr_my->sin6_port = htons(port);
-#endif
 
 	if (context6) {
 		ret = net_context_bind(context6,
@@ -337,26 +366,10 @@ static void zperf_rx_thread(int port)
 		if (ret < 0) {
 			printk(TAG "Cannot bind IPv6 UDP port %d (%d)\n",
 			       ntohs(in6_addr_my->sin6_port), ret);
-
-			fail++;
+			return;
 		}
 	}
-
-	if (context4) {
-		ret = net_context_bind(context4,
-				       (struct sockaddr *)in4_addr_my,
-				       sizeof(struct sockaddr_in));
-		if (ret < 0) {
-			printk(TAG "Cannot bind IPv4 UDP port %d (%d)\n",
-			       ntohs(in4_addr_my->sin_port), ret);
-
-			fail++;
-		}
-	}
-
-	if (fail > 1) {
-		return;
-	}
+#endif
 
 #if defined(CONFIG_NET_IPV6)
 	ret = net_context_recv(context6, udp_received, K_NO_WAIT, NULL);
@@ -371,6 +384,8 @@ static void zperf_rx_thread(int port)
 		printk(TAG "Cannot receive IPv4 UDP packets\n");
 	}
 #endif /* CONFIG_NET_IPV4 */
+
+	printk(TAG "Listening on port %d\n", port);
 
 	k_sleep(K_FOREVER);
 }
